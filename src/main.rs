@@ -1,7 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod api;
 mod cmd;
+mod draw;
+mod widgets;
+
+use api::{ApiKey, Client};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -14,18 +19,28 @@ struct Opts {
     )]
     endpoint: String,
 
+    #[arg(long, env = "BRAINPOD_API_KEY")]
+    api_key: ApiKey,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Auth(cmd::auth::Opts),
+    List(cmd::list::Opts),
 }
 
-fn main() -> Result<()> {
-    let opts = Opts::parse();
-    dbg!(&opts);
+async fn handle(client: Client, command: Command) -> Result<()> {
+    match command {
+        Command::List(opts) => cmd::list::handle(client, opts).await,
+    }
+}
 
-    Ok(())
+#[tokio::main]
+async fn main() -> Result<()> {
+    let opts = Opts::parse();
+    let client = Client::try_new(&opts.endpoint, &opts.api_key)?;
+
+    handle(client, opts.command).await
 }

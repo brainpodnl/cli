@@ -8,5 +8,14 @@ name = "brainpod"
 path = "src/main.rs"
 
 [dependencies]
+brainpod-core = { git = "https://github.com/brainpodnl/brainpod-core", rev = "4dbd63c171cc765efbf28fd54bfce54f6e962e16" }
+
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+reqwest = { version = "0.13.4", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["full"] }
+ratatui = { version = "0.30.2", features = ["crossterm"] }
+crossterm = "0.29.0"
+base64 = "0.22.1"
