@@ -53,6 +53,7 @@ pub fn render_inline(widget: impl Widget + Clone) -> io::Result<()> {
     let mut guard = stdout.lock();
     guard.write_all(&buf)?;
     guard.write_all(&[b'\n'])?;
+    guard.flush()?;
 
     Ok(())
 }
