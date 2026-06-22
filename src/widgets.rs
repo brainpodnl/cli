@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use ratatui::{
     layout::{Constraint, Rect},
+    macros::{constraint, constraints},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph, Row, Table, Widget},
 };
@@ -31,96 +32,117 @@ fn fmt_vec<T: Display>(vec: &[T]) -> String {
     buf
 }
 
-pub trait Tabular {
-    fn field_names(&self) -> &'static [&'static str];
-    fn values(&self) -> Vec<String>;
+pub trait TableRow {
+    fn constraints(&self) -> Vec<Constraint>;
+    fn title_row(&self) -> Row<'static>;
+    fn value_row<'a>(&'a self) -> Row<'a>;
 }
 
-impl Tabular for App {
-    fn field_names(&self) -> &'static [&'static str] {
-        &["name"]
+impl TableRow for App {
+    fn constraints(&self) -> Vec<Constraint> {
+        constraints![==100%].to_vec()
     }
 
-    fn values(&self) -> Vec<String> {
-        vec![self.metadata.name.clone()]
+    fn title_row(&self) -> Row<'static> {
+        Row::new(["name"])
+    }
+
+    fn value_row<'a>(&'a self) -> Row<'a> {
+        Row::new([self.metadata.name.as_str()])
     }
 }
 
-impl Tabular for Disk {
-    fn field_names(&self) -> &'static [&'static str] {
-        &["name", "size", "volume handle"]
+impl TableRow for Disk {
+    fn constraints(&self) -> Vec<Constraint> {
+        constraints![==20%, ==10%, ==30%].to_vec()
     }
 
-    fn values(&self) -> Vec<String> {
-        vec![
-            self.metadata.name.clone(),
+    fn title_row(&self) -> Row<'static> {
+        Row::new(["name", "size", "volume handle"])
+    }
+
+    fn value_row<'a>(&'a self) -> Row<'a> {
+        Row::new([
+            self.metadata.name.to_string(),
             format!("{}Gb", self.spec.size),
             fmt_option(self.spec.volume_handle.as_ref()),
-        ]
+        ])
     }
 }
 
-impl Tabular for Route {
-    fn field_names(&self) -> &'static [&'static str] {
-        &["name", "hostname", "rules", "timeout"]
+impl TableRow for Route {
+    fn constraints(&self) -> Vec<Constraint> {
+        constraints![==25%; 4].to_vec()
     }
 
-    fn values(&self) -> Vec<String> {
-        vec![
+    fn title_row(&self) -> Row<'static> {
+        Row::new(["name", "hostname", "rules", "timeout"])
+    }
+
+    fn value_row<'a>(&'a self) -> Row<'a> {
+        Row::new([
             self.metadata.name.clone(),
             self.spec.hostname.clone(),
-            // fmt_vec(&self.spec.rules),
             fmt_option(self.spec.domains.as_deref().map(fmt_vec)),
             fmt_option(self.spec.timeout.map(|timeout| format!("{timeout}s"))),
-        ]
+        ])
     }
 }
 
-impl Tabular for Resource {
-    fn field_names(&self) -> &'static [&'static str] {
+impl TableRow for Resource {
+    fn constraints(&self) -> Vec<Constraint> {
         match self {
-            Resource::App(app) => app.field_names(),
-            Resource::Disk(disk) => disk.field_names(),
-            Resource::Route(route) => route.field_names(),
+            Resource::App(app) => app.constraints(),
+            Resource::Disk(disk) => disk.constraints(),
+            Resource::Route(route) => route.constraints(),
         }
     }
 
-    fn values(&self) -> Vec<String> {
+    fn title_row(&self) -> Row<'static> {
         match self {
-            Resource::App(app) => app.values(),
-            Resource::Disk(disk) => disk.values(),
-            Resource::Route(route) => route.values(),
+            Resource::App(app) => app.title_row(),
+            Resource::Disk(disk) => disk.title_row(),
+            Resource::Route(route) => route.title_row(),
+        }
+    }
+
+    fn value_row<'a>(&'a self) -> Row<'a> {
+        match self {
+            Resource::App(app) => app.value_row(),
+            Resource::Disk(disk) => disk.value_row(),
+            Resource::Route(route) => route.value_row(),
         }
     }
 }
 
-pub struct ResourceTable<'a, T: Tabular>(pub &'a [T]);
+pub struct ResourceTable<'a, T: TableRow>(pub &'a [T]);
 
-impl<'a, T: Tabular> Clone for ResourceTable<'a, T> {
+impl<'a, T: TableRow> Clone for ResourceTable<'a, T> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
 
-impl<'a, T: Tabular> Widget for ResourceTable<'a, T> {
+impl<'a, T: TableRow> Widget for ResourceTable<'a, T> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
     where
         Self: Sized,
     {
-        let Some(field_names) = self.0.iter().next().map(|table| table.field_names()) else {
+        let Some((constraints, title_row)) = self
+            .0
+            .iter()
+            .next()
+            .map(|table| (table.constraints(), table.title_row()))
+        else {
             Paragraph::new("No resources found").render(area, buf);
             return;
         };
-        let header = Row::new(field_names.to_vec()).style(
+        let header = title_row.style(
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         );
-
-        let rows = self.0.iter().map(|item| Row::new(item.values()));
-        let constraints = field_names
-            .iter()
-            .map(|_| Constraint::Length(100 / field_names.len() as u16));
+        let rows = self.0.iter().map(|item| item.value_row());
 
         Table::new(rows, constraints)
             .header(header)
