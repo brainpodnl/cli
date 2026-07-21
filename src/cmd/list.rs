@@ -5,7 +5,7 @@ use brainpod_core::resource::ResourceKind;
 use clap::Parser;
 
 use crate::api::Client;
-use crate::widgets::ResourceTable;
+use crate::widgets::TableWidget;
 
 #[derive(Parser, Debug)]
 pub struct Opts {
@@ -15,7 +15,7 @@ pub struct Opts {
 
 pub async fn handle(client: Client, opts: Opts) -> Result<()> {
     let resources = client.list_resources(&opts.kind).await?;
-    let widget = ResourceTable(&resources);
+    let widget = TableWidget(&resources);
     crate::draw::render_inline(widget)?;
 
     Ok(())

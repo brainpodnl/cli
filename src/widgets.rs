@@ -1,12 +1,13 @@
 use std::fmt::Display;
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    macros::{constraint, constraints},
+    layout::Constraint,
+    macros::constraints,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Row, Table, Widget},
+    widgets::{Cell, Paragraph, Row, Table, Widget},
 };
 
+use brainpod_core::pod::PodMeta;
 use brainpod_core::resource::*;
 
 fn fmt_option<T: Display>(opt: Option<T>) -> String {
@@ -38,9 +39,31 @@ pub trait TableRow {
     fn value_row<'a>(&'a self) -> Row<'a>;
 }
 
+impl TableRow for PodMeta {
+    fn constraints(&self) -> Vec<Constraint> {
+        constraints![==20%; 5].to_vec()
+    }
+
+    fn title_row(&self) -> Row<'static> {
+        Row::new(["name", "display name", "head", "created at", "owner"])
+    }
+
+    fn value_row<'a>(&'a self) -> Row<'a> {
+        let head = self.head.to_string();
+        let (head, _) = head.split_once("-").expect("head to be a valid uuid");
+        Row::new([
+            Cell::new(self.name.as_str()),
+            Cell::new(fmt_option(self.display_name.as_deref())),
+            Cell::new(head.to_string()),
+            Cell::new(self.created_at.to_string()),
+            Cell::new(self.is_owner.to_string()),
+        ])
+    }
+}
+
 impl TableRow for App {
     fn constraints(&self) -> Vec<Constraint> {
-        constraints![==100%].to_vec()
+        constraints![==50%; 2].to_vec()
     }
 
     fn title_row(&self) -> Row<'static> {
@@ -48,7 +71,10 @@ impl TableRow for App {
     }
 
     fn value_row<'a>(&'a self) -> Row<'a> {
-        Row::new([self.metadata.name.as_str()])
+        Row::new([
+            Cell::new(self.metadata.name.as_str()),
+            Cell::new("hi").style(Style::default().on_red()),
+        ])
     }
 }
 
@@ -115,15 +141,15 @@ impl TableRow for Resource {
     }
 }
 
-pub struct ResourceTable<'a, T: TableRow>(pub &'a [T]);
+pub struct TableWidget<'a, T: TableRow>(pub &'a [T]);
 
-impl<'a, T: TableRow> Clone for ResourceTable<'a, T> {
+impl<'a, T: TableRow> Clone for TableWidget<'a, T> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
 
-impl<'a, T: TableRow> Widget for ResourceTable<'a, T> {
+impl<'a, T: TableRow> Widget for TableWidget<'a, T> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
     where
         Self: Sized,

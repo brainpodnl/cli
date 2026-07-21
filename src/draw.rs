@@ -1,11 +1,8 @@
-use crossterm::execute;
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::{CrosstermBackend, TestBackend},
-    layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
     symbols::border,
-    widgets::{Block, Borders, Row, Table, Widget},
+    widgets::{Block, Widget},
 };
 use std::io::{self, Write};
 
@@ -36,7 +33,7 @@ pub fn render_inline(widget: impl Widget + Clone) -> io::Result<()> {
     {
         let border_margin = 2;
         let height = compute_widget_height(widget.clone())?;
-        let viewport = Viewport::Inline(height + border_margin); 
+        let viewport = Viewport::Inline(height + border_margin);
         let term_opts = TerminalOptions { viewport };
         let backend = CrosstermBackend::new(&mut buf);
         let mut term = Terminal::with_options(backend, term_opts)?;
@@ -52,7 +49,7 @@ pub fn render_inline(widget: impl Widget + Clone) -> io::Result<()> {
     let stdout = io::stdout();
     let mut guard = stdout.lock();
     guard.write_all(&buf)?;
-    guard.write_all(&[b'\n'])?;
+    guard.write_all(b"\n")?;
     guard.flush()?;
 
     Ok(())

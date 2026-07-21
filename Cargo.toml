@@ -8,7 +8,7 @@ name = "brainpod"
 path = "src/main.rs"
 
 [dependencies]
-brainpod-core = { git = "https://github.com/brainpodnl/brainpod-core", rev = "4dbd63c171cc765efbf28fd54bfce54f6e962e16" }
+brainpod-core = { git = "https://github.com/brainpodnl/brainpod-core", rev = "48ab2371ec8bcc5e565a46349a3c7570a3e7c147" }
 
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive", "env"] }

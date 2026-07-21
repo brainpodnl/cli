@@ -28,11 +28,13 @@ struct Opts {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    Pod(cmd::pod::Opts),
     List(cmd::list::Opts),
 }
 
 async fn handle(client: Client, command: Command) -> Result<()> {
     match command {
+        Command::Pod(opts) => cmd::pod::handle(client, opts).await,
         Command::List(opts) => cmd::list::handle(client, opts).await,
     }
 }

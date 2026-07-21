@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use brainpod_core::resource::{Resource, ResourceKind};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, InvalidHeaderValue};
+
+use brainpod_core::pod::PodMeta;
+use brainpod_core::resource::{Resource, ResourceKind};
 
 #[derive(Debug, Clone)]
 pub struct ApiKey(Box<str>);
@@ -29,8 +30,7 @@ impl ApiKey {
 }
 
 fn bearer(api_key: &ApiKey) -> Result<HeaderValue, InvalidHeaderValue> {
-    let enc = BASE64.encode(&format!("api:{}", api_key.as_str()));
-    HeaderValue::from_str(&format!("Basic {enc}"))
+    HeaderValue::from_str(&format!("Bearer {}", api_key.as_str()))
 }
 
 fn default_headers(api_key: &ApiKey) -> Result<HeaderMap> {
@@ -54,6 +54,18 @@ impl Client {
             .build()?;
 
         Ok(Self { http, endpoint })
+    }
+
+    pub async fn list_pods(&self) -> Result<Vec<PodMeta>> {
+        let endpoint = format!("{}/v1/pods", self.endpoint);
+        Ok(self
+            .http
+            .get(endpoint)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
     }
 
     pub async fn list_resources(&self, kind: &ResourceKind) -> Result<Vec<Resource>> {
