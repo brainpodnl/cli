@@ -4,7 +4,7 @@ use anyhow::Result;
 use brainpod_core::resource::ResourceKind;
 use clap::Parser;
 
-use crate::api::Client;
+use crate::client::Client;
 use crate::widgets::TableWidget;
 
 #[derive(Parser, Debug)]

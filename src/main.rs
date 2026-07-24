@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-mod api;
 mod cmd;
 mod draw;
 mod widgets;
+mod client;
 
-use api::{ApiKey, Client};
+use client::{auth::ApiKey, Client};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

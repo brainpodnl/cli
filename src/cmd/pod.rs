@@ -1,13 +1,16 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::api::Client;
-use crate::widgets::TableWidget;
+use crate::client::Client;
+use crate::widgets::{PodMetaWidget, TableWidget};
+use crate::draw;
 
 #[derive(Subcommand, Debug)]
 enum Command {
     /// List pods
     List,
+    /// Describe pod
+    Describe { name: String },
 }
 
 #[derive(Parser, Debug)]
@@ -16,9 +19,17 @@ pub struct Opts {
     command: Command,
 }
 
-pub async fn handle(client: Client, _opts: Opts) -> Result<()> {
-    let pods = client.list_pods().await?;
-    crate::draw::render_inline(TableWidget(&pods))?;
+pub async fn handle(client: Client, opts: Opts) -> Result<()> {
+    match opts.command {
+        Command::List => {
+            let pods = client.pods().list().await?;
+            draw::render_inline(TableWidget(&pods))?;
+        }
+        Command::Describe { name } => {
+            let pod = client.pods().by_name(&name).describe().await?;
+            draw::render_inline(PodMetaWidget(&pod))?;
+        }
+    }
 
     Ok(())
 }

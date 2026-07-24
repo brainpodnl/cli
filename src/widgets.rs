@@ -1,10 +1,12 @@
 use std::fmt::Display;
 
 use ratatui::{
-    layout::Constraint,
+    buffer::Buffer,
+    layout::{Constraint, Rect},
     macros::constraints,
     style::{Color, Modifier, Style},
-    widgets::{Cell, Paragraph, Row, Table, Widget},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Padding, Paragraph, Row, Table, Widget},
 };
 
 use brainpod_core::pod::PodMeta;
@@ -45,7 +47,7 @@ impl TableRow for PodMeta {
     }
 
     fn title_row(&self) -> Row<'static> {
-        Row::new(["name", "display name", "head", "created at", "owner"])
+        Row::new(["Name", "Display name", "Head", "Created at", "Owner"])
     }
 
     fn value_row<'a>(&'a self) -> Row<'a> {
@@ -84,7 +86,7 @@ impl TableRow for Disk {
     }
 
     fn title_row(&self) -> Row<'static> {
-        Row::new(["name", "size", "volume handle"])
+        Row::new(["Name", "Size", "Volume handle"])
     }
 
     fn value_row<'a>(&'a self) -> Row<'a> {
@@ -102,7 +104,7 @@ impl TableRow for Route {
     }
 
     fn title_row(&self) -> Row<'static> {
-        Row::new(["name", "hostname", "rules", "timeout"])
+        Row::new(["Name", "Hostname", "Rules", "Timeout"])
     }
 
     fn value_row<'a>(&'a self) -> Row<'a> {
@@ -173,5 +175,55 @@ impl<'a, T: TableRow> Widget for TableWidget<'a, T> {
         Table::new(rows, constraints)
             .header(header)
             .render(area, buf);
+    }
+}
+
+#[derive(Clone)]
+pub struct PodMetaWidget<'a>(pub &'a PodMeta);
+
+impl<'a> Widget for PodMetaWidget<'a> {
+    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
+    where
+        Self: Sized,
+    {
+        let pod = self.0;
+        let label = Style::default().fg(Color::DarkGray);
+
+        let field = |label_text: &'static str, value: Span<'static>| {
+            Line::from(vec![
+                Span::styled(format!("{label_text:<14}"), label),
+                value,
+            ])
+        };
+
+        let display_name = pod.display_name.clone().unwrap_or_else(|| "—".into());
+        let created_at = pod.created_at.to_rfc3339();
+        let owner = if pod.is_owner {
+            Span::styled("yes", Style::default().fg(Color::Green))
+        } else {
+            Span::styled("no", Style::default().fg(Color::Red))
+        };
+
+        let lines = vec![
+            field(
+                "Name",
+                Span::styled(
+                    pod.name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ),
+            field("Display name", Span::raw(display_name)),
+            field(
+                "Head",
+                Span::styled(pod.head.to_string(), Style::default().fg(Color::Cyan)),
+            ),
+            field(
+                "Created at",
+                Span::styled(created_at, Style::default().fg(Color::Yellow)),
+            ),
+            field("Owner", owner),
+        ];
+
+        Paragraph::new(lines).render(area, buf);
     }
 }
