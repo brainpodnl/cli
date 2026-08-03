@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -50,6 +50,7 @@ pub async fn write(output: CommandOutput, json: bool) -> Result<()> {
 
 fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
     let stdout = io::stdout();
+    let color = !json && stdout.is_terminal();
     let mut stdout = stdout.lock();
 
     if json {
@@ -58,7 +59,7 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    for line in render(value, view) {
+    for line in render(value, view, color) {
         writeln!(stdout, "{line}")?;
     }
     Ok(())
@@ -66,6 +67,7 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
 
 async fn write_event_watch(mut watch: EventWatch, json: bool) -> Result<()> {
     let stdout = io::stdout();
+    let color = !json && stdout.is_terminal();
     let mut stdout = stdout.lock();
 
     while let Some(message) = watch.next().await? {
@@ -76,7 +78,7 @@ async fn write_event_watch(mut watch: EventWatch, json: bool) -> Result<()> {
                 } else {
                     let value: Value = serde_json::from_str(&message.data)
                         .context("Brainpod event stream returned invalid event JSON")?;
-                    writeln!(stdout, "{}", render_event(&value))?;
+                    writeln!(stdout, "{}", render_event(&value, color))?;
                 }
                 stdout.flush()?;
             }
@@ -119,7 +121,7 @@ fn stream_error(data: &str) -> anyhow::Error {
     anyhow!("Brainpod event stream returned an error: {message}")
 }
 
-fn render(value: &Value, view: View) -> Vec<String> {
+fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
@@ -141,7 +143,7 @@ fn render(value: &Value, view: View) -> Vec<String> {
         View::ResourceValidation => vec![format!("Valid: {}", yes_no(value_at(value, "valid")))],
         View::Deploy => render_deployment(value, "Deployment accepted"),
         View::Redeploy => render_deployment(value, "Redeployment accepted"),
-        View::Events => render_events(value),
+        View::Events => render_events(value, color),
     }
 }
 
@@ -389,7 +391,7 @@ fn render_deployment(value: &Value, heading: &str) -> Vec<String> {
     ]
 }
 
-fn render_events(value: &Value) -> Vec<String> {
+fn render_events(value: &Value, color: bool) -> Vec<String> {
     let events = value
         .get("items")
         .and_then(Value::as_array)
@@ -399,30 +401,65 @@ fn render_events(value: &Value) -> Vec<String> {
         return vec!["No events.".to_owned()];
     }
 
-    let mut lines = events.iter().map(render_event).collect::<Vec<_>>();
+    let mut lines = events
+        .iter()
+        .map(|event| render_event(event, color))
+        .collect::<Vec<_>>();
     append_next(value, &mut lines);
     lines
 }
 
-fn render_event(event: &Value) -> String {
-    let timestamp = field(event, "timestamp");
+fn render_event(event: &Value, color: bool) -> String {
+    let timestamp = style(&field(event, "timestamp"), "2", color);
     let kind = field(event, "kind");
     let body = field(event, "body").replace('\n', "\\n");
     match kind.as_str() {
-        "app" => format!(
-            "{timestamp} {:<5} {body}",
-            field(event, "level").to_uppercase()
+        "app" => {
+            let level = field(event, "level").to_uppercase();
+            let level = format!("{level:<5}");
+            let code = match level.trim() {
+                "TRACE" => "2",
+                "DEBUG" => "36",
+                "INFO" => "32",
+                "WARN" => "33",
+                "ERROR" => "1;31",
+                _ => "",
+            };
+            format!("{timestamp} {} {body}", style(&level, code, color))
+        }
+        "platform" => format!(
+            "{timestamp} {} {}: {body}",
+            style("PLATFORM", "35", color),
+            field(event, "reason")
         ),
-        "platform" => format!("{timestamp} PLATFORM {}: {body}", field(event, "reason")),
-        "httpAccess" => format!(
-            "{timestamp} HTTP  {} {} {}{} {}ms",
-            field(event, "status"),
-            field(event, "method"),
-            field(event, "host"),
-            field(event, "path"),
-            field(event, "durationMs")
-        ),
-        _ => format!("{timestamp} {kind} {body}"),
+        "httpAccess" => {
+            let status = field(event, "status");
+            let code = match status.chars().next() {
+                Some('2') => "32",
+                Some('3') => "36",
+                Some('4') => "33",
+                Some('5') => "1;31",
+                _ => "",
+            };
+            format!(
+                "{timestamp} {} {} {} {}{} {}ms",
+                style("HTTP ", "36", color),
+                style(&status, code, color),
+                field(event, "method"),
+                field(event, "host"),
+                field(event, "path"),
+                field(event, "durationMs")
+            )
+        }
+        _ => format!("{timestamp} {} {body}", style(&kind, "36", color)),
+    }
+}
+
+fn style(value: &str, code: &str, enabled: bool) -> String {
+    if enabled && !code.is_empty() {
+        format!("\u{1b}[{code}m{value}\u{1b}[0m")
+    } else {
+        value.to_owned()
     }
 }
 
@@ -651,8 +688,23 @@ mod tests {
         });
 
         assert_eq!(
-            render_event(&event),
+            render_event(&event, false),
             "2026-08-03T12:00:00Z PLATFORM Started: Container started"
+        );
+    }
+
+    #[test]
+    fn colors_event_level_when_enabled() {
+        let event = json!({
+            "timestamp": "2026-08-03T12:00:00Z",
+            "kind": "app",
+            "level": "info",
+            "body": "Ready",
+        });
+
+        assert_eq!(
+            render_event(&event, true),
+            "\u{1b}[2m2026-08-03T12:00:00Z\u{1b}[0m \u{1b}[32mINFO \u{1b}[0m Ready"
         );
     }
 

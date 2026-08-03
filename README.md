@@ -52,6 +52,8 @@ brainpod --json resource list
 
 Event watches are streamed as newline-delimited JSON so each event is available immediately. Each line contains the SSE event name, event ID, and decoded data.
 
+Text event output uses color for timestamps, levels, platform events, and HTTP statuses when stdout is a terminal. JSON and redirected output never contain ANSI color sequences.
+
 Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details. Account-limit validation errors include instructions and an `upgradeUrl` pointing to `https://brainpod.io/onboarding?upgrade=1`.
 
 ## Commands
