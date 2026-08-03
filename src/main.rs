@@ -1,48 +1,159 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
+use std::process::ExitCode;
 
-mod cmd;
-mod draw;
-mod widgets;
+use anyhow::{Result, anyhow};
+use clap::Parser;
+use serde_json::{Value, json};
+
 mod client;
+mod cmd;
+mod config;
+mod output;
 
-use client::{auth::ApiKey, Client};
+use client::{ApiError, Client};
+use cmd::Command;
+use config::{Config, DEFAULT_ENDPOINT};
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[derive(Debug, Parser)]
+#[command(
+    name = "brainpod",
+    version,
+    about = "Manage Brainpod deployments and resources"
+)]
 struct Opts {
-    /// Brainpod API endpoint to use
-    #[arg(
-        long,
-        env = "BRAINPOD_API_ENDPOINT",
-        default_value = "https://api.brainpod.io"
-    )]
-    endpoint: String,
+    /// Emit one JSON document instead of line-oriented text
+    #[arg(long, global = true)]
+    json: bool,
 
-    #[arg(long, env = "BRAINPOD_API_KEY")]
-    api_key: ApiKey,
+    /// Brainpod API endpoint (overrides environment and config)
+    #[arg(long, global = true)]
+    endpoint: Option<String>,
+
+    /// Brainpod API key (overrides environment and config)
+    #[arg(long, global = true)]
+    api_key: Option<String>,
+
+    /// Default pod for pod-scoped commands
+    #[arg(long, global = true)]
+    pod: Option<String>,
 
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Subcommand, Debug)]
-enum Command {
-    Pod(cmd::pod::Opts),
-    List(cmd::list::Opts),
-}
+#[tokio::main]
+async fn main() -> ExitCode {
+    let opts = Opts::parse();
+    let json_output = opts.json;
 
-async fn handle(client: Client, command: Command) -> Result<()> {
-    match command {
-        Command::Pod(opts) => cmd::pod::handle(client, opts).await,
-        Command::List(opts) => cmd::list::handle(client, opts).await,
+    match run(opts).await {
+        Ok(value) => match output::write(&value, json_output) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
+            Err(error) => {
+                write_error(&error, json_output);
+                ExitCode::FAILURE
+            }
+        },
+        Err(error) => {
+            write_error(&error, json_output);
+            ExitCode::FAILURE
+        }
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let opts = Opts::parse();
-    let client = Client::try_new(&opts.endpoint, &opts.api_key)?;
+async fn run(opts: Opts) -> Result<output::CommandOutput> {
+    let config_path = Config::path()?;
+    let mut config = Config::load(&config_path)?;
 
-    handle(client, opts.command).await
+    let endpoint = match opts
+        .endpoint
+        .or_else(|| environment("BRAINPOD_API_ENDPOINT"))
+        .or_else(|| config.endpoint.clone())
+    {
+        Some(endpoint) => endpoint,
+        None => DEFAULT_ENDPOINT.to_owned(),
+    };
+    let api_key = opts
+        .api_key
+        .or_else(|| environment("BRAINPOD_API_KEY"))
+        .or_else(|| config.api_key.clone());
+    let pod = opts
+        .pod
+        .or_else(|| environment("BRAINPOD_POD"))
+        .or_else(|| config.pod.clone());
+
+    let client = if cmd::needs_client(&opts.command) {
+        let api_key = api_key.ok_or_else(|| {
+            anyhow!(
+                "API key is required; pass --api-key, set BRAINPOD_API_KEY, or run `brainpod config set api-key <key>`"
+            )
+        })?;
+        Some(Client::try_new(&endpoint, &api_key)?)
+    } else {
+        None
+    };
+
+    cmd::handle(
+        opts.command,
+        client.as_ref(),
+        pod.as_deref(),
+        &mut config,
+        &config_path,
+    )
+    .await
+}
+
+fn environment(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn write_error(error: &anyhow::Error, json_output: bool) {
+    if json_output {
+        let value = match error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<ApiError>())
+        {
+            Some(api_error) => api_error_json(api_error),
+            None => json!({
+                "error": {
+                    "code": "CLI_ERROR",
+                    "message": format!("{error:#}"),
+                }
+            }),
+        };
+        match serde_json::to_string(&value) {
+            Ok(value) => eprintln!("{value}"),
+            Err(_) => eprintln!(
+                "{{\"error\":{{\"code\":\"CLI_ERROR\",\"message\":\"failed to serialize error\"}}}}"
+            ),
+        }
+    } else {
+        eprintln!("error: {error:#}");
+    }
+}
+
+fn api_error_json(api_error: &ApiError) -> Value {
+    let mut body = api_error.body.clone();
+    if let Some(error) = body.get_mut("error").and_then(Value::as_object_mut) {
+        error.insert("httpStatus".to_owned(), json!(api_error.status.as_u16()));
+        body
+    } else {
+        json!({
+            "error": {
+                "code": "API_ERROR",
+                "message": api_error.to_string(),
+                "httpStatus": api_error.status.as_u16(),
+                "response": body,
+            }
+        })
+    }
+}
+
+fn is_broken_pipe(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
 }
