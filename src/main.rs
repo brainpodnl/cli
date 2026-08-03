@@ -1,12 +1,13 @@
 use std::process::ExitCode;
 
 use anyhow::{Result, anyhow};
-use clap::Parser;
+use clap::{CommandFactory as _, Parser};
 use serde_json::{Value, json};
 
 mod client;
 mod cmd;
 mod config;
+mod describe;
 mod output;
 
 use client::{ApiError, Client};
@@ -19,9 +20,10 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
 #[command(
     name = "brainpod",
     version,
-    about = "Manage Brainpod deployments and resources"
+    about = "Manage Brainpod deployments and resources",
+    after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
-struct Opts {
+pub(crate) struct Opts {
     /// Emit JSON instead of line-oriented text (NDJSON for event watches)
     #[arg(long, global = true)]
     json: bool,
@@ -64,6 +66,13 @@ async fn main() -> ExitCode {
 }
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
+    if let Command::Describe(args) = &opts.command {
+        return Ok(output::CommandOutput::new(
+            describe::generate(Opts::command(), &args.command)?,
+            output::View::Describe,
+        ));
+    }
+
     let config_path = Config::path()?;
     let mut config = Config::load(&config_path)?;
 
@@ -176,6 +185,19 @@ mod tests {
     use clap::Parser;
 
     use super::{Command, Opts};
+
+    #[test]
+    fn parses_describe_path() {
+        let opts = Opts::try_parse_from(["brainpod", "describe", "resource", "create"]).unwrap();
+
+        let Command::Describe(args) = opts.command else {
+            panic!("expected describe command");
+        };
+        assert_eq!(
+            args.command,
+            vec!["resource".to_owned(), "create".to_owned()]
+        );
+    }
 
     #[test]
     fn parses_event_watch() {

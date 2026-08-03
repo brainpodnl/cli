@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory as _, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 
 use crate::client::Client;
@@ -12,6 +12,8 @@ use crate::output::{CommandOutput, View};
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Describe CLI commands and their machine-readable contract
+    Describe(DescribeArgs),
     /// Manage local CLI configuration
     Config(ConfigArgs),
     /// Show the authenticated user
@@ -30,6 +32,13 @@ pub enum Command {
     Redeploy,
     /// Query pod events
     Events(EventsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DescribeArgs {
+    /// Command path to describe; omit to return the complete command tree
+    #[arg(value_name = "COMMAND", num_args = 0..)]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -315,7 +324,7 @@ fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> 
 }
 
 pub fn needs_client(command: &Command) -> bool {
-    !matches!(command, Command::Config(_))
+    !matches!(command, Command::Describe(_) | Command::Config(_))
 }
 
 pub async fn handle(
@@ -326,6 +335,10 @@ pub async fn handle(
     config_path: &Path,
 ) -> Result<CommandOutput> {
     match command {
+        Command::Describe(args) => Ok(CommandOutput::new(
+            crate::describe::generate(crate::Opts::command(), &args.command)?,
+            View::Describe,
+        )),
         Command::Config(args) => handle_config(args, config, config_path),
         Command::Whoami => Ok(CommandOutput::new(
             client_required(client)?.get(&["v1", "me"], &[]).await?,

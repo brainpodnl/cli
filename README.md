@@ -59,6 +59,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 ## Commands
 
 ```text
+brainpod describe [<command>...]
 brainpod whoami
 brainpod pod list
 brainpod pod create [--display-name <name>]
@@ -95,6 +96,18 @@ Events use the resource URN returned by resource list, get, or mutation response
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
+
+## Command discovery
+
+`describe` exposes the installed CLI's version-matched command contract without requiring an API key. Omit the command path to return the complete command tree, or select a command for focused metadata:
+
+```sh
+brainpod describe
+brainpod describe resource create
+brainpod describe resource create --json
+```
+
+JSON descriptions include command paths, usage, arguments, allowed values, defaults, conflicts, authentication and pod requirements, side effects, examples, and related operational guidance. The command syntax is generated from the same Clap definitions used for argument parsing.
 
 ## Blueprint input
 

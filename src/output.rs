@@ -22,6 +22,7 @@ impl CommandOutput {
 
 #[derive(Clone, Copy)]
 pub enum View {
+    Describe,
     ConfigShow,
     ConfigPath,
     ConfigChange,
@@ -125,6 +126,7 @@ fn stream_error(data: &str) -> anyhow::Error {
 
 fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
+        View::Describe => render_describe(value),
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
         View::ConfigChange => render_config_change(value),
@@ -148,6 +150,134 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::Deploy => render_deployment(value, "Deployment accepted"),
         View::Redeploy => render_deployment(value, "Redeployment accepted"),
         View::Events => render_events(value, color),
+    }
+}
+
+fn render_describe(value: &Value) -> Vec<String> {
+    let Some(command) = value.get("command") else {
+        return vec!["No command description returned.".to_owned()];
+    };
+
+    let mut lines = vec![
+        field(command, "invocation"),
+        field(command, "summary"),
+        String::new(),
+        format!("Usage: {}", field(command, "usage")),
+        format!(
+            "API key: {}",
+            requirement(command.pointer("/requirements/apiKey"))
+        ),
+        format!("Pod: {}", requirement(command.pointer("/requirements/pod"))),
+        format!("Effect: {}", field(command, "effectDescription")),
+    ];
+
+    let arguments = command
+        .get("arguments")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !arguments.is_empty() {
+        lines.push(String::new());
+        lines.push("Arguments".to_owned());
+        lines.extend(arguments.iter().map(render_describe_argument));
+    }
+
+    let global_arguments = value
+        .get("globalArguments")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !global_arguments.is_empty() {
+        lines.push(String::new());
+        lines.push("Global options".to_owned());
+        lines.extend(global_arguments.iter().map(render_describe_argument));
+    }
+
+    let subcommands = command
+        .get("subcommands")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !subcommands.is_empty() {
+        lines.push(String::new());
+        lines.push("Subcommands".to_owned());
+        lines.extend(table(
+            &["COMMAND", "DESCRIPTION", "EFFECT"],
+            subcommands
+                .iter()
+                .map(|subcommand| {
+                    vec![
+                        field(subcommand, "invocation"),
+                        field(subcommand, "summary"),
+                        field(subcommand, "effect"),
+                    ]
+                })
+                .collect(),
+        ));
+    }
+
+    let examples = command
+        .get("examples")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !examples.is_empty() {
+        lines.push(String::new());
+        lines.push("Examples".to_owned());
+        lines.extend(examples.iter().map(|example| format!("  {}", scalar(example))));
+    }
+
+    let next_steps = command
+        .get("nextSteps")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !next_steps.is_empty() {
+        lines.push(String::new());
+        lines.push("Next steps".to_owned());
+        lines.extend(
+            next_steps
+                .iter()
+                .map(|item| format!("  - {}", scalar(item))),
+        );
+    }
+
+    let guidance = value
+        .get("guidance")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !guidance.is_empty() {
+        lines.push(String::new());
+        lines.push("Guidance".to_owned());
+        lines.extend(
+            guidance
+                .iter()
+                .map(|item| format!("  - {}", scalar(item))),
+        );
+    }
+
+    lines
+}
+
+fn render_describe_argument(argument: &Value) -> String {
+    let required = if value_at(argument, "required").and_then(Value::as_bool) == Some(true) {
+        " (required)"
+    } else {
+        ""
+    };
+    format!(
+        "  {}{required}: {}",
+        field(argument, "syntax"),
+        field(argument, "help")
+    )
+}
+
+fn requirement(value: Option<&Value>) -> &'static str {
+    match value.and_then(Value::as_bool) {
+        Some(true) => "required",
+        Some(false) => "not required",
+        None => "depends on subcommand",
     }
 }
 
