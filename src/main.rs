@@ -186,7 +186,7 @@ mod tests {
             "--kind",
             "platform",
             "--resource",
-            "worker",
+            "urn:brain:app:default:worker",
             "--duration",
             "20",
             "--last-event-id",
@@ -198,6 +198,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_events_without_kind() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "events",
+            "--resource",
+            "urn:brain:route:default:public",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Events(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_event_resource_urn() {
+        let result = Opts::try_parse_from(["brainpod", "events", "--resource", "api"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn rejects_invalid_event_watch_duration() {
         let result = Opts::try_parse_from([
             "brainpod",
@@ -206,7 +226,7 @@ mod tests {
             "--kind",
             "app",
             "--resource",
-            "api",
+            "urn:brain:app:default:api",
             "--duration",
             "21",
         ]);
@@ -222,7 +242,7 @@ mod tests {
             "--kind",
             "app",
             "--resource",
-            "api",
+            "urn:brain:app:default:api",
             "--duration",
             "10",
         ]);

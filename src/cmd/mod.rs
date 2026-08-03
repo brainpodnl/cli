@@ -176,14 +176,14 @@ pub struct DeployArgs {
 
 #[derive(Debug, Args)]
 pub struct EventsArgs {
-    /// Event source
+    /// Event stream; omit to return all streams for the resource
     #[arg(long)]
-    kind: EventKind,
-    /// Resource name
-    #[arg(long)]
+    kind: Option<EventKind>,
+    /// Event-capable resource URN
+    #[arg(long, value_name = "URN", value_parser = parse_event_resource_urn)]
     resource: String,
     /// Filter app events by level
-    #[arg(long)]
+    #[arg(long, requires = "kind")]
     level: Option<EventLevel>,
     /// Full-text search query
     #[arg(long)]
@@ -270,6 +270,24 @@ impl EventRange {
             Self::OneDay => "24h",
             Self::SevenDays => "7d",
         }
+    }
+}
+
+fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> {
+    let mut parts = value.split(':');
+    let valid = parts.next() == Some("urn")
+        && parts.next() == Some("brain")
+        && parts.next().is_some_and(|kind| {
+            matches!(kind, "app" | "postgres" | "mariadb" | "valkey" | "route")
+        })
+        && parts.next() == Some("default")
+        && parts.next().is_some_and(|name| !name.is_empty())
+        && parts.next().is_none();
+
+    if valid {
+        Ok(value.to_owned())
+    } else {
+        Err("must match urn:brain:<app|postgres|mariadb|valkey|route>:default:<name>".to_owned())
     }
 }
 
@@ -542,12 +560,19 @@ async fn handle_resource(client: &Client, pod: &str, args: ResourceArgs) -> Resu
 }
 
 async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<CommandOutput> {
+    if args.level.is_some() && !matches!(args.kind.as_ref(), Some(EventKind::App)) {
+        return Err(anyhow!("--level requires --kind app"));
+    }
+
     let mut query = vec![
-        ("kind", args.kind.as_api_str().to_owned()),
         ("resource", args.resource),
-        ("namespace", "default".to_owned()),
         ("range", args.range.as_api_str().to_owned()),
     ];
+    push_query(
+        &mut query,
+        "kind",
+        args.kind.map(|kind| kind.as_api_str().to_owned()),
+    );
     push_query(
         &mut query,
         "level",

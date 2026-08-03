@@ -75,14 +75,16 @@ brainpod --pod <pod> resource delete <kind> <name>
 brainpod --pod <pod> deploy [--summary <text>]
 brainpod --pod <pod> redeploy
 
-brainpod --pod <pod> events --kind <app|http-access|platform> --resource <name> \
+brainpod --pod <pod> events --resource <urn> [--kind <app|http-access|platform>] \
   [--level <trace|debug|info|warn|error>] [--search <text>] \
   [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>]
-brainpod --pod <pod> events --watch --kind <app|http-access|platform> --resource <name> \
-  [--level <trace|debug|info|warn|error>] [--search <text>] \
-  [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>] \
+brainpod --pod <pod> events --watch --resource <urn> \
+  [--kind <app|http-access|platform>] [--level <trace|debug|info|warn|error>] \
+  [--search <text>] [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>] \
   [--duration <1-20>] [--last-event-id <id>]
 ```
+
+Events use the resource URN returned by resource list, get, or mutation responses, such as `urn:brain:app:default:api`. Omit `--kind` to return every stream available for that resource. `--level` requires `--kind app`.
 
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
