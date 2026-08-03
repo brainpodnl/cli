@@ -13,6 +13,8 @@ use client::{ApiError, Client};
 use cmd::Command;
 use config::{Config, DEFAULT_ENDPOINT};
 
+const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "brainpod",
@@ -110,11 +112,12 @@ fn environment(name: &str) -> Option<String> {
 }
 
 fn write_error(error: &anyhow::Error, json_output: bool) {
+    let api_error = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ApiError>());
+
     if json_output {
-        let value = match error
-            .chain()
-            .find_map(|cause| cause.downcast_ref::<ApiError>())
-        {
+        let value = match api_error {
             Some(api_error) => api_error_json(api_error),
             None => json!({
                 "error": {
@@ -131,6 +134,9 @@ fn write_error(error: &anyhow::Error, json_output: bool) {
         }
     } else {
         eprintln!("error: {error:#}");
+        if api_error.is_some_and(ApiError::is_account_limit_error) {
+            eprintln!("Add your payment details to increase your account limits: {UPGRADE_URL}");
+        }
     }
 }
 
@@ -138,6 +144,13 @@ fn api_error_json(api_error: &ApiError) -> Value {
     let mut body = api_error.body.clone();
     if let Some(error) = body.get_mut("error").and_then(Value::as_object_mut) {
         error.insert("httpStatus".to_owned(), json!(api_error.status.as_u16()));
+        if api_error.is_account_limit_error() {
+            error.insert(
+                "resolution".to_owned(),
+                json!("Add your payment details to increase your account limits"),
+            );
+            error.insert("upgradeUrl".to_owned(), json!(UPGRADE_URL));
+        }
         body
     } else {
         json!({

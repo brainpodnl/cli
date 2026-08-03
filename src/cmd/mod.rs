@@ -65,6 +65,11 @@ pub struct PodArgs {
 enum PodCommand {
     /// List pods
     List,
+    /// Create an empty pod with a mutable draft head
+    Create {
+        #[arg(long)]
+        display_name: Option<String>,
+    },
     /// Get a pod
     Get { pod: String },
 }
@@ -380,6 +385,13 @@ async fn handle_pod(client: &Client, args: PodArgs) -> Result<CommandOutput> {
             client.get(&["v1", "pods"], &[]).await?,
             View::PodList,
         )),
+        PodCommand::Create { display_name } => {
+            let body = display_name.map(|display_name| json!({ "displayName": display_name }));
+            Ok(CommandOutput::new(
+                client.post(&["v1", "pods"], &[], body.as_ref()).await?,
+                View::PodCreated,
+            ))
+        }
         PodCommand::Get { pod } => Ok(CommandOutput::new(
             client.get(&["v1", "pods", &pod], &[]).await?,
             View::PodGet,

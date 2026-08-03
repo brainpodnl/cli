@@ -50,13 +50,14 @@ brainpod pod list --json
 brainpod --json resource list
 ```
 
-Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details.
+Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details. Account-limit validation errors include instructions and an `upgradeUrl` pointing to `https://brainpod.io/onboarding?upgrade=1`.
 
 ## Commands
 
 ```text
 brainpod whoami
 brainpod pod list
+brainpod pod create [--display-name <name>]
 brainpod pod get <pod>
 
 brainpod --pod <pod> revision list [--cursor <uuid>] [--limit <1-50>]

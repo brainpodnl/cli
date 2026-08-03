@@ -107,6 +107,24 @@ pub struct ApiError {
     pub body: Value,
 }
 
+impl ApiError {
+    pub fn is_account_limit_error(&self) -> bool {
+        self.body.pointer("/error/code").and_then(Value::as_str) == Some("VALIDATION_ERROR")
+            && self
+                .body
+                .pointer("/error/details")
+                .and_then(Value::as_array)
+                .is_some_and(|details| {
+                    details.iter().any(|detail| {
+                        detail
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .is_some_and(|path| path.starts_with("limits."))
+                    })
+                })
+    }
+}
+
 impl fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let error = self.body.get("error");

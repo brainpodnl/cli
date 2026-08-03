@@ -21,6 +21,7 @@ pub enum View {
     ConfigChange,
     Whoami,
     PodList,
+    PodCreated,
     PodGet,
     RevisionList,
     RevisionGet,
@@ -57,6 +58,11 @@ fn render(output: &CommandOutput) -> Vec<String> {
         View::ConfigChange => render_config_change(&output.value),
         View::Whoami => vec![format!("Email: {}", field(&output.value, "email"))],
         View::PodList => render_pod_list(&output.value),
+        View::PodCreated => {
+            let mut lines = vec!["Pod created".to_owned(), String::new()];
+            lines.extend(render_pod(&output.value));
+            lines
+        }
         View::PodGet => render_pod(&output.value),
         View::RevisionList => render_revision_list(&output.value),
         View::RevisionGet => render_revision(&output.value),
