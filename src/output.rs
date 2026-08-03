@@ -1,16 +1,22 @@
 use std::io::{self, Write};
 
-use anyhow::Result;
-use serde_json::Value;
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value, json};
 
-pub struct CommandOutput {
-    pub value: Value,
-    pub view: View,
+use crate::client::{EventStreamMessage, EventWatch};
+
+pub enum CommandOutput {
+    Buffered { value: Value, view: View },
+    EventWatch(EventWatch),
 }
 
 impl CommandOutput {
     pub const fn new(value: Value, view: View) -> Self {
-        Self { value, view }
+        Self::Buffered { value, view }
+    }
+
+    pub const fn event_watch(watch: EventWatch) -> Self {
+        Self::EventWatch(watch)
     }
 }
 
@@ -35,48 +41,107 @@ pub enum View {
     Events,
 }
 
-pub fn write(output: &CommandOutput, json: bool) -> Result<()> {
+pub async fn write(output: CommandOutput, json: bool) -> Result<()> {
+    match output {
+        CommandOutput::Buffered { value, view } => write_buffered(&value, view, json),
+        CommandOutput::EventWatch(watch) => write_event_watch(watch, json).await,
+    }
+}
+
+fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
     if json {
-        serde_json::to_writer_pretty(&mut stdout, &output.value)?;
+        serde_json::to_writer_pretty(&mut stdout, value)?;
         writeln!(stdout)?;
         return Ok(());
     }
 
-    for line in render(output) {
+    for line in render(value, view) {
         writeln!(stdout, "{line}")?;
     }
     Ok(())
 }
 
-fn render(output: &CommandOutput) -> Vec<String> {
-    match output.view {
-        View::ConfigShow => render_config_show(&output.value),
-        View::ConfigPath => vec![format!("Config: {}", field(&output.value, "path"))],
-        View::ConfigChange => render_config_change(&output.value),
-        View::Whoami => vec![format!("Email: {}", field(&output.value, "email"))],
-        View::PodList => render_pod_list(&output.value),
+async fn write_event_watch(mut watch: EventWatch, json: bool) -> Result<()> {
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    while let Some(message) = watch.next().await? {
+        match message.event.as_str() {
+            "event" | "message" => {
+                if json {
+                    write_stream_json(&mut stdout, &message)?;
+                } else {
+                    let value: Value = serde_json::from_str(&message.data)
+                        .context("Brainpod event stream returned invalid event JSON")?;
+                    writeln!(stdout, "{}", render_event(&value))?;
+                }
+                stdout.flush()?;
+            }
+            "error" => return Err(stream_error(&message.data)),
+            event => {
+                return Err(anyhow!(
+                    "Brainpod event stream returned unknown event {event}"
+                ));
+            }
+        }
+    }
+
+    Err(anyhow!("Brainpod event stream ended without an end event"))
+}
+
+fn write_stream_json(writer: &mut impl Write, message: &EventStreamMessage) -> Result<()> {
+    let data = serde_json::from_str(&message.data).unwrap_or_else(|_| json!(message.data));
+    serde_json::to_writer(
+        &mut *writer,
+        &json!({
+            "event": &message.event,
+            "id": &message.id,
+            "data": data,
+        }),
+    )?;
+    writeln!(writer)?;
+    Ok(())
+}
+
+fn stream_error(data: &str) -> anyhow::Error {
+    let message = serde_json::from_str::<Value>(data)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| data.to_owned());
+    anyhow!("Brainpod event stream returned an error: {message}")
+}
+
+fn render(value: &Value, view: View) -> Vec<String> {
+    match view {
+        View::ConfigShow => render_config_show(value),
+        View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
+        View::ConfigChange => render_config_change(value),
+        View::Whoami => vec![format!("Email: {}", field(value, "email"))],
+        View::PodList => render_pod_list(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
-            lines.extend(render_pod(&output.value));
+            lines.extend(render_pod(value));
             lines
         }
-        View::PodGet => render_pod(&output.value),
-        View::RevisionList => render_revision_list(&output.value),
-        View::RevisionGet => render_revision(&output.value),
-        View::RevisionDiff => render_revision_diff(&output.value),
-        View::ResourceList => render_resource_list(&output.value),
-        View::ResourceGet => render_resource(&output.value),
-        View::ResourceMutation => render_resource_mutation(&output.value),
-        View::ResourceValidation => vec![format!(
-            "Valid: {}",
-            yes_no(value_at(&output.value, "valid"))
-        )],
-        View::Deploy => render_deployment(&output.value, "Deployment accepted"),
-        View::Redeploy => render_deployment(&output.value, "Redeployment accepted"),
-        View::Events => render_events(&output.value),
+        View::PodGet => render_pod(value),
+        View::RevisionList => render_revision_list(value),
+        View::RevisionGet => render_revision(value),
+        View::RevisionDiff => render_revision_diff(value),
+        View::ResourceList => render_resource_list(value),
+        View::ResourceGet => render_resource(value),
+        View::ResourceMutation => render_resource_mutation(value),
+        View::ResourceValidation => vec![format!("Valid: {}", yes_no(value_at(value, "valid")))],
+        View::Deploy => render_deployment(value, "Deployment accepted"),
+        View::Redeploy => render_deployment(value, "Redeployment accepted"),
+        View::Events => render_events(value),
     }
 }
 
@@ -334,31 +399,31 @@ fn render_events(value: &Value) -> Vec<String> {
         return vec!["No events.".to_owned()];
     }
 
-    let mut lines = Vec::with_capacity(events.len() + 2);
-    for event in events {
-        let timestamp = field(event, "timestamp");
-        let kind = field(event, "kind");
-        let body = field(event, "body").replace('\n', "\\n");
-        let line = match kind.as_str() {
-            "app" => format!(
-                "{timestamp} {:<5} {body}",
-                field(event, "level").to_uppercase()
-            ),
-            "k8s" => format!("{timestamp} K8S   {}: {body}", field(event, "reason")),
-            "httpAccess" => format!(
-                "{timestamp} HTTP  {} {} {}{} {}ms",
-                field(event, "status"),
-                field(event, "method"),
-                field(event, "host"),
-                field(event, "path"),
-                field(event, "durationMs")
-            ),
-            _ => format!("{timestamp} {kind} {body}"),
-        };
-        lines.push(line);
-    }
+    let mut lines = events.iter().map(render_event).collect::<Vec<_>>();
     append_next(value, &mut lines);
     lines
+}
+
+fn render_event(event: &Value) -> String {
+    let timestamp = field(event, "timestamp");
+    let kind = field(event, "kind");
+    let body = field(event, "body").replace('\n', "\\n");
+    match kind.as_str() {
+        "app" => format!(
+            "{timestamp} {:<5} {body}",
+            field(event, "level").to_uppercase()
+        ),
+        "platform" => format!("{timestamp} PLATFORM {}: {body}", field(event, "reason")),
+        "httpAccess" => format!(
+            "{timestamp} HTTP  {} {} {}{} {}ms",
+            field(event, "status"),
+            field(event, "method"),
+            field(event, "host"),
+            field(event, "path"),
+            field(event, "durationMs")
+        ),
+        _ => format!("{timestamp} {kind} {body}"),
+    }
 }
 
 fn revision_reference(value: &Value, path: &str) -> String {
@@ -565,5 +630,60 @@ fn yes_no(value: Option<&Value>) -> String {
         Some(true) => "yes".to_owned(),
         Some(false) => "no".to_owned(),
         None => "-".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::client::EventStreamMessage;
+
+    use super::{render_event, stream_error, write_stream_json};
+
+    #[test]
+    fn renders_platform_event() {
+        let event = json!({
+            "timestamp": "2026-08-03T12:00:00Z",
+            "kind": "platform",
+            "reason": "Started",
+            "body": "Container started",
+        });
+
+        assert_eq!(
+            render_event(&event),
+            "2026-08-03T12:00:00Z PLATFORM Started: Container started"
+        );
+    }
+
+    #[test]
+    fn writes_stream_message_as_ndjson() {
+        let message = EventStreamMessage {
+            event: "event".to_owned(),
+            id: Some("event-1".to_owned()),
+            data: r#"{"kind":"app"}"#.to_owned(),
+        };
+        let mut output = Vec::new();
+
+        write_stream_json(&mut output, &message).unwrap();
+
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output).unwrap(),
+            json!({
+                "event": "event",
+                "id": "event-1",
+                "data": {"kind": "app"},
+            })
+        );
+    }
+
+    #[test]
+    fn extracts_stream_error_message() {
+        let error = stream_error(r#"{"error":{"message":"stream failed"}}"#);
+
+        assert_eq!(
+            error.to_string(),
+            "Brainpod event stream returned an error: stream failed"
+        );
     }
 }

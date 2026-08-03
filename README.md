@@ -1,6 +1,6 @@
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive one JSON document matching the API response.
+A non-interactive CLI for managing Brainpod pods, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive JSON matching the API response; event watches use NDJSON.
 
 Image building is intentionally outside the current scope.
 
@@ -50,6 +50,8 @@ brainpod pod list --json
 brainpod --json resource list
 ```
 
+Event watches are streamed as newline-delimited JSON so each event is available immediately. Each line contains the SSE event name, event ID, and decoded data.
+
 Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details. Account-limit validation errors include instructions and an `upgradeUrl` pointing to `https://brainpod.io/onboarding?upgrade=1`.
 
 ## Commands
@@ -73,10 +75,16 @@ brainpod --pod <pod> resource delete <kind> <name>
 brainpod --pod <pod> deploy [--summary <text>]
 brainpod --pod <pod> redeploy
 
-brainpod --pod <pod> events --kind <app|http-access|k8s> --resource <name> \
+brainpod --pod <pod> events --kind <app|http-access|platform> --resource <name> \
   [--level <trace|debug|info|warn|error>] [--search <text>] \
   [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>]
+brainpod --pod <pod> events --watch --kind <app|http-access|platform> --resource <name> \
+  [--level <trace|debug|info|warn|error>] [--search <text>] \
+  [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>] \
+  [--duration <1-20>] [--last-event-id <id>]
 ```
+
+Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 

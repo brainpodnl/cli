@@ -194,6 +194,15 @@ pub struct EventsArgs {
     /// Pagination cursor from the previous response
     #[arg(long)]
     cursor: Option<String>,
+    /// Stream events instead of returning one page
+    #[arg(long)]
+    watch: bool,
+    /// Seconds per event-stream request
+    #[arg(long, requires = "watch", value_parser = clap::value_parser!(u8).range(1..=20))]
+    duration: Option<u8>,
+    /// Resume a stream after this SSE event ID
+    #[arg(long, requires = "watch")]
+    last_event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -201,7 +210,7 @@ enum EventKind {
     App,
     #[value(name = "http-access")]
     HttpAccess,
-    K8s,
+    Platform,
 }
 
 impl EventKind {
@@ -209,7 +218,7 @@ impl EventKind {
         match self {
             Self::App => "app",
             Self::HttpAccess => "httpAccess",
-            Self::K8s => "k8s",
+            Self::Platform => "platform",
         }
     }
 }
@@ -546,6 +555,20 @@ async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<C
     );
     push_query(&mut query, "search", args.search);
     push_query(&mut query, "cursor", args.cursor);
+
+    if args.watch {
+        query.push(("duration", args.duration.unwrap_or(10).to_string()));
+        return Ok(CommandOutput::event_watch(
+            client
+                .get_event_watch(
+                    &["v1", "pods", pod, "events", "watch"],
+                    &query,
+                    args.last_event_id.as_deref(),
+                )
+                .await?,
+        ));
+    }
+
     Ok(CommandOutput::new(
         client.get(&["v1", "pods", pod, "events"], &query).await?,
         View::Events,

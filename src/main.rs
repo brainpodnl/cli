@@ -22,7 +22,7 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
     about = "Manage Brainpod deployments and resources"
 )]
 struct Opts {
-    /// Emit one JSON document instead of line-oriented text
+    /// Emit JSON instead of line-oriented text (NDJSON for event watches)
     #[arg(long, global = true)]
     json: bool,
 
@@ -48,7 +48,7 @@ async fn main() -> ExitCode {
     let json_output = opts.json;
 
     match run(opts).await {
-        Ok(value) => match output::write(&value, json_output) {
+        Ok(value) => match output::write(value, json_output).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
             Err(error) => {
@@ -169,4 +169,64 @@ fn is_broken_pipe(error: &anyhow::Error) -> bool {
         .chain()
         .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
         .any(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Command, Opts};
+
+    #[test]
+    fn parses_event_watch() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "events",
+            "--watch",
+            "--kind",
+            "platform",
+            "--resource",
+            "worker",
+            "--duration",
+            "20",
+            "--last-event-id",
+            "event-1",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Events(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_event_watch_duration() {
+        let result = Opts::try_parse_from([
+            "brainpod",
+            "events",
+            "--watch",
+            "--kind",
+            "app",
+            "--resource",
+            "api",
+            "--duration",
+            "21",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_watch_options_without_watch() {
+        let result = Opts::try_parse_from([
+            "brainpod",
+            "events",
+            "--kind",
+            "app",
+            "--resource",
+            "api",
+            "--duration",
+            "10",
+        ]);
+
+        assert!(result.is_err());
+    }
 }
