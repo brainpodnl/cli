@@ -1,6 +1,6 @@
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive JSON matching the API response; event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive JSON matching the API response; event watches use NDJSON.
 
 Image building is intentionally outside the current scope.
 
@@ -64,6 +64,10 @@ brainpod pod list
 brainpod pod create [--display-name <name>]
 brainpod pod get <pod>
 
+brainpod blueprint list
+brainpod blueprint get <blueprint>
+brainpod --pod <pod> blueprint install <blueprint> [--file <path|->]
+
 brainpod --pod <pod> revision list [--cursor <uuid>] [--limit <1-50>]
 brainpod --pod <pod> revision get <revision>
 brainpod --pod <pod> revision diff <revision> [--base <revision>]
@@ -91,6 +95,16 @@ Events use the resource URN returned by resource list, get, or mutation response
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
+
+## Blueprint input
+
+Blueprint install accepts an optional JSON object containing values from the blueprint's input schema. Omit `--file` to install with the blueprint defaults. Use `--file -` to read JSON from stdin. Installing changes the pod's mutable head but does not deploy it.
+
+```sh
+brainpod blueprint get laravel
+brainpod --pod my-pod blueprint install laravel --file blueprint-input.json
+brainpod --pod my-pod deploy --summary "Install Laravel blueprint"
+```
 
 ## Resource input
 

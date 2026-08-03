@@ -29,6 +29,8 @@ pub enum View {
     PodList,
     PodCreated,
     PodGet,
+    BlueprintList,
+    BlueprintGet,
     RevisionList,
     RevisionGet,
     RevisionDiff,
@@ -134,6 +136,8 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
             lines
         }
         View::PodGet => render_pod(value),
+        View::BlueprintList => render_blueprint_list(value),
+        View::BlueprintGet => render_blueprint(value),
         View::RevisionList => render_revision_list(value),
         View::RevisionGet => render_revision(value),
         View::RevisionDiff => render_revision_diff(value),
@@ -236,6 +240,65 @@ fn render_pod(value: &Value) -> Vec<String> {
     } else {
         lines.push("  None".to_owned());
     }
+    lines
+}
+
+fn render_blueprint_list(value: &Value) -> Vec<String> {
+    let Some(blueprints) = value.as_array() else {
+        return vec!["No blueprints returned.".to_owned()];
+    };
+    if blueprints.is_empty() {
+        return vec!["No blueprints.".to_owned()];
+    }
+
+    let rows = blueprints
+        .iter()
+        .map(|blueprint| {
+            vec![
+                field(blueprint, "id"),
+                field(blueprint, "name"),
+                field(blueprint, "category"),
+                field(blueprint, "version"),
+                string_list(blueprint.get("tags")),
+                field(blueprint, "tagline"),
+            ]
+        })
+        .collect();
+    table(
+        &["ID", "NAME", "CATEGORY", "VERSION", "TAGS", "TAGLINE"],
+        rows,
+    )
+}
+
+fn render_blueprint(value: &Value) -> Vec<String> {
+    let mut lines = vec![
+        format!("Blueprint: {}", field(value, "name")),
+        format!("ID: {}", field(value, "id")),
+        format!("Category: {}", field(value, "category")),
+        format!("Version: {}", field(value, "version")),
+        format!("Tags: {}", string_list(value.get("tags"))),
+        format!("Tagline: {}", field(value, "tagline")),
+        format!("Description: {}", field(value, "description")),
+        String::new(),
+        "Documentation".to_owned(),
+    ];
+    let body = value.get("body").and_then(Value::as_str).unwrap_or_default();
+    if body.is_empty() {
+        lines.push("  None".to_owned());
+    } else {
+        lines.extend(body.lines().map(|line| format!("  {line}")));
+    }
+
+    lines.push(String::new());
+    lines.push("Defaults".to_owned());
+    render_node(value.get("defaults").unwrap_or(&Value::Null), 2, &mut lines);
+    lines.push(String::new());
+    lines.push("Input schema".to_owned());
+    render_node(
+        value.get("inputSchema").unwrap_or(&Value::Null),
+        2,
+        &mut lines,
+    );
     lines
 }
 
@@ -660,6 +723,14 @@ fn scalar(value: &Value) -> String {
         Value::Number(value) => value.to_string(),
         _ => value.to_string(),
     }
+}
+
+fn string_list(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.iter().map(scalar).collect::<Vec<_>>().join(", "))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "-".to_owned())
 }
 
 fn yes_no(value: Option<&Value>) -> String {

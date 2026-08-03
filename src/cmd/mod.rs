@@ -18,6 +18,8 @@ pub enum Command {
     Whoami,
     /// Inspect pods
     Pod(PodArgs),
+    /// Browse and install blueprints
+    Blueprint(BlueprintArgs),
     /// Inspect pod revisions
     Revision(RevisionArgs),
     /// Create and manage pod resources
@@ -72,6 +74,27 @@ enum PodCommand {
     },
     /// Get a pod
     Get { pod: String },
+}
+
+#[derive(Debug, Args)]
+pub struct BlueprintArgs {
+    #[command(subcommand)]
+    command: BlueprintCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BlueprintCommand {
+    /// List available blueprints
+    List,
+    /// Get blueprint metadata, documentation, defaults, and input schema
+    Get { blueprint: String },
+    /// Install a blueprint on the pod's mutable head without deploying it
+    Install {
+        blueprint: String,
+        /// JSON object containing blueprint input; omit to use the defaults
+        #[arg(short, long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -309,6 +332,9 @@ pub async fn handle(
             View::Whoami,
         )),
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
+        Command::Blueprint(args) => {
+            handle_blueprint(client_required(client)?, pod, args).await
+        }
         Command::Revision(args) => {
             handle_revision(client_required(client)?, pod_required(pod)?, args).await
         }
@@ -423,6 +449,50 @@ async fn handle_pod(client: &Client, args: PodArgs) -> Result<CommandOutput> {
             client.get(&["v1", "pods", &pod], &[]).await?,
             View::PodGet,
         )),
+    }
+}
+
+async fn handle_blueprint(
+    client: &Client,
+    pod: Option<&str>,
+    args: BlueprintArgs,
+) -> Result<CommandOutput> {
+    match args.command {
+        BlueprintCommand::List => Ok(CommandOutput::new(
+            client.get(&["v1", "blueprints"], &[]).await?,
+            View::BlueprintList,
+        )),
+        BlueprintCommand::Get { blueprint } => Ok(CommandOutput::new(
+            client.get(&["v1", "blueprints", &blueprint], &[]).await?,
+            View::BlueprintGet,
+        )),
+        BlueprintCommand::Install { blueprint, file } => {
+            let input = match file {
+                Some(file) => read_json(&file)?,
+                None => json!({}),
+            };
+            if !input.is_object() {
+                return Err(anyhow!("blueprint input must be a JSON object"));
+            }
+            let body = json!({ "input": input });
+            Ok(CommandOutput::new(
+                client
+                    .post(
+                        &[
+                            "v1",
+                            "pods",
+                            pod_required(pod)?,
+                            "blueprints",
+                            &blueprint,
+                            "install",
+                        ],
+                        &[],
+                        Some(&body),
+                    )
+                    .await?,
+                View::ResourceMutation,
+            ))
+        }
     }
 }
 
