@@ -48,7 +48,7 @@
           inherit cargoArtifacts;
           pname = "brainpod-cli";
           version = "0.1.0";
-          meta.mainProgram = "brainpod-cli";
+          meta.mainProgram = "brainpod";
         });
     });
 
