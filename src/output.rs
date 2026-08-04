@@ -135,7 +135,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
         View::ConfigChange => render_config_change(value),
-        View::Whoami => vec![format!("Email: {}", field(value, "email"))],
+        View::Whoami => render_whoami(value),
         View::PodList => render_pod_list(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
@@ -313,6 +313,118 @@ fn render_config_change(value: &Value) -> Vec<String> {
             format!("Removed: {}", field(value, "removed")),
             format!("Config: {}", field(value, "path")),
         ]
+    }
+}
+
+fn render_whoami(value: &Value) -> Vec<String> {
+    let mut lines = vec![format!("Email: {}", field(value, "email"))];
+
+    lines.push(String::new());
+    render_whoami_policy(value.get("policy"), &mut lines);
+
+    lines.push(String::new());
+    lines.push("Permissions".to_owned());
+    match value.get("permissions").and_then(Value::as_array) {
+        Some(permissions) if !permissions.is_empty() => {
+            for permission in permissions {
+                lines.push(format!("  {}", field(permission, "action")));
+                lines.push(format!(
+                    "    Resources: {}",
+                    whoami_list(permission.get("resources"))
+                ));
+                lines.push(format!(
+                    "    Excluded resources: {}",
+                    whoami_list(permission.get("excludedResources"))
+                ));
+            }
+        }
+        _ => lines.push("  none".to_owned()),
+    }
+
+    lines.push(String::new());
+    lines.push("Links".to_owned());
+    let links = value.get("_links").and_then(Value::as_object);
+    let link_labels = [
+        ("self", "Self"),
+        ("pods", "Pods"),
+        ("blueprints", "Blueprints"),
+        ("clusters", "Clusters"),
+    ];
+    if links.is_none_or(|links| links.is_empty()) {
+        lines.push("  none".to_owned());
+    } else {
+        for (key, label) in link_labels {
+            if let Some(href) = links
+                .and_then(|links| links.get(key))
+                .and_then(|link| link.get("href"))
+            {
+                lines.push(format!("  {label}: {}", scalar(href)));
+            }
+        }
+    }
+
+    lines
+}
+
+fn render_whoami_policy(policy: Option<&Value>, lines: &mut Vec<String>) {
+    let Some(policy) = policy.filter(|policy| !policy.is_null()) else {
+        lines.push("Policy: none".to_owned());
+        return;
+    };
+
+    lines.push(format!("Policy (version {}):", field(policy, "version")));
+    let Some(statements) = policy.get("statements").and_then(Value::as_array) else {
+        lines.push("  none".to_owned());
+        return;
+    };
+    if statements.is_empty() {
+        lines.push("  none".to_owned());
+        return;
+    }
+
+    for statement in statements {
+        lines.push(format!(
+            "  {} ({})",
+            field(statement, "sid"),
+            field(statement, "effect")
+        ));
+        lines.push(format!(
+            "    Actions: {}",
+            whoami_list(statement.get("actions"))
+        ));
+        lines.push(format!(
+            "    Resources: {}",
+            whoami_list(statement.get("resources"))
+        ));
+
+        if let Some(conditions) = statement
+            .get("conditions")
+            .and_then(Value::as_object)
+            .filter(|conditions| !conditions.is_empty())
+        {
+            lines.push("    Conditions:".to_owned());
+            for (key, condition) in conditions {
+                lines.push(format!("      {key}: {}", whoami_value(condition)));
+            }
+        }
+    }
+}
+
+fn whoami_list(value: Option<&Value>) -> String {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return "none".to_owned();
+    };
+    if values.is_empty() {
+        "none".to_owned()
+    } else {
+        values.iter().map(scalar).collect::<Vec<_>>().join(", ")
+    }
+}
+
+fn whoami_value(value: &Value) -> String {
+    match value {
+        Value::Array(_) => whoami_list(Some(value)),
+        _ => scalar(value),
     }
 }
 
@@ -1026,8 +1138,49 @@ mod tests {
     use crate::client::EventStreamMessage;
 
     use super::{
-        render_event, render_image_inspect, render_image_list, stream_error, write_stream_json,
+        render_event, render_image_inspect, render_image_list, render_whoami, stream_error,
+        write_stream_json,
     };
+
+    #[test]
+    fn renders_extended_current_user() {
+        let lines = render_whoami(&json!({
+            "email": "user@example.com",
+            "policy": {
+                "version": "1",
+                "statements": [{
+                    "sid": "pods-read",
+                    "effect": "allow",
+                    "actions": ["pods:read"],
+                    "resources": ["urn:brain:pod:*"]
+                }]
+            },
+            "permissions": [{
+                "action": "pods:read",
+                "resources": ["urn:brain:pod:default:demo"],
+                "excludedResources": []
+            }],
+            "_links": {
+                "self": {"href": "/v1/me"},
+                "pods": {"href": "/v1/pods"},
+                "blueprints": {"href": "/v1/blueprints"},
+                "clusters": {"href": "/v1/clusters"}
+            }
+        }));
+
+        assert_eq!(lines[0], "Email: user@example.com");
+        assert!(lines.iter().any(|line| line == "Policy (version 1):"));
+        assert!(lines.iter().any(|line| line == "  pods-read (allow)"));
+        assert!(lines.iter().any(|line| line == "    Actions: pods:read"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "    Resources: urn:brain:pod:*"));
+        assert!(lines.iter().any(|line| line == "Permissions"));
+        assert!(lines.iter().any(|line| line == "  pods:read"));
+        assert!(lines.iter().any(|line| line == "    Excluded resources: none"));
+        assert!(lines.iter().any(|line| line == "Links"));
+        assert!(lines.iter().any(|line| line == "  Pods: /v1/pods"));
+    }
 
     #[test]
     fn renders_platform_event() {
