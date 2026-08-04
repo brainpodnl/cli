@@ -24,7 +24,7 @@ pub enum Command {
     Pod(PodArgs),
     /// Browse and install blueprints
     Blueprint(BlueprintArgs),
-    /// Build and push container images
+    /// Manage container images
     Image(ImageArgs),
     /// Inspect pod revisions
     Revision(RevisionArgs),
@@ -119,6 +119,31 @@ pub struct ImageArgs {
 
 #[derive(Debug, Subcommand)]
 enum ImageCommand {
+    /// List active public and pod images visible from the selected pod
+    List {
+        /// Text to match against image metadata
+        #[arg(long)]
+        search: Option<String>,
+        /// Limit results by visibility
+        #[arg(long)]
+        visibility: Option<ImageListVisibility>,
+        /// Maximum number of images to return
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u16).range(1..=100))]
+        limit: u16,
+        /// Number of images to skip
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+    },
+    /// Inspect all active architecture variants for an exact image
+    Inspect {
+        /// Image repository
+        repository: String,
+        /// Image tag
+        tag: String,
+        /// Image visibility; defaults to pod
+        #[arg(long, default_value = "pod")]
+        visibility: ImageInspectVisibility,
+    },
     /// Build an image from Dockerfile or Railpack and push it to the Brainpod registry
     Build {
         /// Repository name within the selected pod
@@ -136,6 +161,38 @@ enum ImageCommand {
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ImageListVisibility {
+    All,
+    Public,
+    Pod,
+}
+
+impl ImageListVisibility {
+    fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Public => "public",
+            Self::Pod => "pod",
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ImageInspectVisibility {
+    Public,
+    Pod,
+}
+
+impl ImageInspectVisibility {
+    fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Pod => "pod",
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -365,7 +422,12 @@ pub fn needs_api_token(command: &Command) -> bool {
 pub fn needs_client(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_) | Command::Login | Command::Config(_) | Command::Image(_)
+        Command::Describe(_)
+            | Command::Login
+            | Command::Config(_)
+            | Command::Image(ImageArgs {
+                command: ImageCommand::Build { .. },
+            })
     )
 }
 
@@ -400,6 +462,7 @@ pub async fn handle(
         }
         Command::Image(args) => {
             handle_image(
+                client,
                 args,
                 pod_required(pod)?,
                 api_token.ok_or_else(|| anyhow!("API token is required"))?,
@@ -578,12 +641,53 @@ async fn handle_blueprint(
 }
 
 async fn handle_image(
+    client: Option<&Client>,
     args: ImageArgs,
     pod: &str,
     api_token: &str,
     registry_endpoint: &str,
 ) -> Result<CommandOutput> {
     match args.command {
+        ImageCommand::List {
+            search,
+            visibility,
+            limit,
+            offset,
+        } => {
+            let mut query = vec![
+                ("limit", limit.to_string()),
+                ("offset", offset.to_string()),
+            ];
+            push_query(&mut query, "search", search);
+            push_query(
+                &mut query,
+                "visibility",
+                visibility.map(|visibility| visibility.as_api_str().to_owned()),
+            );
+            Ok(CommandOutput::new(
+                client_required(client)?
+                    .get(&["v1", "pods", pod, "images"], &query)
+                    .await?,
+                View::ImageList,
+            ))
+        }
+        ImageCommand::Inspect {
+            repository,
+            tag,
+            visibility,
+        } => {
+            let query = vec![
+                ("visibility", visibility.as_api_str().to_owned()),
+                ("repository", repository),
+                ("tag", tag),
+            ];
+            Ok(CommandOutput::new(
+                client_required(client)?
+                    .get(&["v1", "pods", pod, "images", "inspect"], &query)
+                    .await?,
+                View::ImageInspect,
+            ))
+        }
         ImageCommand::Build {
             image,
             context,

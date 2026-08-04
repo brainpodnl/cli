@@ -266,6 +266,67 @@ mod tests {
         .unwrap();
 
         assert!(matches!(opts.command, Command::Image(_)));
+        assert!(!super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
+    fn parses_image_list() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "--pod",
+            "my-pod",
+            "image",
+            "list",
+            "--search",
+            "worker",
+            "--visibility",
+            "pod",
+            "--limit",
+            "10",
+            "--offset",
+            "20",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Image(_)));
+        assert!(super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
+    fn parses_image_inspect() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "image",
+            "inspect",
+            "ubuntu",
+            "latest",
+            "--visibility",
+            "public",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Image(_)));
+    }
+
+    #[test]
+    fn parses_image_inspect_with_default_visibility() {
+        let opts = Opts::try_parse_from(["brainpod", "image", "inspect", "api", "latest"])
+            .unwrap();
+
+        assert!(matches!(opts.command, Command::Image(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_image_list_limit() {
+        let result = Opts::try_parse_from([
+            "brainpod",
+            "image",
+            "list",
+            "--limit",
+            "101",
+        ]);
+
+        assert!(result.is_err());
     }
 
     #[test]

@@ -80,6 +80,9 @@ brainpod blueprint list
 brainpod blueprint get <blueprint>
 brainpod --pod <pod> blueprint install <blueprint> [--file <path|->]
 
+brainpod --pod <pod> image list [--search <text>] [--visibility <all|public|pod>] \
+  [--limit <1-100>] [--offset <number>]
+brainpod --pod <pod> image inspect <repository> <tag> [--visibility <public|pod>]
 brainpod --pod <pod> image build <image> [<context>] [--tag <tag>] \
   [--builder <auto|dockerfile|railpack>] [--output <oci-directory>]
 
@@ -110,6 +113,26 @@ Events use the resource URN returned by resource list, get, or mutation response
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
+
+## Image discovery
+
+Image commands require a pod and API token with `registry:pull` permission. List returns active public images and images in the selected pod:
+
+```sh
+brainpod --pod my-pod image list
+brainpod --pod my-pod image list --visibility pod --search worker --limit 10 --offset 20 --json
+```
+
+`--visibility` accepts `all`, `public`, or `pod` for listing and is optional. The default limit is 25 and the maximum is 100. The response includes the total count and a next link when more results are available.
+
+Inspect an exact image and all of its active architecture variants. Inspection defaults to the selected pod's private image (`pod`). Pass `--visibility public` to inspect a public image:
+
+```sh
+brainpod --pod my-pod image inspect api v1 --visibility pod
+brainpod --pod my-pod image inspect ubuntu latest --visibility public --json
+```
+
+Inspection results include architecture-specific digest references, UID/GID values, exposed ports, and timestamps. Use a returned digest-pinned variant reference as an App resource's `spec.image`.
 
 ## Image building
 

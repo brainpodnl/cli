@@ -34,6 +34,8 @@ pub enum View {
     BlueprintList,
     BlueprintGet,
     ImageBuild,
+    ImageList,
+    ImageInspect,
     RevisionList,
     RevisionGet,
     RevisionDiff,
@@ -144,6 +146,8 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::BlueprintList => render_blueprint_list(value),
         View::BlueprintGet => render_blueprint(value),
         View::ImageBuild => render_image_build(value),
+        View::ImageList => render_image_list(value),
+        View::ImageInspect => render_image_inspect(value),
         View::RevisionList => render_revision_list(value),
         View::RevisionGet => render_revision(value),
         View::RevisionDiff => render_revision_diff(value),
@@ -464,6 +468,96 @@ fn render_image_build(value: &Value) -> Vec<String> {
     if value.get("output").is_some_and(|output| !output.is_null()) {
         lines.push(format!("OCI layout: {}", field(value, "output")));
     }
+    lines
+}
+
+fn render_image_list(value: &Value) -> Vec<String> {
+    let images = value
+        .get("items")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut lines = vec![format!("Total: {}", field(value, "total"))];
+    if images.is_empty() {
+        lines.push("No images.".to_owned());
+        return lines;
+    }
+
+    lines.push(String::new());
+    lines.extend(table(
+        &[
+            "REPOSITORY",
+            "TAG",
+            "NAMESPACE",
+            "ARCHITECTURES",
+            "DIGEST",
+            "CREATED",
+        ],
+        images
+            .iter()
+            .map(|image| {
+                vec![
+                    field(image, "repository"),
+                    field(image, "tag"),
+                    field(image, "namespace"),
+                    truncated_string_list(image.get("architectures"), 2),
+                    field(image, "digest"),
+                    field(image, "createdAt"),
+                ]
+            })
+            .collect(),
+    ));
+    append_next(value, &mut lines);
+    lines
+}
+
+fn render_image_inspect(value: &Value) -> Vec<String> {
+    let mut lines = vec![
+        format!("Repository: {}", field(value, "repository")),
+        format!("Tag: {}", field(value, "tag")),
+        format!("Namespace: {}", field(value, "namespace")),
+        format!("Visibility: {}", field(value, "visibility")),
+        format!("Reference: {}", field(value, "reference")),
+        String::new(),
+        "Variants".to_owned(),
+    ];
+    let variants = value
+        .get("variants")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if variants.is_empty() {
+        lines.push("  None".to_owned());
+        return lines;
+    }
+
+    lines.extend(table(
+        &[
+            "ARCHITECTURE",
+            "DIGEST",
+            "REFERENCE",
+            "UID",
+            "GID",
+            "EXPOSED PORTS",
+            "CREATED",
+            "UPDATED",
+        ],
+        variants
+            .iter()
+            .map(|variant| {
+                vec![
+                    field(variant, "architecture"),
+                    field(variant, "digest"),
+                    field(variant, "reference"),
+                    field(variant, "uid"),
+                    field(variant, "gid"),
+                    string_list(variant.get("exposedPorts")),
+                    field(variant, "createdAt"),
+                    field(variant, "updatedAt"),
+                ]
+            })
+            .collect(),
+    ));
     lines
 }
 
@@ -898,6 +992,25 @@ fn string_list(value: Option<&Value>) -> String {
         .unwrap_or_else(|| "-".to_owned())
 }
 
+fn truncated_string_list(value: Option<&Value>, limit: usize) -> String {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return "-".to_owned();
+    };
+    if values.is_empty() {
+        return "-".to_owned();
+    }
+
+    let mut items = values
+        .iter()
+        .take(limit)
+        .map(scalar)
+        .collect::<Vec<_>>();
+    if values.len() > limit {
+        items.push("...".to_owned());
+    }
+    items.join(", ")
+}
+
 fn yes_no(value: Option<&Value>) -> String {
     match value.and_then(Value::as_bool) {
         Some(true) => "yes".to_owned(),
@@ -912,7 +1025,9 @@ mod tests {
 
     use crate::client::EventStreamMessage;
 
-    use super::{render_event, stream_error, write_stream_json};
+    use super::{
+        render_event, render_image_inspect, render_image_list, stream_error, write_stream_json,
+    };
 
     #[test]
     fn renders_platform_event() {
@@ -973,5 +1088,58 @@ mod tests {
             error.to_string(),
             "Brainpod event stream returned an error: stream failed"
         );
+    }
+
+    #[test]
+    fn renders_image_list_with_pagination() {
+        let lines = render_image_list(&json!({
+            "items": [{
+                "repository": "api",
+                "tag": "latest",
+                "namespace": "my-pod",
+                "visibility": "pod",
+                "architectures": ["amd64", "arm64", "ppc64le"],
+                "digest": "sha256:abc",
+                "reference": "registry.example/my-pod/api@sha256:abc",
+                "createdAt": "2026-08-04T12:00:00Z"
+            }],
+            "total": 1,
+            "_links": {"next": {"href": "/v1/pods/my-pod/images?offset=1"}}
+        }));
+
+        assert!(lines.iter().any(|line| line == "Total: 1"));
+        assert!(lines.iter().any(|line| line.contains("api")));
+        assert!(lines.iter().any(|line| line.contains("amd64, arm64, ...")));
+        assert!(!lines.iter().any(|line| line.contains("VISIBILITY")));
+        assert!(!lines.iter().any(|line| line.contains("REFERENCE")));
+        assert!(!lines
+            .iter()
+            .any(|line| line.contains("registry.example/my-pod/api@sha256:abc")));
+        assert!(lines.iter().any(|line| line.starts_with("Next: ")));
+    }
+
+    #[test]
+    fn renders_image_inspect_variants() {
+        let lines = render_image_inspect(&json!({
+            "repository": "ubuntu",
+            "tag": "latest",
+            "namespace": "public",
+            "visibility": "public",
+            "reference": "registry.example/ubuntu:latest",
+            "variants": [{
+                "architecture": "amd64",
+                "digest": "sha256:abc",
+                "reference": "registry.example/ubuntu@sha256:abc",
+                "uid": null,
+                "gid": null,
+                "exposedPorts": ["80/tcp"],
+                "createdAt": "2026-08-04T12:00:00Z",
+                "updatedAt": null
+            }]
+        }));
+
+        assert!(lines.iter().any(|line| line == "Variants"));
+        assert!(lines.iter().any(|line| line.contains("amd64")));
+        assert!(lines.iter().any(|line| line.contains("80/tcp")));
     }
 }

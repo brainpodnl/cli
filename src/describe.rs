@@ -271,6 +271,10 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         | ["resource", "list"]
         | ["resource", "get"] => ("read", "Reads remote state without changing it."),
         ["events"] => ("read-or-stream", "Reads or continuously streams remote events."),
+        ["image", "list"] | ["image", "inspect"] => (
+            "read",
+            "Reads active registry images visible from the selected pod.",
+        ),
         ["image", "build"] => (
             "local-and-remote-write",
             "Builds locally and pushes an image to the selected pod's private registry namespace.",
@@ -295,6 +299,12 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
         ["login"] => vec!["Confirm the authenticated identity with `brainpod whoami`."],
         ["pod", "create"] => vec![
             "Select the new pod with --pod or `brainpod config set pod <pod>`.",
+        ],
+        ["image", "list"] => vec![
+            "Inspect an exact pod image with `brainpod image inspect <repository> <tag>`; use --visibility public for a public image.",
+        ],
+        ["image", "inspect"] => vec![
+            "Use a returned digest-pinned variant reference as an App resource's spec.image.",
         ],
         ["image", "build"] => vec![
             "Use the returned digest-pinned reference as an App resource's spec.image.",
@@ -331,6 +341,14 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["blueprint", "install"] => vec![
             "brainpod --pod my-pod blueprint install laravel",
             "brainpod --pod my-pod blueprint install laravel --file blueprint-input.json",
+        ],
+        ["image", "list"] => vec![
+            "brainpod --pod my-pod image list",
+            "brainpod --pod my-pod image list --visibility pod --limit 10 --json",
+        ],
+        ["image", "inspect"] => vec![
+            "brainpod --pod my-pod image inspect api v1",
+            "brainpod --pod my-pod image inspect ubuntu latest --visibility public --json",
         ],
         ["image", "build"] => vec![
             "brainpod --pod my-pod image build api .",
@@ -392,6 +410,25 @@ mod tests {
         assert_eq!(
             value.pointer("/command/effect").and_then(|value| value.as_str()),
             Some("local-and-remote-write")
+        );
+    }
+
+    #[test]
+    fn describes_image_list_as_authenticated_read() {
+        let path = vec!["image".to_owned(), "list".to_owned()];
+        let value = generate(crate::Opts::command(), &path).unwrap();
+
+        assert_eq!(
+            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            Some("read")
         );
     }
 
