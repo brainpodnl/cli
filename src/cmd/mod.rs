@@ -14,6 +14,8 @@ use crate::output::{CommandOutput, View};
 pub enum Command {
     /// Describe CLI commands and their machine-readable contract
     Describe(DescribeArgs),
+    /// Authenticate through the Brainpod dashboard
+    Login,
     /// Manage local CLI configuration
     Config(ConfigArgs),
     /// Show the authenticated user
@@ -354,19 +356,24 @@ fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> 
 }
 
 pub fn needs_api_token(command: &Command) -> bool {
-    !matches!(command, Command::Describe(_) | Command::Config(_))
+    !matches!(
+        command,
+        Command::Describe(_) | Command::Login | Command::Config(_)
+    )
 }
 
 pub fn needs_client(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_) | Command::Config(_) | Command::Image(_)
+        Command::Describe(_) | Command::Login | Command::Config(_) | Command::Image(_)
     )
 }
 
 pub async fn handle(
     command: Command,
     client: Option<&Client>,
+    endpoint: &str,
+    dashboard_endpoint: &str,
     pod: Option<&str>,
     api_token: Option<&str>,
     registry_endpoint: &str,
@@ -377,6 +384,10 @@ pub async fn handle(
         Command::Describe(args) => Ok(CommandOutput::new(
             crate::describe::generate(crate::Opts::command(), &args.command)?,
             View::Describe,
+        )),
+        Command::Login => Ok(CommandOutput::new(
+            crate::auth::login(dashboard_endpoint, endpoint, config, config_path).await?,
+            View::Login,
         )),
         Command::Config(args) => handle_config(args, config, config_path),
         Command::Whoami => Ok(CommandOutput::new(

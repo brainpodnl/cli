@@ -6,6 +6,12 @@ The CLI builds application images locally from an existing Dockerfile or with Ra
 
 ## Configuration
 
+Authenticate in the Brainpod dashboard and store the resulting API token in the CLI configuration:
+
+```sh
+brainpod login
+```
+
 The default configuration file is `~/.config/brainpod/config.toml`. `XDG_CONFIG_HOME` is respected, and `BRAINPOD_CONFIG` can override the complete path.
 
 ```sh
@@ -32,6 +38,8 @@ Values are resolved in this order:
 2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_REGISTRY_ENDPOINT`, `BRAINPOD_API_TOKEN`, `BRAINPOD_POD`
 3. The configuration file
 4. The defaults `https://api.brainpod.io` and `https://registry.brainpod.io`
+
+`brainpod login` uses `https://brainpod.io` as its dashboard and supports overriding it with `BRAINPOD_DASHBOARD_ENDPOINT` for local or test environments.
 
 The config file is written with mode `0600` on Unix. `config show` never reveals the API token.
 
@@ -62,6 +70,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 
 ```text
 brainpod describe [<command>...]
+brainpod login
 brainpod whoami
 brainpod pod list
 brainpod pod create [--display-name <name>]

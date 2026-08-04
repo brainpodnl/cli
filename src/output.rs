@@ -23,6 +23,7 @@ impl CommandOutput {
 #[derive(Clone, Copy)]
 pub enum View {
     Describe,
+    Login,
     ConfigShow,
     ConfigPath,
     ConfigChange,
@@ -128,6 +129,7 @@ fn stream_error(data: &str) -> anyhow::Error {
 fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
         View::Describe => render_describe(value),
+        View::Login => vec![format!("Authenticated as: {}", field(value, "email"))],
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
         View::ConfigChange => render_config_change(value),

@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.brainpod.io";
+pub const DEFAULT_DASHBOARD_ENDPOINT: &str = "https://brainpod.io";
 pub const DEFAULT_REGISTRY_ENDPOINT: &str = "https://registry.brainpod.io";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

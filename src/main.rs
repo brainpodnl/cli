@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use clap::{CommandFactory as _, Parser};
 use serde_json::{Value, json};
 
+mod auth;
 mod client;
 mod cmd;
 mod config;
@@ -13,7 +14,7 @@ mod output;
 
 use client::{ApiError, Client};
 use cmd::Command;
-use config::{Config, DEFAULT_ENDPOINT, DEFAULT_REGISTRY_ENDPOINT};
+use config::{Config, DEFAULT_DASHBOARD_ENDPOINT, DEFAULT_ENDPOINT, DEFAULT_REGISTRY_ENDPOINT};
 
 const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
 
@@ -93,6 +94,8 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         .api_token
         .or_else(|| environment("BRAINPOD_API_TOKEN"))
         .or_else(|| config.api_token.clone());
+    let dashboard_endpoint = environment("BRAINPOD_DASHBOARD_ENDPOINT")
+        .unwrap_or_else(|| DEFAULT_DASHBOARD_ENDPOINT.to_owned());
     let registry_endpoint = opts
         .registry_endpoint
         .or_else(|| environment("BRAINPOD_REGISTRY_ENDPOINT"))
@@ -105,7 +108,7 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
 
     if cmd::needs_api_token(&opts.command) && api_token.is_none() {
         return Err(anyhow!(
-            "API token is required; pass --api-token, set BRAINPOD_API_TOKEN, or run `brainpod config set api-token <token>`"
+            "API token is required; run `brainpod login`, pass --api-token, set BRAINPOD_API_TOKEN, or run `brainpod config set api-token <token>`"
         ));
     }
     let client = if cmd::needs_client(&opts.command) {
@@ -122,6 +125,8 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
     cmd::handle(
         opts.command,
         client.as_ref(),
+        &endpoint,
+        &dashboard_endpoint,
         pod.as_deref(),
         api_token.as_deref(),
         &registry_endpoint,

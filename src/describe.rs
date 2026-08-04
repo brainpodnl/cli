@@ -231,7 +231,7 @@ fn argument_syntax(argument: &Arg, value_names: &[String]) -> String {
 fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
     match path {
         [] => (None, None),
-        ["describe"] | ["config"] | ["config", _] => (Some(false), Some(false)),
+        ["describe"] | ["login"] | ["config"] | ["config", _] => (Some(false), Some(false)),
         ["blueprint"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
         ["blueprint", _] | ["whoami"] | ["pod"] | ["pod", _] => {
@@ -258,6 +258,10 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         ["config", "set"] | ["config", "unset"] => {
             ("local-write", "Changes the local CLI configuration.")
         }
+        ["login"] => (
+            "local-and-remote-write",
+            "Authorizes in the dashboard and stores the API token locally.",
+        ),
         ["whoami"]
         | ["pod", "list"]
         | ["pod", "get"]
@@ -288,6 +292,7 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
 
 fn next_steps(path: &[&str]) -> Vec<&'static str> {
     match path {
+        ["login"] => vec!["Confirm the authenticated identity with `brainpod whoami`."],
         ["pod", "create"] => vec![
             "Select the new pod with --pod or `brainpod config set pod <pod>`.",
         ],
@@ -316,6 +321,7 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
             "brainpod describe resource create",
             "brainpod describe resource create --json",
         ],
+        ["login"] => vec!["brainpod login"],
         ["config", "set"] => vec![
             "brainpod config set api-key brain_example",
             "brainpod config set pod my-pod",
