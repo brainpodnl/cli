@@ -1,17 +1,18 @@
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive JSON matching the API response; event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; event watches use NDJSON.
 
-Image building is intentionally outside the current scope.
+The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace.
 
 ## Configuration
 
 The default configuration file is `~/.config/brainpod/config.toml`. `XDG_CONFIG_HOME` is respected, and `BRAINPOD_CONFIG` can override the complete path.
 
 ```sh
-brainpod config set api-key brain_example
+brainpod config set api-token brain_example
 brainpod config set pod my-pod
 brainpod config set endpoint https://api.brainpod.io
+brainpod config set registry-endpoint https://registry.brainpod.io
 brainpod config show
 brainpod config path
 ```
@@ -20,18 +21,19 @@ Configuration uses TOML:
 
 ```toml
 endpoint = "https://api.brainpod.io"
-api_key = "brain_example"
+registry_endpoint = "https://registry.brainpod.io"
+api_token = "brain_example"
 pod = "my-pod"
 ```
 
 Values are resolved in this order:
 
-1. Global flags: `--endpoint`, `--api-key`, `--pod`
-2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_API_KEY`, `BRAINPOD_POD`
+1. Global flags: `--endpoint`, `--registry-endpoint`, `--api-token`, `--pod`
+2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_REGISTRY_ENDPOINT`, `BRAINPOD_API_TOKEN`, `BRAINPOD_POD`
 3. The configuration file
-4. The default API endpoint, `https://api.brainpod.io`
+4. The defaults `https://api.brainpod.io` and `https://registry.brainpod.io`
 
-The config file is written with mode `0600` on Unix. `config show` never reveals the API key.
+The config file is written with mode `0600` on Unix. `config show` never reveals the API token.
 
 ## Output contract
 
@@ -69,6 +71,9 @@ brainpod blueprint list
 brainpod blueprint get <blueprint>
 brainpod --pod <pod> blueprint install <blueprint> [--file <path|->]
 
+brainpod --pod <pod> image build <image> [<context>] [--tag <tag>] \
+  [--builder <auto|dockerfile|railpack>] [--output <oci-directory>]
+
 brainpod --pod <pod> revision list [--cursor <uuid>] [--limit <1-50>]
 brainpod --pod <pod> revision get <revision>
 brainpod --pod <pod> revision diff <revision> [--base <revision>]
@@ -97,9 +102,26 @@ Event watches flush text or JSON output as messages arrive and reconnect after e
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 
+## Image building
+
+Image builds require Docker with Buildx support. By default, the CLI uses `Dockerfile` from the build context when present and otherwise uses Railpack. Override detection with `--builder dockerfile` or `--builder railpack`. Dockerfile builds use Buildx directly and preserve the Dockerfile's configured runtime user.
+
+For Railpack builds, the CLI downloads its pinned Railpack release on first use, verifies its SHA-256 checksum, and caches it in the operating system's user cache directory. It generates a Railpack plan and adds a final layer that runs as `railpack` with UID/GID 1000.
+
+The image is pushed directly to `registry.brainpod.io/<pod>/<image>:<tag>` using the configured Brainpod API token, which must allow `registry:push` for the selected pod. Docker login is not required and the token is not written to Docker configuration. The result includes an immutable digest reference suitable for an App resource's `spec.image`:
+
+```sh
+brainpod --pod my-pod image build api . --tag v1
+brainpod --pod my-pod image build worker ./services/worker --builder railpack --output ./worker.oci --json
+```
+
+The context defaults to the current directory and the tag defaults to `latest`. Images are always built for `linux/amd64`, matching Brainpod's current x86-64 runtime. On ARM hosts, Docker must provide amd64 emulation. `--output` retains the final OCI image layout in addition to pushing it; without that option, the layout is temporary. Existing output paths are rejected rather than overwritten.
+
+Use `--registry-endpoint` or `BRAINPOD_REGISTRY_ENDPOINT` for test and local registries. Plain HTTP is only used when the configured endpoint explicitly starts with `http://`.
+
 ## Command discovery
 
-`describe` exposes the installed CLI's version-matched command contract without requiring an API key. Omit the command path to return the complete command tree, or select a command for focused metadata:
+`describe` exposes the installed CLI's version-matched command contract without requiring an API token. Omit the command path to return the complete command tree, or select a command for focused metadata:
 
 ```sh
 brainpod describe

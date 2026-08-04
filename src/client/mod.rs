@@ -33,15 +33,15 @@ pub struct EventStreamMessage {
 }
 
 impl Client {
-    pub fn try_new(endpoint: &str, api_key: &str) -> Result<Self> {
-        if api_key.trim().is_empty() {
-            return Err(anyhow!("API key cannot be empty"));
+    pub fn try_new(endpoint: &str, api_token: &str) -> Result<Self> {
+        if api_token.trim().is_empty() {
+            return Err(anyhow!("API token cannot be empty"));
         }
 
         let endpoint = Url::parse(endpoint).context("invalid Brainpod API endpoint")?;
         let mut headers = reqwest::header::HeaderMap::new();
-        let authorization = reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-            .context("API key contains invalid header characters")?;
+        let authorization = reqwest::header::HeaderValue::from_str(&format!("Bearer {api_token}"))
+            .context("API token contains invalid header characters")?;
         headers.insert(reqwest::header::AUTHORIZATION, authorization);
         let http = reqwest::Client::builder()
             .default_headers(headers)

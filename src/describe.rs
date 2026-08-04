@@ -40,6 +40,7 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
         "guidance": [
             "Use --json for complete machine-readable API responses and errors.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
+            "Image builds prefer an existing Dockerfile, otherwise use Railpack, always target linux/amd64, and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
             "Use resource URNs returned by resource commands when querying events."
@@ -69,7 +70,7 @@ fn unknown_command(command: &Command, path: &[String], name: &str) -> anyhow::Er
 
 fn describe_command(command: &Command, path: &[String]) -> Value {
     let segments = path.iter().map(String::as_str).collect::<Vec<_>>();
-    let (api_key, pod) = requirements(&segments);
+    let (api_token, pod) = requirements(&segments);
     let (effect, effect_description) = effect(&segments);
     let arguments = command
         .get_arguments()
@@ -98,7 +99,7 @@ fn describe_command(command: &Command, path: &[String]) -> Value {
             .map(ToString::to_string),
         "usage": usage(command),
         "requirements": {
-            "apiKey": api_key,
+            "apiToken": api_token,
             "pod": pod
         },
         "effect": effect,
@@ -236,7 +237,9 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         ["blueprint", _] | ["whoami"] | ["pod"] | ["pod", _] => {
             (Some(true), Some(false))
         }
-        ["revision"]
+        ["image"]
+        | ["image", _]
+        | ["revision"]
         | ["revision", _]
         | ["resource"]
         | ["resource", _]
@@ -264,6 +267,10 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         | ["resource", "list"]
         | ["resource", "get"] => ("read", "Reads remote state without changing it."),
         ["events"] => ("read-or-stream", "Reads or continuously streams remote events."),
+        ["image", "build"] => (
+            "local-and-remote-write",
+            "Builds locally and pushes an image to the selected pod's private registry namespace.",
+        ),
         ["pod", "create"] => ("remote-write", "Creates a remote pod."),
         ["blueprint", "install"] | ["resource", "replace"] | ["resource", "delete"] => (
             "draft-write",
@@ -283,6 +290,10 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
     match path {
         ["pod", "create"] => vec![
             "Select the new pod with --pod or `brainpod config set pod <pod>`.",
+        ],
+        ["image", "build"] => vec![
+            "Use the returned digest-pinned reference as an App resource's spec.image.",
+            "Deploy the updated App resource with `brainpod deploy` when ready.",
         ],
         ["blueprint", "install"]
         | ["resource", "create"]
@@ -314,6 +325,10 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["blueprint", "install"] => vec![
             "brainpod --pod my-pod blueprint install laravel",
             "brainpod --pod my-pod blueprint install laravel --file blueprint-input.json",
+        ],
+        ["image", "build"] => vec![
+            "brainpod --pod my-pod image build api .",
+            "brainpod --pod my-pod image build api ./services/api --builder railpack --tag v1 --output ./api.oci --json",
         ],
         ["resource", "create"] => vec![
             "brainpod --pod my-pod resource create --file resources.json --dry-run --json",
@@ -352,6 +367,25 @@ mod tests {
         assert_eq!(
             value.pointer("/command/effect").and_then(|value| value.as_str()),
             Some("conditional-draft-write")
+        );
+    }
+
+    #[test]
+    fn describes_image_build_as_authenticated_remote_write() {
+        let path = vec!["image".to_owned(), "build".to_owned()];
+        let value = generate(crate::Opts::command(), &path).unwrap();
+
+        assert_eq!(
+            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            Some("local-and-remote-write")
         );
     }
 

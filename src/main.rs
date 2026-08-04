@@ -8,11 +8,12 @@ mod client;
 mod cmd;
 mod config;
 mod describe;
+mod image;
 mod output;
 
 use client::{ApiError, Client};
 use cmd::Command;
-use config::{Config, DEFAULT_ENDPOINT};
+use config::{Config, DEFAULT_ENDPOINT, DEFAULT_REGISTRY_ENDPOINT};
 
 const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
 
@@ -20,7 +21,7 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
 #[command(
     name = "brainpod",
     version,
-    about = "Manage Brainpod deployments and resources",
+    about = "Manage Brainpod deployments, images, and resources",
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
 pub(crate) struct Opts {
@@ -32,9 +33,13 @@ pub(crate) struct Opts {
     #[arg(long, global = true)]
     endpoint: Option<String>,
 
-    /// Brainpod API key (overrides environment and config)
+    /// Brainpod API token (overrides environment and config)
     #[arg(long, global = true)]
-    api_key: Option<String>,
+    api_token: Option<String>,
+
+    /// Brainpod registry endpoint (overrides environment and config)
+    #[arg(long, global = true)]
+    registry_endpoint: Option<String>,
 
     /// Default pod for pod-scoped commands
     #[arg(long, global = true)]
@@ -84,22 +89,32 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         Some(endpoint) => endpoint,
         None => DEFAULT_ENDPOINT.to_owned(),
     };
-    let api_key = opts
-        .api_key
-        .or_else(|| environment("BRAINPOD_API_KEY"))
-        .or_else(|| config.api_key.clone());
+    let api_token = opts
+        .api_token
+        .or_else(|| environment("BRAINPOD_API_TOKEN"))
+        .or_else(|| config.api_token.clone());
+    let registry_endpoint = opts
+        .registry_endpoint
+        .or_else(|| environment("BRAINPOD_REGISTRY_ENDPOINT"))
+        .or_else(|| config.registry_endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_REGISTRY_ENDPOINT.to_owned());
     let pod = opts
         .pod
         .or_else(|| environment("BRAINPOD_POD"))
         .or_else(|| config.pod.clone());
 
+    if cmd::needs_api_token(&opts.command) && api_token.is_none() {
+        return Err(anyhow!(
+            "API token is required; pass --api-token, set BRAINPOD_API_TOKEN, or run `brainpod config set api-token <token>`"
+        ));
+    }
     let client = if cmd::needs_client(&opts.command) {
-        let api_key = api_key.ok_or_else(|| {
-            anyhow!(
-                "API key is required; pass --api-key, set BRAINPOD_API_KEY, or run `brainpod config set api-key <key>`"
-            )
-        })?;
-        Some(Client::try_new(&endpoint, &api_key)?)
+        Some(Client::try_new(
+            &endpoint,
+            api_token
+                .as_deref()
+                .ok_or_else(|| anyhow!("API token is required"))?,
+        )?)
     } else {
         None
     };
@@ -108,6 +123,8 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         opts.command,
         client.as_ref(),
         pod.as_deref(),
+        api_token.as_deref(),
+        &registry_endpoint,
         &mut config,
         &config_path,
     )
@@ -197,6 +214,67 @@ mod tests {
             args.command,
             vec!["resource".to_owned(), "create".to_owned()]
         );
+    }
+
+    #[test]
+    fn parses_api_token() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "--api-token",
+            "brain_example",
+            "whoami",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.api_token.as_deref(), Some("brain_example"));
+    }
+
+    #[test]
+    fn rejects_api_key_flag() {
+        let result = Opts::try_parse_from([
+            "brainpod",
+            "--api-key",
+            "brain_example",
+            "whoami",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_image_build() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "--pod",
+            "my-pod",
+            "image",
+            "build",
+            "api",
+            "./service",
+            "--tag",
+            "v1",
+            "--builder",
+            "dockerfile",
+            "--output",
+            "api.oci",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Image(_)));
+    }
+
+    #[test]
+    fn rejects_image_platform_override() {
+        let result = Opts::try_parse_from([
+            "brainpod",
+            "image",
+            "build",
+            "api",
+            "--platform",
+            "linux/arm64",
+        ]);
+
+        assert!(result.is_err());
     }
 
     #[test]

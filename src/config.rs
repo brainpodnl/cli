@@ -5,12 +5,14 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.brainpod.io";
+pub const DEFAULT_REGISTRY_ENDPOINT: &str = "https://registry.brainpod.io";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub endpoint: Option<String>,
-    pub api_key: Option<String>,
+    pub registry_endpoint: Option<String>,
+    pub api_token: Option<String>,
     pub pod: Option<String>,
 }
 

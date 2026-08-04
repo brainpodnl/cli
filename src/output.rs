@@ -32,6 +32,7 @@ pub enum View {
     PodGet,
     BlueprintList,
     BlueprintGet,
+    ImageBuild,
     RevisionList,
     RevisionGet,
     RevisionDiff,
@@ -140,6 +141,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::PodGet => render_pod(value),
         View::BlueprintList => render_blueprint_list(value),
         View::BlueprintGet => render_blueprint(value),
+        View::ImageBuild => render_image_build(value),
         View::RevisionList => render_revision_list(value),
         View::RevisionGet => render_revision(value),
         View::RevisionDiff => render_revision_diff(value),
@@ -164,8 +166,8 @@ fn render_describe(value: &Value) -> Vec<String> {
         String::new(),
         format!("Usage: {}", field(command, "usage")),
         format!(
-            "API key: {}",
-            requirement(command.pointer("/requirements/apiKey"))
+            "API token: {}",
+            requirement(command.pointer("/requirements/apiToken"))
         ),
         format!("Pod: {}", requirement(command.pointer("/requirements/pod"))),
         format!("Effect: {}", field(command, "effectDescription")),
@@ -285,9 +287,10 @@ fn render_config_show(value: &Value) -> Vec<String> {
     vec![
         format!("Config: {}", field(value, "path")),
         format!("Endpoint: {}", field(value, "endpoint")),
+        format!("Registry endpoint: {}", field(value, "registryEndpoint")),
         format!(
-            "API key configured: {}",
-            yes_no(value_at(value, "apiKeyConfigured"))
+            "API token configured: {}",
+            yes_no(value_at(value, "apiTokenConfigured"))
         ),
         format!("Default pod: {}", field(value, "pod")),
     ]
@@ -429,6 +432,36 @@ fn render_blueprint(value: &Value) -> Vec<String> {
         2,
         &mut lines,
     );
+    lines
+}
+
+fn render_image_build(value: &Value) -> Vec<String> {
+    let mut lines = vec![
+        "Image built and pushed".to_owned(),
+        String::new(),
+        format!("Image: {}", field(value, "image")),
+        format!("Digest: {}", field(value, "digest")),
+        format!("Reference: {}", field(value, "reference")),
+        format!("Platform: {}", field(value, "platform")),
+        format!("Builder: {}", field(value, "builder")),
+        format!(
+            "User: {}",
+            value
+                .get("user")
+                .filter(|user| !user.is_null())
+                .map(scalar)
+                .unwrap_or_else(|| "root (default)".to_owned())
+        ),
+    ];
+    if value
+        .get("railpackVersion")
+        .is_some_and(|version| !version.is_null())
+    {
+        lines.push(format!("Railpack: {}", field(value, "railpackVersion")));
+    }
+    if value.get("output").is_some_and(|output| !output.is_null()) {
+        lines.push(format!("OCI layout: {}", field(value, "output")));
+    }
     lines
 }
 

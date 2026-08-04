@@ -22,6 +22,8 @@ pub enum Command {
     Pod(PodArgs),
     /// Browse and install blueprints
     Blueprint(BlueprintArgs),
+    /// Build and push container images
+    Image(ImageArgs),
     /// Inspect pod revisions
     Revision(RevisionArgs),
     /// Create and manage pod resources
@@ -49,7 +51,7 @@ pub struct ConfigArgs {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
-    /// Show configuration without revealing the API key
+    /// Show configuration without revealing the API token
     Show,
     /// Print the configuration file path
     Path,
@@ -62,7 +64,8 @@ enum ConfigCommand {
 #[derive(Clone, Debug, ValueEnum)]
 enum ConfigKey {
     Endpoint,
-    ApiKey,
+    RegistryEndpoint,
+    ApiToken,
     Pod,
 }
 
@@ -103,6 +106,33 @@ enum BlueprintCommand {
         /// JSON object containing blueprint input; omit to use the defaults
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct ImageArgs {
+    #[command(subcommand)]
+    command: ImageCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ImageCommand {
+    /// Build an image from Dockerfile or Railpack and push it to the Brainpod registry
+    Build {
+        /// Repository name within the selected pod
+        image: String,
+        /// Application source directory
+        #[arg(default_value = ".")]
+        context: PathBuf,
+        /// Image tag
+        #[arg(long, default_value = "latest")]
+        tag: String,
+        /// Image builder; auto uses Dockerfile when present, otherwise Railpack
+        #[arg(long, default_value_t = crate::image::BuildMethod::Auto)]
+        builder: crate::image::BuildMethod,
+        /// Retain the built OCI image layout at this path
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 }
 
@@ -323,14 +353,23 @@ fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> 
     }
 }
 
-pub fn needs_client(command: &Command) -> bool {
+pub fn needs_api_token(command: &Command) -> bool {
     !matches!(command, Command::Describe(_) | Command::Config(_))
+}
+
+pub fn needs_client(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Describe(_) | Command::Config(_) | Command::Image(_)
+    )
 }
 
 pub async fn handle(
     command: Command,
     client: Option<&Client>,
     pod: Option<&str>,
+    api_token: Option<&str>,
+    registry_endpoint: &str,
     config: &mut Config,
     config_path: &Path,
 ) -> Result<CommandOutput> {
@@ -347,6 +386,15 @@ pub async fn handle(
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
         Command::Blueprint(args) => {
             handle_blueprint(client_required(client)?, pod, args).await
+        }
+        Command::Image(args) => {
+            handle_image(
+                args,
+                pod_required(pod)?,
+                api_token.ok_or_else(|| anyhow!("API token is required"))?,
+                registry_endpoint,
+            )
+            .await
         }
         Command::Revision(args) => {
             handle_revision(client_required(client)?, pod_required(pod)?, args).await
@@ -388,7 +436,8 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
             json!({
                 "path": path,
                 "endpoint": config.endpoint,
-                "apiKeyConfigured": config.api_key.is_some(),
+                "registryEndpoint": config.registry_endpoint,
+                "apiTokenConfigured": config.api_token.is_some(),
                 "pod": config.pod,
             }),
             View::ConfigShow,
@@ -406,9 +455,13 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                     config.endpoint = Some(value);
                     "endpoint"
                 }
-                ConfigKey::ApiKey => {
-                    config.api_key = Some(value);
-                    "apiKey"
+                ConfigKey::RegistryEndpoint => {
+                    config.registry_endpoint = Some(value);
+                    "registryEndpoint"
+                }
+                ConfigKey::ApiToken => {
+                    config.api_token = Some(value);
+                    "apiToken"
                 }
                 ConfigKey::Pod => {
                     config.pod = Some(value);
@@ -427,9 +480,13 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                     config.endpoint = None;
                     "endpoint"
                 }
-                ConfigKey::ApiKey => {
-                    config.api_key = None;
-                    "apiKey"
+                ConfigKey::RegistryEndpoint => {
+                    config.registry_endpoint = None;
+                    "registryEndpoint"
+                }
+                ConfigKey::ApiToken => {
+                    config.api_token = None;
+                    "apiToken"
                 }
                 ConfigKey::Pod => {
                     config.pod = None;
@@ -506,6 +563,36 @@ async fn handle_blueprint(
                 View::ResourceMutation,
             ))
         }
+    }
+}
+
+async fn handle_image(
+    args: ImageArgs,
+    pod: &str,
+    api_token: &str,
+    registry_endpoint: &str,
+) -> Result<CommandOutput> {
+    match args.command {
+        ImageCommand::Build {
+            image,
+            context,
+            tag,
+            builder,
+            output,
+        } => Ok(CommandOutput::new(
+            crate::image::build(
+                image,
+                context,
+                tag,
+                builder,
+                output,
+                pod,
+                api_token,
+                registry_endpoint,
+            )
+            .await?,
+            View::ImageBuild,
+        )),
     }
 }
 
