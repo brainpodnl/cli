@@ -20,6 +20,8 @@ pub enum Command {
     Config(ConfigArgs),
     /// Show the authenticated user
     Whoami,
+    /// List available clusters
+    Cluster(ClusterArgs),
     /// Inspect pods
     Pod(PodArgs),
     /// Browse and install blueprints
@@ -69,6 +71,18 @@ enum ConfigKey {
     RegistryEndpoint,
     ApiToken,
     Pod,
+}
+
+#[derive(Debug, Args)]
+pub struct ClusterArgs {
+    #[command(subcommand)]
+    command: ClusterCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ClusterCommand {
+    /// List active clusters and their supported architectures
+    List,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +470,7 @@ pub async fn handle(
             client_required(client)?.get(&["v1", "me"], &[]).await?,
             View::Whoami,
         )),
+        Command::Cluster(args) => handle_cluster(client_required(client)?, args).await,
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
         Command::Blueprint(args) => {
             handle_blueprint(client_required(client)?, pod, args).await
@@ -501,6 +516,15 @@ pub async fn handle(
         Command::Events(args) => {
             handle_events(client_required(client)?, pod_required(pod)?, args).await
         }
+    }
+}
+
+async fn handle_cluster(client: &Client, args: ClusterArgs) -> Result<CommandOutput> {
+    match args.command {
+        ClusterCommand::List => Ok(CommandOutput::new(
+            client.get(&["v1", "clusters"], &[]).await?,
+            View::ClusterList,
+        )),
     }
 }
 

@@ -28,6 +28,7 @@ pub enum View {
     ConfigPath,
     ConfigChange,
     Whoami,
+    ClusterList,
     PodList,
     PodCreated,
     PodGet,
@@ -136,6 +137,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
         View::ConfigChange => render_config_change(value),
         View::Whoami => render_whoami(value),
+        View::ClusterList => render_cluster_list(value),
         View::PodList => render_pod_list(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
@@ -426,6 +428,31 @@ fn whoami_value(value: &Value) -> String {
         Value::Array(_) => whoami_list(Some(value)),
         _ => scalar(value),
     }
+}
+
+fn render_cluster_list(value: &Value) -> Vec<String> {
+    let Some(clusters) = value.as_array() else {
+        return vec!["No clusters returned.".to_owned()];
+    };
+    if clusters.is_empty() {
+        return vec!["No clusters.".to_owned()];
+    }
+
+    let rows = clusters
+        .iter()
+        .map(|cluster| {
+            vec![
+                field(cluster, "id"),
+                field(cluster, "provider"),
+                field(cluster, "region"),
+                string_list(cluster.get("architectures")),
+            ]
+        })
+        .collect();
+    table(
+        &["ID", "PROVIDER", "REGION", "ARCHITECTURES"],
+        rows,
+    )
 }
 
 fn render_pod_list(value: &Value) -> Vec<String> {
@@ -1138,8 +1165,8 @@ mod tests {
     use crate::client::EventStreamMessage;
 
     use super::{
-        render_event, render_image_inspect, render_image_list, render_whoami, stream_error,
-        write_stream_json,
+        render_cluster_list, render_event, render_image_inspect, render_image_list,
+        render_whoami, stream_error, write_stream_json,
     };
 
     #[test]
@@ -1180,6 +1207,23 @@ mod tests {
         assert!(lines.iter().any(|line| line == "    Excluded resources: none"));
         assert!(lines.iter().any(|line| line == "Links"));
         assert!(lines.iter().any(|line| line == "  Pods: /v1/pods"));
+    }
+
+    #[test]
+    fn renders_cluster_list() {
+        let lines = render_cluster_list(&json!([
+            {
+                "id": "cluster-1",
+                "provider": "hetzner",
+                "region": "fsn1",
+                "architectures": ["amd64", "arm64"]
+            }
+        ]));
+
+        assert!(lines.iter().any(|line| line.contains("ID")));
+        assert!(lines.iter().any(|line| line.contains("cluster-1")));
+        assert!(lines.iter().any(|line| line.contains("hetzner")));
+        assert!(lines.iter().any(|line| line.contains("amd64, arm64")));
     }
 
     #[test]

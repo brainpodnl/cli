@@ -72,6 +72,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 brainpod describe [<command>...]
 brainpod login
 brainpod whoami
+brainpod cluster list
 brainpod pod list
 brainpod pod create [--display-name <name>]
 brainpod pod get <pod>
@@ -111,6 +112,8 @@ brainpod --pod <pod> events --watch --resource <urn> \
 Events use the resource URN returned by resource list, get, or mutation responses, such as `urn:brain:app:default:api`. Omit `--kind` to return every stream available for that resource. `--level` requires `--kind app`.
 
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
+
+`brainpod cluster list` lists active clusters and their supported architectures.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 

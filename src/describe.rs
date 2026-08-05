@@ -234,9 +234,12 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         ["describe"] | ["login"] | ["config"] | ["config", _] => (Some(false), Some(false)),
         ["blueprint"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
-        ["blueprint", _] | ["whoami"] | ["pod"] | ["pod", _] => {
-            (Some(true), Some(false))
-        }
+        ["blueprint", _]
+        | ["whoami"]
+        | ["cluster"]
+        | ["cluster", _]
+        | ["pod"]
+        | ["pod", _] => (Some(true), Some(false)),
         ["image"]
         | ["image", _]
         | ["revision"]
@@ -263,6 +266,7 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
             "Authorizes in the dashboard and stores the API token locally.",
         ),
         ["whoami"]
+        | ["cluster", "list"]
         | ["pod", "list"]
         | ["pod", "get"]
         | ["blueprint", "list"]

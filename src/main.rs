@@ -247,6 +247,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_cluster_list() {
+        let opts = Opts::try_parse_from(["brainpod", "cluster", "list"]).unwrap();
+
+        assert!(matches!(opts.command, Command::Cluster(_)));
+        assert!(super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
     fn parses_image_build() {
         let opts = Opts::try_parse_from([
             "brainpod",
