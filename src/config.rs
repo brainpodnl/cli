@@ -15,6 +15,7 @@ pub struct Config {
     pub registry_endpoint: Option<String>,
     pub api_token: Option<String>,
     pub pod: Option<String>,
+    pub architecture: Option<String>,
 }
 
 impl Config {

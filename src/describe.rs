@@ -40,7 +40,7 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
         "guidance": [
             "Use --json for complete machine-readable API responses and errors.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
-            "Image builds prefer an existing Dockerfile, otherwise use Railpack, always target linux/amd64, and push to the selected pod's private registry namespace.",
+            "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
             "Use resource URNs returned by resource commands when querying events.",

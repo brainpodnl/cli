@@ -2,7 +2,7 @@
 
 A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; event watches use NDJSON.
 
-The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace.
+The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
 
 ## Configuration
 
@@ -19,6 +19,7 @@ brainpod config set api-token brain_example
 brainpod config set pod my-pod
 brainpod config set endpoint https://api.brainpod.io
 brainpod config set registry-endpoint https://registry.brainpod.io
+brainpod config set architecture arm64
 brainpod config show
 brainpod config path
 ```
@@ -30,6 +31,7 @@ endpoint = "https://api.brainpod.io"
 registry_endpoint = "https://registry.brainpod.io"
 api_token = "brain_example"
 pod = "my-pod"
+architecture = "amd64"
 ```
 
 Values are resolved in this order:
@@ -38,6 +40,8 @@ Values are resolved in this order:
 2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_REGISTRY_ENDPOINT`, `BRAINPOD_API_TOKEN`, `BRAINPOD_POD`
 3. The configuration file
 4. The defaults `https://api.brainpod.io` and `https://registry.brainpod.io`
+
+For image builds, `--platform` overrides the configured architecture. Without it, the CLI probes the available clusters, prefers `amd64` and then `arm64`, and stores the selected architecture in the configuration.
 
 `brainpod login` uses `https://brainpod.io` as its dashboard and supports overriding it with `BRAINPOD_DASHBOARD_ENDPOINT` for local or test environments.
 
@@ -151,7 +155,7 @@ brainpod --pod my-pod image build api . --tag v1
 brainpod --pod my-pod image build worker ./services/worker --builder railpack --output ./worker.oci --json
 ```
 
-The context defaults to the current directory and the tag defaults to `latest`. Images are always built for `linux/amd64`, matching Brainpod's current x86-64 runtime. On ARM hosts, Docker must provide amd64 emulation. `--output` retains the final OCI image layout in addition to pushing it; without that option, the layout is temporary. Existing output paths are rejected rather than overwritten.
+The context defaults to the current directory and the tag defaults to `latest`. The CLI probes Brainpod's active clusters and prefers `linux/amd64`, then `linux/arm64`; use `--platform` to override the selected platform. On ARM hosts, Docker must provide emulation when targeting amd64. `--output` retains the final OCI image layout in addition to pushing it; without that option, the layout is temporary. Existing output paths are rejected rather than overwritten.
 
 Use `--registry-endpoint` or `BRAINPOD_REGISTRY_ENDPOINT` for test and local registries. Plain HTTP is only used when the configured endpoint explicitly starts with `http://`.
 

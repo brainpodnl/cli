@@ -296,7 +296,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(opts.command, Command::Image(_)));
-        assert!(!super::cmd::needs_client(&opts.command));
+        assert!(super::cmd::needs_client(&opts.command));
     }
 
     #[test]
@@ -360,17 +360,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_image_platform_override() {
-        let result = Opts::try_parse_from([
+    fn parses_image_platform_override() {
+        let opts = Opts::try_parse_from([
             "brainpod",
             "image",
             "build",
             "api",
             "--platform",
             "linux/arm64",
-        ]);
+        ])
+        .unwrap();
 
-        assert!(result.is_err());
+        assert!(matches!(opts.command, Command::Image(_)));
     }
 
     #[test]

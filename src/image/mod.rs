@@ -20,7 +20,6 @@ use registry::Registry;
 
 const RAILPACK_VERSION: &str = "v0.35.0";
 const RAILPACK_FRONTEND: &str = "ghcr.io/railwayapp/railpack-frontend:v0.35.0";
-const PLATFORM: &str = "linux/amd64";
 const NON_ROOT_DOCKERFILE: &str = r#"FROM base
 RUN groupadd --gid 1000 railpack \
     && useradd --uid 1000 --gid 1000 --home-dir /home/railpack --create-home --shell /bin/false railpack \
@@ -112,6 +111,7 @@ pub async fn build(
     tag: String,
     method: BuildMethod,
     output: Option<PathBuf>,
+    platform: String,
     pod: &str,
     api_token: &str,
     registry_endpoint: &str,
@@ -140,11 +140,11 @@ pub async fn build(
     ensure_builder().await?;
 
     let final_layout = match method {
-        BuildMethod::Railpack => build_railpack(&context, &temporary).await?,
-        BuildMethod::Dockerfile => build_dockerfile(&context, &temporary).await?,
+        BuildMethod::Railpack => build_railpack(&context, &temporary, &platform).await?,
+        BuildMethod::Dockerfile => build_dockerfile(&context, &temporary, &platform).await?,
         BuildMethod::Auto => return Err(anyhow!("automatic builder selection was not resolved")),
     };
-    let layout = load_layout(&final_layout).await?;
+    let layout = load_layout(&final_layout, &platform).await?;
     if method == BuildMethod::Railpack && layout.runtime_user.as_deref() != Some("1000:1000") {
         return Err(anyhow!(
             "built Railpack image does not enforce the non-root user 1000:1000"
@@ -167,7 +167,7 @@ pub async fn build(
         "image": tagged_reference,
         "digest": digest,
         "reference": digest_reference,
-        "platform": PLATFORM,
+        "platform": platform,
         "builder": method.as_str(),
         "railpackVersion": (method == BuildMethod::Railpack).then_some(RAILPACK_VERSION),
         "user": layout.runtime_user,
@@ -189,7 +189,11 @@ fn resolve_method(method: BuildMethod, context: &Path) -> Result<BuildMethod> {
     }
 }
 
-async fn build_dockerfile(context: &Path, temporary: &TempDir) -> Result<PathBuf> {
+async fn build_dockerfile(
+    context: &Path,
+    temporary: &TempDir,
+    platform: &str,
+) -> Result<PathBuf> {
     let destination = temporary.path().join("image");
     eprintln!("Building image from Dockerfile");
     run_command(
@@ -199,7 +203,7 @@ async fn build_dockerfile(context: &Path, temporary: &TempDir) -> Result<PathBuf
             .arg("--builder")
             .arg("brainpod")
             .arg("--platform")
-            .arg(PLATFORM)
+            .arg(platform)
             .arg("--provenance=false")
             .arg("--output")
             .arg(format!("type=oci,dest={},tar=false", destination.display()))
@@ -212,7 +216,11 @@ async fn build_dockerfile(context: &Path, temporary: &TempDir) -> Result<PathBuf
     Ok(destination)
 }
 
-async fn build_railpack(context: &Path, temporary: &TempDir) -> Result<PathBuf> {
+async fn build_railpack(
+    context: &Path,
+    temporary: &TempDir,
+    platform: &str,
+) -> Result<PathBuf> {
     let railpack = railpack_binary().await?;
     let plan = temporary.path().join("railpack-plan.json");
     eprintln!("Preparing Railpack build plan");
@@ -235,7 +243,7 @@ async fn build_railpack(context: &Path, temporary: &TempDir) -> Result<PathBuf> 
             .arg("--builder")
             .arg("brainpod")
             .arg("--platform")
-            .arg(PLATFORM)
+            .arg(platform)
             .arg("--provenance=false")
             .arg("--build-arg")
             .arg(format!("BUILDKIT_SYNTAX={RAILPACK_FRONTEND}"))
@@ -266,7 +274,7 @@ async fn build_railpack(context: &Path, temporary: &TempDir) -> Result<PathBuf> 
             .arg("--builder")
             .arg("brainpod")
             .arg("--platform")
-            .arg(PLATFORM)
+            .arg(platform)
             .arg("--provenance=false")
             .arg("--build-context")
             .arg(format!("base=oci-layout://{}", base_layout.display()))
@@ -549,7 +557,7 @@ fn railpack_asset() -> Result<RailpackAsset> {
     }
 }
 
-async fn load_layout(root: &Path) -> Result<ImageLayout> {
+async fn load_layout(root: &Path, expected_platform: &str) -> Result<ImageLayout> {
     let index: Index = serde_json::from_slice(
         &tokio::fs::read(root.join("index.json"))
             .await
@@ -573,9 +581,9 @@ async fn load_layout(root: &Path) -> Result<ImageLayout> {
         .as_ref()
         .ok_or_else(|| anyhow!("OCI layout manifest does not declare a platform"))?;
     let actual = format!("{}/{}", platform.os, platform.architecture);
-    if actual != PLATFORM {
+    if actual != expected_platform {
         return Err(anyhow!(
-            "OCI layout platform mismatch: expected {PLATFORM}, got {actual}"
+            "OCI layout platform mismatch: expected {expected_platform}, got {actual}"
         ));
     }
 

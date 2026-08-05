@@ -428,6 +428,7 @@ fn render_config_show(value: &Value) -> Vec<String> {
             yes_no(value_at(value, "apiTokenConfigured"))
         ),
         format!("Default pod: {}", field(value, "pod")),
+        format!("Default architecture: {}", field(value, "architecture")),
     ]
 }
 

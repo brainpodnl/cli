@@ -71,6 +71,7 @@ enum ConfigKey {
     RegistryEndpoint,
     ApiToken,
     Pod,
+    Architecture,
 }
 
 #[derive(Debug, Args)]
@@ -171,6 +172,9 @@ enum ImageCommand {
         /// Image builder; auto uses Dockerfile when present, otherwise Railpack
         #[arg(long, default_value_t = crate::image::BuildMethod::Auto)]
         builder: crate::image::BuildMethod,
+        /// Target platform; defaults to the best architecture supported by the API
+        #[arg(long, value_name = "PLATFORM")]
+        platform: Option<String>,
         /// Retain the built OCI image layout at this path
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
@@ -439,9 +443,6 @@ pub fn needs_client(command: &Command) -> bool {
         Command::Describe(_)
             | Command::Login
             | Command::Config(_)
-            | Command::Image(ImageArgs {
-                command: ImageCommand::Build { .. },
-            })
     )
 }
 
@@ -482,6 +483,8 @@ pub async fn handle(
                 pod_required(pod)?,
                 api_token.ok_or_else(|| anyhow!("API token is required"))?,
                 registry_endpoint,
+                config,
+                config_path,
             )
             .await
         }
@@ -537,6 +540,7 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 "registryEndpoint": config.registry_endpoint,
                 "apiTokenConfigured": config.api_token.is_some(),
                 "pod": config.pod,
+                "architecture": config.architecture,
             }),
             View::ConfigShow,
         )),
@@ -565,6 +569,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                     config.pod = Some(value);
                     "pod"
                 }
+                ConfigKey::Architecture => {
+                    config.architecture = Some(value);
+                    "architecture"
+                }
             };
             config.save(path)?;
             Ok(CommandOutput::new(
@@ -589,6 +597,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 ConfigKey::Pod => {
                     config.pod = None;
                     "pod"
+                }
+                ConfigKey::Architecture => {
+                    config.architecture = None;
+                    "architecture"
                 }
             };
             config.save(path)?;
@@ -664,12 +676,103 @@ async fn handle_blueprint(
     }
 }
 
+const PREFERRED_ARCHITECTURES: &[&str] = &["amd64", "arm64"];
+
+async fn resolve_platform(
+    client: &Client,
+    requested: Option<String>,
+    config: &mut Config,
+    config_path: &Path,
+) -> Result<String> {
+    let response = client.get(&["v1", "clusters"], &[]).await?;
+    let supported = supported_architectures(&response)?;
+
+    if let Some(platform) = requested {
+        let architecture = platform_architecture(&platform)?;
+        if !supported
+            .iter()
+            .any(|supported| supported.as_str() == architecture)
+        {
+            return Err(anyhow!(
+                "platform {platform} is not supported by the available clusters"
+            ));
+        }
+        return Ok(platform);
+    }
+
+    let configured = config.architecture.as_deref().map(normalize_architecture);
+    let architecture = configured
+        .filter(|architecture| supported.iter().any(|item| item == *architecture))
+        .map(str::to_owned)
+        .or_else(|| {
+            PREFERRED_ARCHITECTURES
+                .iter()
+                .copied()
+                .find(|architecture| supported.iter().any(|item| item == *architecture))
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "none of the preferred architectures ({}) are supported by the available clusters",
+                PREFERRED_ARCHITECTURES.join(", ")
+            )
+        })?;
+
+    if config.architecture.as_deref() != Some(architecture.as_str()) {
+        config.architecture = Some(architecture.clone());
+        config.save(config_path)?;
+    }
+
+    Ok(format!("linux/{architecture}"))
+}
+
+fn supported_architectures(value: &Value) -> Result<Vec<String>> {
+    let clusters = value
+        .as_array()
+        .ok_or_else(|| anyhow!("Brainpod API returned an invalid cluster list"))?;
+    let mut architectures = Vec::new();
+    for cluster in clusters {
+        let Some(values) = cluster.get("architectures").and_then(Value::as_array) else {
+            continue;
+        };
+        for architecture in values.iter().filter_map(Value::as_str) {
+            if !architectures.iter().any(|item| item == architecture) {
+                architectures.push(architecture.to_owned());
+            }
+        }
+    }
+    if architectures.is_empty() {
+        return Err(anyhow!(
+            "Brainpod API returned no supported cluster architectures"
+        ));
+    }
+    Ok(architectures)
+}
+
+fn platform_architecture(platform: &str) -> Result<&str> {
+    let (os, architecture) = platform.split_once('/').ok_or_else(|| {
+        anyhow!("platform must use the OS/architecture form, such as linux/amd64")
+    })?;
+    if os != "linux" || architecture.is_empty() || architecture.contains('/') {
+        return Err(anyhow!(
+            "platform must use the OS/architecture form, such as linux/amd64"
+        ));
+    }
+    Ok(architecture)
+}
+
+fn normalize_architecture(architecture: &str) -> &str {
+    architecture.strip_prefix("linux/").unwrap_or(architecture)
+}
+
 async fn handle_image(
     client: Option<&Client>,
     args: ImageArgs,
     pod: &str,
     api_token: &str,
     registry_endpoint: &str,
+    config: &mut Config,
+    config_path: &Path,
 ) -> Result<CommandOutput> {
     match args.command {
         ImageCommand::List {
@@ -717,21 +820,32 @@ async fn handle_image(
             context,
             tag,
             builder,
+            platform,
             output,
-        } => Ok(CommandOutput::new(
-            crate::image::build(
-                image,
-                context,
-                tag,
-                builder,
-                output,
-                pod,
-                api_token,
-                registry_endpoint,
+        } => {
+            let platform = resolve_platform(
+                client_required(client)?,
+                platform,
+                config,
+                config_path,
             )
-            .await?,
-            View::ImageBuild,
-        )),
+            .await?;
+            Ok(CommandOutput::new(
+                crate::image::build(
+                    image,
+                    context,
+                    tag,
+                    builder,
+                    output,
+                    platform,
+                    pod,
+                    api_token,
+                    registry_endpoint,
+                )
+                .await?,
+                View::ImageBuild,
+            ))
+        }
     }
 }
 
