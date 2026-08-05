@@ -1,7 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    systems.url = "github:nix-systems/default";
     nix-filter.url = "github:numtide/nix-filter";
     crane.url = "github:ipetkov/crane";
     rust-overlay = {
@@ -13,13 +12,18 @@
     nixpkgs,
     crane,
     rust-overlay,
-    systems,
     nix-filter,
     ...
   }: let
+    supportedSystems = [
+      "x86_64-linux"
+      "x86_64-darwin"
+      "aarch64-linux"
+      "aarch64-darwin"
+    ];
     overlays = [(import rust-overlay)];
     filter = import nix-filter;
-    eachSystem = nixpkgs.lib.genAttrs (import systems);
+    eachSystem = nixpkgs.lib.genAttrs supportedSystems;
 
     toolchainFor = pkgs:
       pkgs.rust-bin.nightly.latest.minimal.override {
@@ -40,6 +44,7 @@
       craneArgs = {
         inherit src;
         strictDeps = true;
+        SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       };
       cargoArtifacts = craneLib.buildDepsOnly craneArgs;
     in {
