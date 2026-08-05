@@ -411,29 +411,20 @@ async fn run_command(command: &mut Command, description: &str) -> Result<()> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::inherit())
         .spawn()
         .with_context(|| format!("failed to start {description}"))?;
     let mut stdout = child
         .stdout
         .take()
         .ok_or_else(|| anyhow!("failed to capture {description} stdout"))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| anyhow!("failed to capture {description} stderr"))?;
 
     let copy_stdout = async {
         let mut destination = tokio::io::stderr();
         tokio::io::copy(&mut stdout, &mut destination).await?;
         destination.flush().await
     };
-    let copy_stderr = async {
-        let mut destination = tokio::io::stderr();
-        tokio::io::copy(&mut stderr, &mut destination).await?;
-        destination.flush().await
-    };
-    let (status, _, _) = tokio::try_join!(child.wait(), copy_stdout, copy_stderr)
+    let (status, _) = tokio::try_join!(child.wait(), copy_stdout)
         .with_context(|| format!("failed while running {description}"))?;
 
     if status.success() {
