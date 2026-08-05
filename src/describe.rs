@@ -35,13 +35,14 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "default": "Deterministic line-oriented text.",
             "json": "Pass --json to emit the complete API response as one JSON value.",
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
+            "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
             "Use --json for complete machine-readable API responses and errors.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
-            "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready.",
+            "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
             "Use resource URNs returned by resource commands when querying events.",
             "Use `brainpod describe resource <kind>` to inspect the resource schema fetched from the production OpenAPI document; the embedded document is used when it is unavailable."
@@ -363,8 +364,12 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
             "brainpod --pod my-pod resource create --file resources.json --dry-run --json",
             "brainpod --pod my-pod resource create --file resources.json --json",
         ],
+        ["revision", "wait"] => vec![
+            "brainpod --pod my-pod revision wait <revision>",
+            "brainpod --pod my-pod revision wait <revision> --timeout 180 --json",
+        ],
         ["deploy"] => vec![
-            "brainpod --pod my-pod deploy --summary \"Configure application resources\" --json",
+            "brainpod --pod my-pod deploy --summary \"Configure application resources\" --wait --json",
         ],
         ["events"] => vec![
             "brainpod --pod my-pod events --resource urn:brain:app:default:api",

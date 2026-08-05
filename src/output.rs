@@ -41,11 +41,13 @@ pub enum View {
     RevisionList,
     RevisionGet,
     RevisionDiff,
+    RevisionWait,
     ResourceList,
     ResourceGet,
     ResourceMutation,
     ResourceValidation,
     Deploy,
+    DeployWait,
     Redeploy,
     Events,
 }
@@ -155,11 +157,13 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::RevisionList => render_revision_list(value),
         View::RevisionGet => render_revision(value),
         View::RevisionDiff => render_revision_diff(value),
+        View::RevisionWait => render_healthy_revision(value, "Revision is healthy"),
         View::ResourceList => render_resource_list(value),
         View::ResourceGet => render_resource(value),
         View::ResourceMutation => render_resource_mutation(value),
         View::ResourceValidation => vec![format!("Valid: {}", yes_no(value_at(value, "valid")))],
         View::Deploy => render_deployment(value, "Deployment accepted"),
+        View::DeployWait => render_healthy_revision(value, "Deployment is healthy"),
         View::Redeploy => render_deployment(value, "Redeployment accepted"),
         View::Events => render_events(value, color),
     }
@@ -887,7 +891,7 @@ fn render_revision(value: &Value) -> Vec<String> {
         lines.push("  None".to_owned());
     } else {
         lines.extend(table(
-            &["KIND", "NAME", "STATUS", "DETAILS"],
+            &["KIND", "NAME", "HEALTHY", "STATUS", "DETAILS"],
             resource_rows(resources),
         ));
     }
@@ -929,7 +933,7 @@ fn render_resource_list(value: &Value) -> Vec<String> {
         return vec!["No resources.".to_owned()];
     }
     table(
-        &["KIND", "NAME", "STATUS", "DETAILS"],
+        &["KIND", "NAME", "HEALTHY", "STATUS", "DETAILS"],
         resource_rows(resources),
     )
 }
@@ -945,6 +949,7 @@ fn render_resource(value: &Value) -> Vec<String> {
         ),
         format!("URN: {}", field(value, "urn")),
         format!("API version: {}", field(content, "apiVersion")),
+        format!("Healthy: {}", yes_no(value.get("healthy"))),
         format!("Status: {}", resource_status(value)),
         String::new(),
         "Spec".to_owned(),
@@ -966,7 +971,7 @@ fn render_resource_mutation(value: &Value) -> Vec<String> {
     if !resources.is_empty() {
         lines.push(String::new());
         lines.extend(table(
-            &["KIND", "NAME", "STATUS", "DETAILS"],
+            &["KIND", "NAME", "HEALTHY", "STATUS", "DETAILS"],
             resource_rows(resources),
         ));
     }
@@ -978,6 +983,12 @@ fn render_deployment(value: &Value, heading: &str) -> Vec<String> {
         heading.to_owned(),
         format!("Revision: {}", field(value, "revisionId")),
     ]
+}
+
+fn render_healthy_revision(value: &Value, heading: &str) -> Vec<String> {
+    let mut lines = vec![heading.to_owned(), String::new()];
+    lines.extend(render_revision(value));
+    lines
 }
 
 fn render_events(value: &Value, color: bool) -> Vec<String> {
@@ -1073,6 +1084,7 @@ fn resource_rows(resources: &[Value]) -> Vec<Vec<String>> {
             vec![
                 field(resource, "content.kind"),
                 field(resource, "content.metadata.name"),
+                yes_no(resource.get("healthy")),
                 resource_status(resource),
                 resource_details(resource),
             ]

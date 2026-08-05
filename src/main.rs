@@ -1,3 +1,4 @@
+use std::io::{self, IsTerminal as _};
 use std::process::ExitCode;
 
 use anyhow::{Result, anyhow};
@@ -73,6 +74,8 @@ async fn main() -> ExitCode {
 }
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
+    let show_progress = !opts.json && io::stderr().is_terminal();
+
     if let Command::Describe(args) = &opts.command {
         if openapi::is_resource_path(&args.command) {
             let resource_description =
@@ -154,6 +157,7 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         &registry_endpoint,
         &mut config,
         &config_path,
+        show_progress,
     )
     .await
 }

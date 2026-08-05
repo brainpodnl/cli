@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, CommandFactory as _, Subcommand, ValueEnum};
@@ -236,6 +238,17 @@ enum RevisionCommand {
         #[arg(long)]
         base: Option<String>,
     },
+    /// Wait until every resource in a revision is healthy
+    Wait {
+        revision: String,
+        /// Maximum number of seconds to wait
+        #[arg(
+            long,
+            default_value_t = 90,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
+        timeout: u64,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -311,6 +324,17 @@ pub struct DeployArgs {
     /// Human-readable description of this deployment
     #[arg(long)]
     summary: Option<String>,
+    /// Wait until every resource in the deployed revision is healthy
+    #[arg(long)]
+    wait: bool,
+    /// Maximum number of seconds to wait
+    #[arg(
+        long,
+        default_value_t = 90,
+        requires = "wait",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    timeout: u64,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +480,7 @@ pub async fn handle(
     registry_endpoint: &str,
     config: &mut Config,
     config_path: &Path,
+    show_progress: bool,
 ) -> Result<CommandOutput> {
     match command {
         Command::Describe(args) => Ok(CommandOutput::new(
@@ -489,25 +514,40 @@ pub async fn handle(
             .await
         }
         Command::Revision(args) => {
-            handle_revision(client_required(client)?, pod_required(pod)?, args).await
+            handle_revision(
+                client_required(client)?,
+                pod_required(pod)?,
+                args,
+                show_progress,
+            )
+            .await
         }
         Command::Resource(args) => {
             handle_resource(client_required(client)?, pod_required(pod)?, args).await
         }
         Command::Deploy(args) => {
+            let client = client_required(client)?;
+            let pod = pod_required(pod)?;
             let body = match args.summary {
                 Some(summary) => json!({ "summary": summary }),
                 None => json!({}),
             };
+            let deployment = client
+                .post(&["v1", "pods", pod, "deploy"], &[], Some(&body))
+                .await?;
+            if !args.wait {
+                return Ok(CommandOutput::new(deployment, View::Deploy));
+            }
+
+            let revision = deployment
+                .get("revisionId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    anyhow!("Brainpod API returned a deployment without a revision ID")
+                })?;
             Ok(CommandOutput::new(
-                client_required(client)?
-                    .post(
-                        &["v1", "pods", pod_required(pod)?, "deploy"],
-                        &[],
-                        Some(&body),
-                    )
-                    .await?,
-                View::Deploy,
+                wait_for_revision(client, pod, revision, args.timeout, show_progress).await?,
+                View::DeployWait,
             ))
         }
         Command::Redeploy => Ok(CommandOutput::new(
@@ -849,7 +889,12 @@ async fn handle_image(
     }
 }
 
-async fn handle_revision(client: &Client, pod: &str, args: RevisionArgs) -> Result<CommandOutput> {
+async fn handle_revision(
+    client: &Client,
+    pod: &str,
+    args: RevisionArgs,
+    show_progress: bool,
+) -> Result<CommandOutput> {
     match args.command {
         RevisionCommand::List { cursor, limit } => {
             let mut query = vec![("limit", limit.to_string())];
@@ -877,7 +922,113 @@ async fn handle_revision(client: &Client, pod: &str, args: RevisionArgs) -> Resu
                 View::RevisionDiff,
             ))
         }
+        RevisionCommand::Wait { revision, timeout } => Ok(CommandOutput::new(
+            wait_for_revision(client, pod, &revision, timeout, show_progress).await?,
+            View::RevisionWait,
+        )),
     }
+}
+
+async fn wait_for_revision(
+    client: &Client,
+    pod: &str,
+    revision: &str,
+    timeout_seconds: u64,
+    show_progress: bool,
+) -> Result<Value> {
+    let timeout = Duration::from_secs(timeout_seconds);
+    let deadline = tokio::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| anyhow!("timeout is too large"))?;
+    let mut previous_health = HashMap::new();
+    let mut unhealthy = Vec::new();
+
+    loop {
+        let value = tokio::time::timeout_at(
+            deadline,
+            client.get(&["v1", "pods", pod, "revisions", revision], &[]),
+        )
+        .await
+        .map_err(|_| wait_timeout(revision, timeout_seconds, &unhealthy))??;
+        let state = value
+            .get("state")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("Brainpod API returned a revision without a state"))?;
+        if matches!(state, "failed" | "canceled") {
+            let error = value
+                .get("error")
+                .and_then(Value::as_str)
+                .map(|error| format!(": {error}"))
+                .unwrap_or_default();
+            return Err(anyhow!(
+                "revision {revision} became {state} while waiting for its resources to become healthy{error}"
+            ));
+        }
+
+        let resources = value
+            .get("resources")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("Brainpod API returned a revision without resources"))?;
+        unhealthy.clear();
+        let mut current_health = HashMap::new();
+        for resource in resources {
+            let name = resource_name(resource);
+            let healthy = resource
+                .get("healthy")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    anyhow!("Brainpod API returned a resource without a healthy flag")
+                })?;
+            if healthy {
+                if show_progress && previous_health.get(&name) == Some(&false) {
+                    eprintln!("Healthy: {}", resource_label(resource));
+                }
+            } else {
+                unhealthy.push(name.clone());
+            }
+            current_health.insert(name, healthy);
+        }
+        previous_health = current_health;
+        if unhealthy.is_empty() {
+            return Ok(value);
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(wait_timeout(revision, timeout_seconds, &unhealthy));
+        }
+        tokio::time::sleep_until(std::cmp::min(deadline, now + Duration::from_secs(1))).await;
+    }
+}
+
+fn resource_name(resource: &Value) -> String {
+    resource
+        .get("urn")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown resource")
+        .to_owned()
+}
+
+fn resource_label(resource: &Value) -> String {
+    let kind = resource.pointer("/content/kind").and_then(Value::as_str);
+    let name = resource
+        .pointer("/content/metadata/name")
+        .and_then(Value::as_str);
+    match (kind, name) {
+        (Some(kind), Some(name)) => format!("{kind}/{name}"),
+        _ => resource_name(resource),
+    }
+}
+
+fn wait_timeout(revision: &str, timeout_seconds: u64, unhealthy: &[String]) -> anyhow::Error {
+    let resources = if unhealthy.is_empty() {
+        String::new()
+    } else {
+        format!("; unhealthy resources: {}", unhealthy.join(", "))
+    };
+    anyhow!(
+        "timed out after {timeout_seconds}s waiting for revision {revision} resources to become healthy{resources}"
+    )
 }
 
 async fn handle_resource(client: &Client, pod: &str, args: ResourceArgs) -> Result<CommandOutput> {

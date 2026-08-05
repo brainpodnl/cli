@@ -95,6 +95,7 @@ brainpod --pod <pod> image build <image> [<context>] [--tag <tag>] \
 brainpod --pod <pod> revision list [--cursor <uuid>] [--limit <1-50>]
 brainpod --pod <pod> revision get <revision>
 brainpod --pod <pod> revision diff <revision> [--base <revision>]
+brainpod --pod <pod> revision wait <revision> [--timeout <seconds>]
 
 brainpod --pod <pod> resource list [--revision <uuid> | --at <timestamp>]
 brainpod --pod <pod> resource get <kind> <name> [--revision <uuid> | --at <timestamp>]
@@ -102,7 +103,7 @@ brainpod --pod <pod> resource create --file <path|-> [--dry-run]
 brainpod --pod <pod> resource replace <kind> <name> --file <path|->
 brainpod --pod <pod> resource delete <kind> <name>
 
-brainpod --pod <pod> deploy [--summary <text>]
+brainpod --pod <pod> deploy [--summary <text>] [--wait] [--timeout <seconds>]
 brainpod --pod <pod> redeploy
 
 brainpod --pod <pod> events --resource <urn> [--kind <app|http-access|platform>] \
@@ -121,6 +122,8 @@ Event watches flush text or JSON output as messages arrive and reconnect after e
 `brainpod cluster list` lists active clusters and their supported architectures.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
+
+`revision wait` polls revision details until every resource reports `healthy: true`. `deploy --wait` deploys first, then waits on the returned revision in the same way. Both use a 90-second timeout by default; pass `--timeout <seconds>` to override it. Interactive waits report each unhealthy-to-healthy transition on stderr. Progress is suppressed when stderr is redirected or `--json` is used. Failed or canceled revisions stop the wait immediately, and timeouts report the resources that are still unhealthy.
 
 ## Image discovery
 
