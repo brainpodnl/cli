@@ -10,6 +10,7 @@ mod cmd;
 mod config;
 mod describe;
 mod image;
+mod openapi;
 mod output;
 
 use client::{ApiError, Client};
@@ -73,6 +74,27 @@ async fn main() -> ExitCode {
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
     if let Command::Describe(args) = &opts.command {
+        if openapi::is_resource_path(&args.command) {
+            let resource_description =
+                openapi::describe(&args.command, opts.endpoint.as_deref()).await?;
+            if args.command.len() == 1 {
+                let mut description = describe::generate(Opts::command(), &args.command)?;
+                description
+                    .as_object_mut()
+                    .ok_or_else(|| anyhow!("CLI description is not a JSON object"))?
+                    .insert("resourceSchemas".to_owned(), resource_description);
+                return Ok(output::CommandOutput::new(
+                    description,
+                    output::View::Describe,
+                ));
+            }
+
+            return Ok(output::CommandOutput::new(
+                resource_description,
+                output::View::ResourceSchema,
+            ));
+        }
+
         return Ok(output::CommandOutput::new(
             describe::generate(Opts::command(), &args.command)?,
             output::View::Describe,

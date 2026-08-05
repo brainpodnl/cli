@@ -23,6 +23,7 @@ impl CommandOutput {
 #[derive(Clone, Copy)]
 pub enum View {
     Describe,
+    ResourceSchema,
     Login,
     ConfigShow,
     ConfigPath,
@@ -132,6 +133,7 @@ fn stream_error(data: &str) -> anyhow::Error {
 fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
         View::Describe => render_describe(value),
+        View::ResourceSchema => render_resource_schema(value),
         View::Login => vec![format!("Authenticated as: {}", field(value, "email"))],
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
@@ -267,7 +269,132 @@ fn render_describe(value: &Value) -> Vec<String> {
         );
     }
 
+    if let Some(resource_schemas) = value.get("resourceSchemas") {
+        lines.push(String::new());
+        lines.extend(render_resource_schema_list(resource_schemas, "Resource kinds"));
+    }
+
     lines
+}
+
+fn render_resource_schema(value: &Value) -> Vec<String> {
+    if value.get("resource").and_then(Value::as_str).is_none() {
+        return render_resource_schema_list(value, "Resource schemas");
+    }
+
+    let mut lines = vec![
+        format!("Source: {}", field(value, "source")),
+        format!("OpenAPI: {}", field(value, "sourceUrl")),
+        format!("Resource: {}", field(value, "resource")),
+        String::new(),
+        "Required fields".to_owned(),
+        format!("  {}", schema_required(value.get("schema"))),
+        String::new(),
+        "Properties".to_owned(),
+    ];
+    render_schema_properties(value.get("schema"), 2, 0, &mut lines);
+    lines
+}
+
+fn render_resource_schema_list(value: &Value, heading: &str) -> Vec<String> {
+    let mut lines = vec![
+        format!("Source: {}", field(value, "source")),
+        format!("OpenAPI: {}", field(value, "sourceUrl")),
+        String::new(),
+        heading.to_owned(),
+    ];
+    let rows = value
+        .get("resources")
+        .and_then(Value::as_array)
+        .map(|resources| {
+            resources
+                .iter()
+                .map(|resource| {
+                    vec![
+                        field(resource, "kind"),
+                        schema_required(resource.get("schema")),
+                    ]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    lines.extend(table(&["KIND", "REQUIRED FIELDS"], rows));
+    lines
+}
+
+fn schema_required(schema: Option<&Value>) -> String {
+    schema
+        .and_then(|schema| schema.get("required"))
+        .and_then(Value::as_array)
+        .map(|required| required.iter().map(scalar).collect::<Vec<_>>().join(", "))
+        .filter(|required| !required.is_empty())
+        .unwrap_or_else(|| "none".to_owned())
+}
+
+fn render_schema_properties(
+    schema: Option<&Value>,
+    indent: usize,
+    depth: usize,
+    lines: &mut Vec<String>,
+) {
+    let Some(properties) = schema
+        .and_then(|schema| schema.get("properties"))
+        .and_then(Value::as_object)
+    else {
+        lines.push(format!("{}none", " ".repeat(indent)));
+        return;
+    };
+
+    let required = schema
+        .and_then(|schema| schema.get("required"))
+        .and_then(Value::as_array);
+    for (name, property) in properties {
+        let marker = if required.is_some_and(|required| {
+            required.iter().any(|value| value.as_str() == Some(name))
+        }) {
+            " (required)"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "{}{name}{marker}: {}",
+            " ".repeat(indent),
+            schema_summary(property)
+        ));
+        if depth < 2 && property.get("properties").is_some() {
+            render_schema_properties(Some(property), indent + 2, depth + 1, lines);
+        }
+    }
+}
+
+fn schema_summary(schema: &Value) -> String {
+    let mut summary = schema
+        .get("const")
+        .map(scalar)
+        .map(|value| format!("const {value}"))
+        .or_else(|| {
+            schema.get("type").and_then(Value::as_str).map(str::to_owned)
+        })
+        .unwrap_or_else(|| {
+            schema
+                .get("oneOf")
+                .and_then(Value::as_array)
+                .map(|variants| format!("one of {} variants", variants.len()))
+                .unwrap_or_else(|| "schema".to_owned())
+        });
+
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        summary.push_str(&format!(
+            " [{}]",
+            values.iter().map(scalar).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    for key in ["minLength", "maxLength", "minimum", "maximum", "default"] {
+        if let Some(value) = schema.get(key) {
+            summary.push_str(&format!(" {key}={}", scalar(value)));
+        }
+    }
+    summary
 }
 
 fn render_describe_argument(argument: &Value) -> String {

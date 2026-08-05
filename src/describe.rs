@@ -43,7 +43,8 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, always target linux/amd64, and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
-            "Use resource URNs returned by resource commands when querying events."
+            "Use resource URNs returned by resource commands when querying events.",
+            "Use `brainpod describe resource <kind>` to inspect the resource schema fetched from the production OpenAPI document; the embedded document is used when it is unavailable."
         ]
     }))
 }

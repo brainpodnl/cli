@@ -70,6 +70,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 
 ```text
 brainpod describe [<command>...]
+brainpod describe resource [<kind>]
 brainpod login
 brainpod whoami
 brainpod cluster list
@@ -164,7 +165,15 @@ brainpod describe resource create
 brainpod describe resource create --json
 ```
 
-JSON descriptions include command paths, usage, arguments, allowed values, defaults, conflicts, authentication and pod requirements, side effects, examples, and related operational guidance. The command syntax is generated from the same Clap definitions used for argument parsing.
+JSON descriptions include command paths, usage, arguments, allowed values, defaults, conflicts, authentication and pod requirements, side effects, examples, and related operational guidance. The command syntax is generated from the same Clap definitions used for argument parsing. Resource schemas are available without authentication:
+
+```sh
+brainpod describe resource
+brainpod describe resource app --json
+brainpod describe resource postgres --json
+```
+
+Resource schemas are fetched from `https://api.prod.brainpod.io/v1/openapi.json` on each request. If the production document cannot be reached or does not contain the expected resource schemas, the version embedded in the CLI is used instead. Set `BRAINPOD_OPENAPI_URL` to override the document URL, or pass `--endpoint` to derive the document URL from another API endpoint.
 
 ## Blueprint input
 

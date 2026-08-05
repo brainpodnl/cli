@@ -42,7 +42,7 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct DescribeArgs {
-    /// Command path to describe; omit to return the complete command tree
+    /// Command path or resource kind to describe; omit to return the complete command tree
     #[arg(value_name = "COMMAND", num_args = 0..)]
     pub command: Vec<String>,
 }
