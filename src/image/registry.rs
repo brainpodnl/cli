@@ -5,7 +5,7 @@ use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use reqwest::{Client, Response, StatusCode, Url};
 use tokio_util::io::ReaderStream;
 
-use super::{Descriptor, ImageLayout, blob_path};
+use super::{Descriptor, ImageLayout, NETWORK_TIMEOUT, blob_path};
 
 pub struct Registry<'a> {
     api_token: &'a str,
@@ -43,7 +43,10 @@ impl<'a> Registry<'a> {
             api_token,
             authority,
             base,
-            http: Client::new(),
+            http: Client::builder()
+                .timeout(NETWORK_TIMEOUT)
+                .build()
+                .context("failed to create registry client")?,
         })
     }
 

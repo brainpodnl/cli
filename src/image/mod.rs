@@ -2,7 +2,8 @@ use std::fmt;
 use std::fs::Permissions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use clap::ValueEnum;
@@ -11,8 +12,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempDir};
-use tokio::io::AsyncWriteExt as _;
-use tokio::process::Command;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 
 mod registry;
 
@@ -20,6 +22,9 @@ use registry::Registry;
 
 const RAILPACK_VERSION: &str = "v0.35.0";
 const RAILPACK_FRONTEND: &str = "ghcr.io/railwayapp/railpack-frontend:v0.35.0";
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+const PROCESS_OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const NON_ROOT_DOCKERFILE: &str = r#"FROM base
 RUN groupadd --gid 1000 railpack \
     && useradd --uid 1000 --gid 1000 --home-dir /home/railpack --create-home --shell /bin/false railpack \
@@ -368,32 +373,36 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
 }
 
 async fn ensure_builder() -> Result<()> {
-    let inspection = Command::new("docker")
-        .arg("buildx")
-        .arg("inspect")
-        .arg("brainpod")
-        .output()
-        .await
-        .context("failed to execute Docker Buildx; install Docker with Buildx support")?;
+    let inspection = command_output(
+        Command::new("docker")
+            .arg("buildx")
+            .arg("inspect")
+            .arg("brainpod"),
+        "Docker Buildx inspection",
+    )
+    .await
+    .context("failed to execute Docker Buildx; install Docker with Buildx support")?;
 
     if !inspection.status.success() {
         eprintln!("Creating Brainpod BuildKit builder");
-        let creation = Command::new("docker")
-            .arg("buildx")
-            .arg("create")
-            .arg("--driver=docker-container")
-            .arg("--name=brainpod")
-            .output()
-            .await
-            .context("failed to create Brainpod BuildKit builder")?;
-        if !creation.status.success() {
-            let reinspection = Command::new("docker")
+        let creation = command_output(
+            Command::new("docker")
                 .arg("buildx")
-                .arg("inspect")
-                .arg("brainpod")
-                .output()
-                .await
-                .context("failed to inspect Brainpod BuildKit builder")?;
+                .arg("create")
+                .arg("--driver=docker-container")
+                .arg("--name=brainpod"),
+            "BuildKit builder creation",
+        )
+        .await?;
+        if !creation.status.success() {
+            let reinspection = command_output(
+                Command::new("docker")
+                    .arg("buildx")
+                    .arg("inspect")
+                    .arg("brainpod"),
+                "BuildKit builder inspection",
+            )
+            .await?;
             if !reinspection.status.success() {
                 let message = String::from_utf8_lossy(&creation.stderr);
                 return Err(anyhow!(
@@ -415,8 +424,79 @@ async fn ensure_builder() -> Result<()> {
     .await
 }
 
-async fn run_command(command: &mut Command, description: &str) -> Result<()> {
+async fn command_output(command: &mut Command, description: &str) -> Result<Output> {
     let mut child = command
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to start {description}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture {description} stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture {description} stderr"))?;
+    let mut stdout = tokio::spawn(read_output(stdout));
+    let mut stderr = tokio::spawn(read_output(stderr));
+
+    let status = match wait_for_child(&mut child, description, PROCESS_TIMEOUT).await {
+        Ok(status) => status,
+        Err(error) => {
+            stdout.abort();
+            stderr.abort();
+            return Err(error);
+        }
+    };
+    let stdout = finish_output(&mut stdout, description, "stdout").await?;
+    let stderr = finish_output(&mut stderr, description, "stderr").await?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn read_output<R>(mut source: R) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut output = Vec::new();
+    source.read_to_end(&mut output).await?;
+    Ok(output)
+}
+
+async fn finish_output(
+    task: &mut JoinHandle<std::io::Result<Vec<u8>>>,
+    description: &str,
+    stream: &str,
+) -> Result<Vec<u8>> {
+    match tokio::time::timeout(PROCESS_OUTPUT_DRAIN_TIMEOUT, &mut *task).await {
+        Ok(result) => result
+            .with_context(|| format!("{description} {stream} task failed"))?
+            .with_context(|| format!("failed to read {description} {stream}")),
+        Err(_) => {
+            task.abort();
+            Ok(Vec::new())
+        }
+    }
+}
+
+async fn run_command(command: &mut Command, description: &str) -> Result<()> {
+    run_command_with_timeout(command, description, PROCESS_TIMEOUT).await
+}
+
+async fn run_command_with_timeout(
+    command: &mut Command,
+    description: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let mut child = command
+        .kill_on_drop(true)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -426,22 +506,46 @@ async fn run_command(command: &mut Command, description: &str) -> Result<()> {
         .stdout
         .take()
         .ok_or_else(|| anyhow!("failed to capture {description} stdout"))?;
-
-    let copy_stdout = async {
+    let mut output = tokio::spawn(async move {
         let mut destination = tokio::io::stderr();
         tokio::io::copy(&mut stdout, &mut destination).await?;
         destination.flush().await
+    });
+
+    let status = match wait_for_child(&mut child, description, timeout).await {
+        Ok(status) => status,
+        Err(error) => {
+            output.abort();
+            return Err(error);
+        }
     };
-    let (status, _) = tokio::try_join!(child.wait(), copy_stdout)
-        .with_context(|| format!("failed while running {description}"))?;
+    match tokio::time::timeout(PROCESS_OUTPUT_DRAIN_TIMEOUT, &mut output).await {
+        Ok(result) => result
+            .with_context(|| format!("{description} output task failed"))?
+            .with_context(|| format!("failed while reading {description} output"))?,
+        Err(_) => output.abort(),
+    }
 
     if status.success() {
         Ok(())
+    } else if let Some(code) = status.code() {
+        Err(anyhow!("{description} failed with exit code {code}"))
     } else {
-        Err(anyhow!(
-            "{description} failed with exit code {}",
-            status.code().unwrap_or_default()
-        ))
+        Err(anyhow!("{description} terminated by a signal"))
+    }
+}
+
+async fn wait_for_child(
+    child: &mut Child,
+    description: &str,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => result.with_context(|| format!("failed while running {description}")),
+        Err(_) => {
+            let _ = child.start_kill();
+            Err(anyhow!("{description} timed out after {timeout:?}"))
+        }
     }
 }
 
@@ -465,7 +569,13 @@ async fn railpack_binary() -> Result<PathBuf> {
         "https://github.com/railwayapp/railpack/releases/download/{RAILPACK_VERSION}/{archive_name}"
     );
     eprintln!("Downloading Railpack {RAILPACK_VERSION}");
-    let archive = reqwest::get(&url)
+    let http = reqwest::Client::builder()
+        .timeout(NETWORK_TIMEOUT)
+        .build()
+        .context("failed to create Railpack download client")?;
+    let archive = http
+        .get(&url)
+        .send()
         .await
         .with_context(|| format!("failed to download Railpack from {url}"))?
         .error_for_status()
@@ -724,6 +834,43 @@ mod tests {
         BuildMethod, resolve_method, validate_namespace, validate_repository, validate_tag,
         verify_digest,
     };
+
+    #[cfg(unix)]
+    use super::run_command_with_timeout;
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
+    #[cfg(unix)]
+    use tokio::process::Command;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_exit_does_not_wait_for_inherited_stdout() {
+        let started = Instant::now();
+        let error = run_command_with_timeout(
+            Command::new("sh").arg("-c").arg("sleep 5 & exit 42"),
+            "test command",
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("exit code 42"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_timeout_terminates_the_process() {
+        let error = run_command_with_timeout(
+            Command::new("sh").arg("-c").arg("exec sleep 10"),
+            "test command",
+            Duration::from_millis(25),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+    }
 
     #[test]
     fn automatically_prefers_a_dockerfile() {
