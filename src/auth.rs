@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use axum::Router;
@@ -18,6 +19,7 @@ use crate::client::Client;
 use crate::config::Config;
 
 const CALLBACK_PATH: &str = "/callback";
+const AUTHENTICATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub async fn login(
     dashboard_endpoint: &str,
@@ -53,13 +55,9 @@ pub async fn login(
             .context("authentication callback server failed")
     });
 
-    if let Err(error) = webbrowser::open(authorize_url.as_str())
-        .with_context(|| format!("failed to open the browser for {authorize_url}"))
-    {
-        drop(requests);
-        let _ = shutdown_sender.send(());
-        let _ = server.await;
-        return Err(error);
+    eprintln!("Open this URL to authenticate: {authorize_url}");
+    if let Err(error) = webbrowser::open(authorize_url.as_str()) {
+        eprintln!("warning: failed to open the browser automatically: {error}");
     }
 
     let request = tokio::select! {
@@ -69,6 +67,14 @@ pub async fn login(
             result
                 .context("authentication callback server task failed")??;
             return Err(anyhow!("authentication callback server stopped unexpectedly"));
+        }
+        _ = tokio::time::sleep(AUTHENTICATION_TIMEOUT) => {
+            drop(requests);
+            let _ = shutdown_sender.send(());
+            server
+                .await
+                .context("authentication callback server task failed")??;
+            return Err(anyhow!("authentication timed out after 10 minutes"));
         }
     };
 
