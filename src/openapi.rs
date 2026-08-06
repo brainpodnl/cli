@@ -61,11 +61,10 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
 }
 
 async fn load_spec(url: &str) -> Result<(Value, &'static str)> {
-    if let Ok(spec) = fetch_spec(url).await {
-        if resource_schemas(&spec).is_ok() {
+    if let Ok(spec) = fetch_spec(url).await
+        && resource_schemas(&spec).is_ok() {
             return Ok((spec, "remote"));
         }
-    }
 
     let embedded = serde_json::from_str(EMBEDDED_OPENAPI)
         .context("embedded Brainpod OpenAPI specification is invalid JSON")?;

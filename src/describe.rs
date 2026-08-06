@@ -139,8 +139,7 @@ fn describe_argument(command: &Command, argument: &Arg) -> Value {
         .get_value_names()
         .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>())
         .unwrap_or_else(|| {
-            takes_value.then(|| vec![argument.get_id().as_str().to_ascii_uppercase()])
-                .unwrap_or_default()
+            if takes_value { vec![argument.get_id().as_str().to_ascii_uppercase()] } else { Default::default() }
         });
     let defaults = argument
         .get_default_values()
