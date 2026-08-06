@@ -8,6 +8,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Args, CommandFactory as _, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 
+use crate::auth::LoginOptions;
 use crate::client::Client;
 use crate::config::Config;
 use crate::output::{CommandOutput, View};
@@ -17,7 +18,7 @@ pub enum Command {
     /// Describe CLI commands and their machine-readable contract
     Describe(DescribeArgs),
     /// Authenticate through the Brainpod dashboard
-    Login,
+    Login(LoginArgs),
     /// Manage local CLI configuration
     Config(ConfigArgs),
     /// Show the authenticated user
@@ -47,6 +48,13 @@ pub struct DescribeArgs {
     /// Command path or resource kind to describe; omit to return the complete command tree
     #[arg(value_name = "COMMAND", num_args = 0..)]
     pub command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct LoginArgs {
+    /// Print the authorization URL without opening a browser
+    #[arg(long)]
+    pub no_browser: bool,
 }
 
 #[derive(Debug, Args)]
@@ -457,7 +465,7 @@ fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> 
 pub fn needs_api_token(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_) | Command::Login | Command::Config(_)
+        Command::Describe(_) | Command::Login(_) | Command::Config(_)
     )
 }
 
@@ -465,7 +473,7 @@ pub fn needs_client(command: &Command) -> bool {
     !matches!(
         command,
         Command::Describe(_)
-            | Command::Login
+            | Command::Login(_)
             | Command::Config(_)
     )
 }
@@ -481,14 +489,25 @@ pub async fn handle(
     config: &mut Config,
     config_path: &Path,
     show_progress: bool,
+    json: bool,
 ) -> Result<CommandOutput> {
     match command {
         Command::Describe(args) => Ok(CommandOutput::new(
             crate::describe::generate(crate::Opts::command(), &args.command)?,
             View::Describe,
         )),
-        Command::Login => Ok(CommandOutput::new(
-            crate::auth::login(dashboard_endpoint, endpoint, config, config_path).await?,
+        Command::Login(args) => Ok(CommandOutput::new(
+            crate::auth::login(
+                dashboard_endpoint,
+                endpoint,
+                config,
+                config_path,
+                LoginOptions {
+                    no_browser: args.no_browser,
+                    json,
+                },
+            )
+            .await?,
             View::Login,
         )),
         Command::Config(args) => handle_config(args, config, config_path),

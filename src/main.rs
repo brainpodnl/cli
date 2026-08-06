@@ -28,7 +28,7 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
 pub(crate) struct Opts {
-    /// Emit JSON instead of line-oriented text (NDJSON for event watches)
+    /// Emit JSON instead of line-oriented text (NDJSON for login and event watches)
     #[arg(long, global = true)]
     json: bool,
 
@@ -66,6 +66,7 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
         Err(error) => {
             write_error(&error, json_output);
             ExitCode::FAILURE
@@ -74,7 +75,8 @@ async fn main() -> ExitCode {
 }
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
-    let show_progress = !opts.json && io::stderr().is_terminal();
+    let json = opts.json;
+    let show_progress = !json && io::stderr().is_terminal();
 
     if let Command::Describe(args) = &opts.command {
         if openapi::is_resource_path(&args.command) {
@@ -158,6 +160,7 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         &mut config,
         &config_path,
         show_progress,
+        json,
     )
     .await
 }
@@ -245,6 +248,27 @@ mod tests {
             args.command,
             vec!["resource".to_owned(), "create".to_owned()]
         );
+    }
+
+    #[test]
+    fn parses_login_without_browser() {
+        let opts = Opts::try_parse_from(["brainpod", "--json", "login", "--no-browser"]).unwrap();
+
+        assert!(opts.json);
+        let Command::Login(args) = opts.command else {
+            panic!("expected login command");
+        };
+        assert!(args.no_browser);
+    }
+
+    #[test]
+    fn defaults_login_to_opening_a_browser() {
+        let opts = Opts::try_parse_from(["brainpod", "login"]).unwrap();
+
+        let Command::Login(args) = opts.command else {
+            panic!("expected login command");
+        };
+        assert!(!args.no_browser);
     }
 
     #[test]

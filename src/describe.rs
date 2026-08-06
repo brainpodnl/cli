@@ -33,13 +33,14 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
         "globalArguments": global_arguments,
         "outputContract": {
             "default": "Deterministic line-oriented text.",
-            "json": "Pass --json to emit the complete API response as one JSON value.",
+            "json": "Pass --json to emit the complete API response as one JSON value for non-streaming commands.",
+            "loginJson": "Login emits an authorize event followed by an authenticated event as NDJSON on stdout.",
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
             "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
-            "Use --json for complete machine-readable API responses and errors.",
+            "Use --json for complete machine-readable API responses and errors; login and event watches are streamed as NDJSON.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
