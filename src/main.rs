@@ -74,7 +74,8 @@ async fn main() -> ExitCode {
 }
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
-    let show_progress = !opts.json && io::stderr().is_terminal();
+    let json = opts.json;
+    let show_progress = !json && io::stderr().is_terminal();
 
     if let Command::Describe(args) = &opts.command {
         if openapi::is_resource_path(&args.command) {
@@ -158,6 +159,7 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         &mut config,
         &config_path,
         show_progress,
+        json,
     )
     .await
 }
@@ -245,6 +247,27 @@ mod tests {
             args.command,
             vec!["resource".to_owned(), "create".to_owned()]
         );
+    }
+
+    #[test]
+    fn parses_login_without_browser() {
+        let opts = Opts::try_parse_from(["brainpod", "--json", "login", "--no-browser"]).unwrap();
+
+        assert!(opts.json);
+        let Command::Login(args) = opts.command else {
+            panic!("expected login command");
+        };
+        assert!(args.no_browser);
+    }
+
+    #[test]
+    fn defaults_login_to_opening_a_browser() {
+        let opts = Opts::try_parse_from(["brainpod", "login"]).unwrap();
+
+        let Command::Login(args) = opts.command else {
+            panic!("expected login command");
+        };
+        assert!(!args.no_browser);
     }
 
     #[test]
