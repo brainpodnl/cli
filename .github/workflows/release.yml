@@ -36,6 +36,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-v1-${{ matrix.system }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-v1-${{ matrix.system }}-
+          gc-max-store-size: 2G
+
       - name: Build
         run: nix build ".#packages.${{ matrix.system }}.default"
 
