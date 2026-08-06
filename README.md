@@ -1,6 +1,6 @@
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login and event watches use NDJSON.
 
 The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
 
@@ -57,14 +57,21 @@ NAME    HEAD STATUS  HEAD                                           DEPLOYED
 my-pod  ready        v12 (1a2b3c4d-1111-2222-3333-444455556666)    v11 (7e8f9a0b-1111-2222-3333-444455556666)
 ```
 
-JSON mode bypasses text rendering and emits the complete API response as one JSON value:
+JSON mode bypasses text rendering and emits the complete API response as one JSON value for non-streaming commands:
 
 ```sh
 brainpod pod list --json
 brainpod --json resource list
 ```
 
-Event watches are streamed as newline-delimited JSON so each event is available immediately. Each line contains the SSE event name, event ID, and decoded data.
+Login writes both the authorization notice and the successful authentication result to stdout. With `--json`, it emits newline-delimited JSON so callers receive the authorization URL before the callback completes. A successful login emits an `authorize` event followed by an `authenticated` event containing the complete user response:
+
+```json
+{"event":"authorize","url":"https://brainpod.io/cli/authorize?...","expiresInSeconds":600}
+{"event":"authenticated","user":{"email":"user@example.com"}}
+```
+
+Event watches are also streamed as newline-delimited JSON so each event is available immediately. Each line contains the SSE event name, event ID, and decoded data.
 
 Text event output uses color for timestamps, levels, platform events, and HTTP statuses when stdout is a terminal. JSON and redirected output never contain ANSI color sequences.
 

@@ -28,7 +28,7 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
 pub(crate) struct Opts {
-    /// Emit JSON instead of line-oriented text (NDJSON for event watches)
+    /// Emit JSON instead of line-oriented text (NDJSON for login and event watches)
     #[arg(long, global = true)]
     json: bool,
 
@@ -66,6 +66,7 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
         Err(error) => {
             write_error(&error, json_output);
             ExitCode::FAILURE

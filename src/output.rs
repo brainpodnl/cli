@@ -65,8 +65,12 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
     let mut stdout = stdout.lock();
 
     if json {
-        serde_json::to_writer_pretty(&mut stdout, value)?;
-        writeln!(stdout)?;
+        if matches!(view, View::Login) {
+            write_login_json(&mut stdout, value)?;
+        } else {
+            serde_json::to_writer_pretty(&mut stdout, value)?;
+            writeln!(stdout)?;
+        }
         return Ok(());
     }
 
@@ -103,6 +107,18 @@ async fn write_event_watch(mut watch: EventWatch, json: bool) -> Result<()> {
     }
 
     Err(anyhow!("Brainpod event stream ended without an end event"))
+}
+
+fn write_login_json(writer: &mut impl Write, user: &Value) -> Result<()> {
+    serde_json::to_writer(
+        &mut *writer,
+        &json!({
+            "event": "authenticated",
+            "user": user,
+        }),
+    )?;
+    writeln!(writer)?;
+    Ok(())
 }
 
 fn write_stream_json(writer: &mut impl Write, message: &EventStreamMessage) -> Result<()> {
@@ -1306,7 +1322,7 @@ mod tests {
 
     use super::{
         render_cluster_list, render_event, render_image_inspect, render_image_list,
-        render_whoami, stream_error, write_stream_json,
+        render_whoami, stream_error, write_login_json, write_stream_json,
     };
 
     #[test]
@@ -1393,6 +1409,18 @@ mod tests {
         assert_eq!(
             render_event(&event, true),
             "\u{1b}[2m2026-08-03T12:00:00Z\u{1b}[0m \u{1b}[32mINFO \u{1b}[0m Ready"
+        );
+    }
+
+    #[test]
+    fn writes_login_result_as_ndjson() {
+        let mut output = Vec::new();
+
+        write_login_json(&mut output, &json!({"email": "user@example.com"})).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "{\"event\":\"authenticated\",\"user\":{\"email\":\"user@example.com\"}}\n"
         );
     }
 
