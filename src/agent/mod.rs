@@ -18,7 +18,19 @@ use tokio::net::TcpListener;
 
 use crate::output::{CommandOutput, View};
 
-const CONSOLE_PAGE: &str = include_str!("console.html");
+const CONSOLE_TEMPLATE: &str = include_str!("console.html");
+/// Shared with the sign-in callback page so the two stay one design.
+const SHELL_CSS: &str = include_str!("../callback.css");
+const CONSOLE_CSS: &str = include_str!("console.css");
+const CONFETTI: &str = include_str!("../callback-confetti.html");
+
+/// The console page with its shared assets folded in.
+fn console_page() -> String {
+    CONSOLE_TEMPLATE
+        .replace("/*@@SHELL@@*/", SHELL_CSS)
+        .replace("/*@@CONSOLE@@*/", CONSOLE_CSS)
+        .replace("<!--@@CONFETTI@@-->", CONFETTI)
+}
 
 const DIRECTORY: &str = ".brainpod";
 const CONSOLE_FILE: &str = "console.html";
@@ -276,7 +288,7 @@ async fn console() -> Response {
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        CONSOLE_PAGE,
+        console_page(),
     )
         .into_response()
 }
@@ -312,7 +324,7 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
     };
 
     let console = directory.join(CONSOLE_FILE);
-    replace(&console, CONSOLE_PAGE.as_bytes())?;
+    replace(&console, console_page().as_bytes())?;
 
     let now = now();
     let session = Session {
