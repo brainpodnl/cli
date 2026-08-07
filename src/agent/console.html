@@ -124,7 +124,7 @@
   const blade = el("blade"), segments = el("segments"), burst = el("burst");
   const landing = el("landing"), visit = el("visit");
 
-  let session = null, flared = false, latest = null, pushed = null;
+  let session = null, flared = false, latest = null, pushed = null, drawn = "";
 
   const escape = (text) => {
     const node = document.createElement("div");
@@ -139,6 +139,7 @@
     tail.decoder = new TextDecoder();
     flared = false;
     rail.innerHTML = "";
+    drawn = "";
     lines.innerHTML = "";
     segments.innerHTML = "";
     out.classList.remove("on");
@@ -158,7 +159,7 @@
       segments.innerHTML = state.steps.map(() => "<i></i>").join("");
     }
 
-    rail.innerHTML = state.steps.map((step) => {
+    const markup = state.steps.map((step) => {
       const live = stalled && step.state === "running" ? "stalled" : step.state;
       const klass = { done: "is-done", running: "is-now", failed: "is-fail", stalled: "is-stall" }[live] || "is-todo";
       const mark = live === "done" ? TICK : PIP;
@@ -170,6 +171,17 @@
       return '<div class="step ' + klass + '"><span class="mark">' + mark + "</span>" +
              "<div><h2>" + escape(step.label) + when + "</h2>" + detail + "</div></div>";
     }).join("");
+
+    /* Only touch the DOM when something actually changed. Rewriting it on every
+       poll replaces the running step's element, and a CSS animation restarts
+       from zero each time its element is recreated — which is why the spinner
+       sat still. Compared against what was last generated, not against
+       innerHTML: reading that back returns the browser's normalised markup,
+       which never equals the string that produced it. */
+    if (markup !== drawn) {
+      drawn = markup;
+      rail.innerHTML = markup;
+    }
 
     const done = state.steps.filter((s) => s.state === "done").length;
     blade.style.width = state.steps.length ? (done / state.steps.length) * 100 + "%" : "0%";
