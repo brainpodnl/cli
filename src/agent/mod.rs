@@ -523,6 +523,31 @@ pub fn rail() -> Vec<RailStep> {
     steps
 }
 
+/// Whether this project has a session console worth reporting into.
+///
+/// Callers use it to decide whether capturing a command's output is worth its
+/// cost, so it checks only that the file is there rather than parsing it.
+pub fn is_active() -> bool {
+    project_root(None)
+        .map(|root| root.join(DIRECTORY).join(SESSION_FILE).exists())
+        .unwrap_or(false)
+}
+
+/// Appends output lines to the session console, if this project has one.
+pub fn append_log(lines: Vec<String>) {
+    if lines.is_empty() {
+        return;
+    }
+    let _ = amend(|session| {
+        session.log.extend(lines);
+        if session.log.len() > LOG_LIMIT {
+            let excess = session.log.len() - LOG_LIMIT;
+            session.log.drain(..excess);
+            session.log_dropped += excess;
+        }
+    });
+}
+
 /// Records a step in the session console, if this project has one.
 ///
 /// Every call is best-effort and silent. A read-only checkout, a full disk, or
