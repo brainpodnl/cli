@@ -104,7 +104,16 @@
   font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
   font-size: .8125rem; line-height: 1.75; color: var(--muted-foreground);
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
   white-space: pre-wrap; overflow-wrap: anywhere;
+}
+@supports not (scrollbar-color: auto) {
+  .lines::-webkit-scrollbar { width: 8px; }
+  .lines::-webkit-scrollbar-track { background: transparent; }
+  .lines::-webkit-scrollbar-thumb {
+    background: var(--border); border-radius: 999px;
+    background-clip: padding-box; border: 2px solid transparent;
+  }
 }
 /* The source tag on each line: present enough to scan by, quiet enough to
    read past when every line carries the same one. */
