@@ -281,18 +281,28 @@ async fn finish_callback(
 
 struct Page {
     status: StatusCode,
-    title: &'static str,
+    lead: &'static str,
+    emphasis: &'static str,
     message: &'static str,
     tone: Tone,
+    /// Where control goes back to, drawn as the second tile.
+    handoff: Option<Handoff>,
     /// Steps the session still has ahead of it, for the agent-driven page.
     next: Vec<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum Tone {
     Signed,
     Neutral,
     Failed,
+}
+
+/// What the user is being handed back to.
+#[derive(Clone, Copy)]
+enum Handoff {
+    Console,
+    Terminal,
 }
 
 impl Page {
@@ -300,19 +310,26 @@ impl Page {
     ///
     /// An agent that set up a session console leaves steps behind it, and those
     /// turn this from a dead end into a handover: the user is told what happens
-    /// next and where it is happening. Someone who ran `login` themselves has
-    /// no such context, so they get told to go back to the terminal instead.
+    /// next and where it is happening. Someone who ran `login` themselves has no
+    /// such context, so they are pointed back at the terminal instead.
     fn success() -> Self {
         let next = crate::agent::upcoming();
+        let handed_to_agent = !next.is_empty();
         Self {
             status: StatusCode::OK,
-            title: "You're signed in",
-            message: if next.is_empty() {
-                "Head back to the Brainpod CLI. You can close this tab."
+            lead: "You're",
+            emphasis: "signed in",
+            message: if handed_to_agent {
+                "Your deploy is carrying on where you started it."
             } else {
-                "Your deploy is carrying on where you started it. You can close this tab."
+                "Head back to the Brainpod CLI to pick up where you left off."
             },
             tone: Tone::Signed,
+            handoff: Some(if handed_to_agent {
+                Handoff::Console
+            } else {
+                Handoff::Terminal
+            }),
             next,
         }
     }
@@ -320,9 +337,11 @@ impl Page {
     fn cancelled() -> Self {
         Self {
             status: StatusCode::OK,
-            title: "Sign-in cancelled",
+            lead: "Sign-in",
+            emphasis: "cancelled",
             message: "Nothing was changed. You can close this tab.",
             tone: Tone::Neutral,
+            handoff: None,
             next: Vec::new(),
         }
     }
@@ -330,9 +349,11 @@ impl Page {
     fn invalid() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            title: "Sign-in failed",
+            lead: "Sign-in",
+            emphasis: "failed",
             message: "That response was not valid. Head back to the CLI and start again.",
             tone: Tone::Failed,
+            handoff: None,
             next: Vec::new(),
         }
     }
@@ -340,9 +361,11 @@ impl Page {
     fn storage_failed() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            title: "Sign-in failed",
+            lead: "Sign-in",
+            emphasis: "failed",
             message: "Your token could not be saved. The CLI has the details.",
             tone: Tone::Failed,
+            handoff: None,
             next: Vec::new(),
         }
     }
@@ -350,45 +373,75 @@ impl Page {
     fn unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            title: "Sign-in failed",
+            lead: "Sign-in",
+            emphasis: "failed",
             message: "The CLI stopped waiting for this. Head back and start again.",
             tone: Tone::Failed,
+            handoff: None,
             next: Vec::new(),
         }
     }
 }
 
-const MARK: &str = concat!(
-    r#"<svg class="mark" viewBox="0 0 19.89 21.47" aria-hidden="true">"#,
+const BRAINPOD_GLYPH: &str = concat!(
+    r#"<svg viewBox="0 0 19.89 21.47" class="glyph" aria-hidden="true">"#,
     r#"<path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>"#,
     r##"<path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/>"##,
     "</svg>"
 );
 
+/// The pane the agent is reporting into.
+const CONSOLE_GLYPH: &str = concat!(
+    r#"<svg viewBox="0 0 24 24" class="glyph line" aria-hidden="true">"#,
+    r#"<rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3.2"/>"#,
+    r#"<path d="M2.6 9.1h18.8"/><circle cx="5.9" cy="6.7" r=".85" fill="currentColor" stroke="none"/>"#,
+    r#"<path d="M6.4 12.9h6.4M6.4 16h9.6"/></svg>"#
+);
+
+const TERMINAL_GLYPH: &str = concat!(
+    r#"<svg viewBox="0 0 24 24" class="glyph line" aria-hidden="true">"#,
+    r#"<rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3.2"/>"#,
+    r#"<path d="M7.2 9.6l3.2 2.6-3.2 2.6M13 15.4h4.2"/></svg>"#
+);
+
+const ARROW: &str = concat!(
+    r#"<svg viewBox="0 0 40 24" class="arrow" aria-hidden="true">"#,
+    r#"<path d="M4 12h28M24 4.5 32.5 12 24 19.5"/></svg>"#
+);
+
 const STYLE: &str = r#"
-:root{--bg:#fbfaf8;--fg:#16140f;--card:#fff;--border:#e5e0d7;--muted:#6b6660;--faint:#a19b92;--brand:#003399;--ok:#2f7d55;--fail:#b4402f}
-@media(prefers-color-scheme:dark){:root{--bg:#16140f;--fg:#fbfaf8;--card:#1d1b16;--border:#2d2a25;--muted:#a19b92;--faint:#78736c;--brand:#7da4ff;--ok:#5fbd8a;--fail:#d4614c}}
+:root{--bg:#fbfaf8;--fg:#16140f;--card:#fff;--sec:#f3f0ea;--border:#e5e0d7;--muted:#6b6660;--faint:#a19b92;--brand:#003399;--ink:#003399;--ok:#2f7d55;--fail:#b4402f;--dot:rgba(22,20,15,.09);--stage:color-mix(in srgb,#003399 8%,transparent);--veil:55%;--tileshadow:0 14px 34px -10px rgba(22,20,15,.34);--ring:rgba(22,20,15,.1)}
+@media(prefers-color-scheme:dark){:root{--bg:#16140f;--fg:#fbfaf8;--card:#1d1b16;--sec:#262320;--border:#2d2a25;--muted:#a19b92;--faint:#78736c;--ink:#7da4ff;--ok:#5fbd8a;--fail:#d4614c;--dot:rgba(251,250,248,.07);--stage:color-mix(in srgb,#7da4ff 11%,transparent);--veil:30%;--tileshadow:0 14px 34px -10px rgba(0,0,0,.7);--ring:rgba(251,250,248,.12)}}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:var(--bg);color:var(--fg);font:400 15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
-main{width:100%;max-width:30rem;display:flex;flex-direction:column;gap:22px}
-.brand{display:flex;align-items:center;gap:9px;justify-content:center;color:var(--fg)}
-.mark{height:20px;width:auto}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 24px;color:var(--fg);background:var(--bg);background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:22px 22px;font:400 15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:31rem;display:flex;flex-direction:column;gap:26px}
+.brand{display:flex;align-items:center;gap:9px;justify-content:center}
+.brand .glyph{height:19px}
 .word{font-weight:600;font-size:15px;letter-spacing:-.015em}
-.panel{background:color-mix(in srgb,var(--brand) 8%,transparent);border-radius:18px;padding:30px 26px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
-.seal{width:42px;height:42px;border-radius:999px;display:grid;place-items:center;background:var(--ok)}
-.seal.failed{background:var(--fail)}
-.seal.neutral{background:var(--faint)}
-.seal svg{width:20px;height:20px;display:block}
-.seal path{stroke:var(--bg);stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
-h1{margin:0;font-size:26px;line-height:1.12;letter-spacing:-.028em;font-weight:600;text-wrap:balance}
+.stage{position:relative;display:flex;align-items:center;justify-content:center;gap:22px;padding:38px 24px;border-radius:22px;background:var(--stage);overflow:hidden}
+.stage::after{content:"";position:absolute;inset:0;background:radial-gradient(circle 150px at 50% 50%,transparent 40%,color-mix(in srgb,var(--bg) var(--veil),transparent) 100%);pointer-events:none}
+.tile{position:relative;width:84px;height:84px;border-radius:22px;display:grid;place-items:center;background:linear-gradient(145deg,var(--card),var(--sec));box-shadow:var(--tileshadow),inset 0 0 0 1px var(--ring)}
+.tile .glyph{height:34px;width:auto;color:var(--fg)}
+.tile .glyph.line{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.arrow{width:34px;height:20px;fill:none;stroke:var(--fg);stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round;opacity:.32}
+.badge{position:absolute;right:-7px;bottom:-7px;width:27px;height:27px;border-radius:999px;display:grid;place-items:center;background:var(--ok);box-shadow:0 0 0 3.5px var(--bg)}
+.badge.failed{background:var(--fail)}
+.badge.neutral{background:var(--faint)}
+.badge svg{width:14px;height:14px;fill:none;stroke:var(--bg);stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round}
+.say{display:flex;flex-direction:column;gap:9px;text-align:center}
+h1{margin:0;font-size:clamp(30px,6vw,40px);line-height:1.04;letter-spacing:-.035em;font-weight:400;text-wrap:balance}
+h1 b{font-weight:700}
 p{margin:0;color:var(--muted);text-wrap:balance}
-.next{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
-.next h2{margin:0;padding:11px 16px;border-bottom:1px solid var(--border);font:500 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
-ol{margin:0;padding:12px 16px 14px;list-style:none;display:flex;flex-direction:column;gap:9px}
-li{display:flex;align-items:baseline;gap:11px;font-size:14.5px}
-li span{flex:none;width:17px;height:17px;border-radius:999px;border:1.5px solid var(--border);font:500 10px/16px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;color:var(--faint);align-self:center}
-li:first-child span{border-color:var(--brand);color:var(--brand)}
+.next{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.next h2{margin:0;padding:12px 18px;border-bottom:1px solid var(--border);font:500 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+ol{margin:0;padding:14px 18px 16px;list-style:none;display:flex;flex-direction:column;gap:10px}
+li{display:flex;align-items:center;gap:12px;font-size:14.5px}
+li i{flex:none;width:19px;height:19px;border-radius:999px;border:1.5px solid var(--border);font:500 10px/17px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;color:var(--faint);font-style:normal}
+li:first-child i{border-color:var(--ink);color:var(--ink)}
 .note{text-align:center;font-size:13px;color:var(--faint)}
+@media(prefers-reduced-motion:no-preference){main{animation:rise .5s cubic-bezier(.16,.84,.3,1)}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}}
 "#;
 
 fn escape(text: &str) -> String {
@@ -399,10 +452,24 @@ fn escape(text: &str) -> String {
 
 impl IntoResponse for Page {
     fn into_response(self) -> Response {
-        let (seal, glyph) = match self.tone {
-            Tone::Signed => ("seal", "M5 10.4 8.4 13.8 15 6.2"),
-            Tone::Neutral => ("seal neutral", "M5 10h10"),
-            Tone::Failed => ("seal failed", "M6 6l8 8M14 6l-8 8"),
+        let (badge, glyph) = match self.tone {
+            Tone::Signed => ("badge", "M4.6 8.4 7.2 11 11.4 5.4"),
+            Tone::Neutral => ("badge neutral", "M4.5 8h7"),
+            Tone::Failed => ("badge failed", "M5 5l6 6M11 5l-6 6"),
+        };
+        let seal = format!(
+            "<span class=\"{badge}\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"{glyph}\"/></svg></span>"
+        );
+
+        let stage = match self.handoff {
+            Some(handoff) => format!(
+                "<div class=\"tile\">{BRAINPOD_GLYPH}</div>{ARROW}<div class=\"tile\">{}{seal}</div>",
+                match handoff {
+                    Handoff::Console => CONSOLE_GLYPH,
+                    Handoff::Terminal => TERMINAL_GLYPH,
+                }
+            ),
+            None => format!("<div class=\"tile\">{BRAINPOD_GLYPH}{seal}</div>"),
         };
 
         let next = if self.next.is_empty() {
@@ -412,9 +479,7 @@ impl IntoResponse for Page {
                 .next
                 .iter()
                 .enumerate()
-                .map(|(index, label)| {
-                    format!("<li><span>{}</span>{}</li>", index + 1, escape(label))
-                })
+                .map(|(index, label)| format!("<li><i>{}</i>{}</li>", index + 1, escape(label)))
                 .collect::<String>();
             format!("<section class=\"next\"><h2>What happens next</h2><ol>{items}</ol></section>")
         };
@@ -423,19 +488,18 @@ impl IntoResponse for Page {
             concat!(
                 "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
-                "<title>{title} · Brainpod</title><style>{style}</style></head><body><main>",
+                "<title>{lead} {emphasis} · Brainpod</title><style>{style}</style></head><body><main>",
                 "<div class=\"brand\">{mark}<span class=\"word\">brainpod</span></div>",
-                "<div class=\"panel\"><div class=\"{seal}\">",
-                "<svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"{glyph}\"/></svg></div>",
-                "<h1>{title}</h1><p>{message}</p></div>{next}",
-                "<p class=\"note\">Nothing on this page needs saving.</p>",
+                "<div class=\"stage\">{stage}</div>",
+                "<div class=\"say\"><h1>{lead} <b>{emphasis}</b></h1><p>{message}</p></div>",
+                "{next}<p class=\"note\">You can close this tab.</p>",
                 "</main></body></html>"
             ),
-            title = self.title,
+            lead = self.lead,
+            emphasis = self.emphasis,
             style = STYLE,
-            mark = MARK,
-            seal = seal,
-            glyph = glyph,
+            mark = BRAINPOD_GLYPH,
+            stage = stage,
             message = self.message,
             next = next,
         );
