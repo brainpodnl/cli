@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs;
 use std::io::{self, BufRead as _, Write as _};
 use std::net::Ipv4Addr;
@@ -156,14 +157,14 @@ enum StepState {
     Failed,
 }
 
-impl StepState {
-    const fn as_str(self) -> &'static str {
-        match self {
+impl fmt::Display for StepState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::Done => "done",
             Self::Failed => "failed",
-        }
+        })
     }
 }
 
@@ -173,12 +174,12 @@ enum Outcome {
     Failed,
 }
 
-impl Outcome {
-    const fn as_str(self) -> &'static str {
-        match self {
+impl fmt::Display for Outcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
             Self::Done => "done",
             Self::Failed => "failed",
-        }
+        })
     }
 }
 
@@ -490,7 +491,7 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
     let mut session = read_session(&directory)?;
     let now = now();
 
-    let state = args.state.as_str().to_owned();
+    let state = args.state.to_string();
     match session.steps.iter_mut().find(|step| step.id == args.id) {
         Some(existing) => {
             if let Some(label) = args.label {
@@ -613,7 +614,7 @@ fn finish(args: FinishArgs) -> Result<CommandOutput> {
         }
     }
 
-    session.state = args.state.as_str().to_owned();
+    session.state = args.state.to_string();
     session.message = args.message;
     session.updated_at = now;
     write_session(&directory, &session)?;
