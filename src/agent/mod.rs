@@ -1,13 +1,20 @@
 use std::fs;
-use std::io::{self, Read as _};
+use std::io::{self, Read as _, Write as _};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+use axum::Router;
+use axum::extract::State;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 use clap::{Args, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::net::TcpListener;
 
 use crate::output::{CommandOutput, View};
 
@@ -32,6 +39,8 @@ pub struct AgentArgs {
 enum AgentCommand {
     /// Start a session console and print the page to put in front of the user
     Start(StartArgs),
+    /// Serve the session console over loopback for a browser outside this machine's agent
+    Serve(ServeArgs),
     /// Record a step's state in the running session
     Step(StepArgs),
     /// Append output lines read from stdin to the running session
@@ -50,6 +59,16 @@ struct StartArgs {
     /// Leave the repository's .gitignore untouched
     #[arg(long)]
     no_ignore: bool,
+}
+
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// Directory holding the console; defaults to the repository root
+    #[arg(long, value_name = "DIR")]
+    path: Option<PathBuf>,
+    /// Port to bind; defaults to an ephemeral port
+    #[arg(long)]
+    port: Option<u16>,
 }
 
 #[derive(Debug, Args)]
@@ -161,17 +180,103 @@ struct Step {
     ended_at: Option<u64>,
 }
 
-pub fn handle(
+pub async fn handle(
     args: AgentArgs,
     pod: Option<&str>,
     dashboard_endpoint: &str,
+    json: bool,
 ) -> Result<CommandOutput> {
     match args.command {
         AgentCommand::Start(args) => start(args, pod, dashboard_endpoint),
+        AgentCommand::Serve(args) => serve(args, json).await,
         AgentCommand::Step(args) => step(args),
         AgentCommand::Log(args) => log(args),
         AgentCommand::Finish(args) => finish(args),
         AgentCommand::Clear(args) => clear(args),
+    }
+}
+
+/// Serves the console over loopback until the process is killed.
+///
+/// A browser outside the agent will not read `session.json` from a `file://`
+/// page — same-directory reads are blocked there — so the console is served
+/// instead, which puts the page and its session on one origin. Announces the
+/// URL on stdout before blocking, the way `login` announces its authorization
+/// URL, so a caller can background this and read the first line.
+///
+/// The URL carries a random path because loopback is reachable by anything
+/// else running on this machine, including pages in the user's browser.
+async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
+    let directory = session_directory(args.path)?;
+    let secret = identifier()?;
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, args.port.unwrap_or_default()))
+        .await
+        .context("failed to bind the session console server")?;
+    let port = listener
+        .local_addr()
+        .context("failed to determine the session console address")?
+        .port();
+
+    // 127.0.0.1 rather than localhost: localhost resolves to ::1 first on some
+    // machines, and only the IPv4 loopback is bound here.
+    let url = format!("http://127.0.0.1:{port}/{secret}/");
+
+    let app = Router::new()
+        .route(&format!("/{secret}/"), get(console))
+        .route(&format!("/{secret}/{SESSION_FILE}"), get(session_state))
+        .with_state(directory);
+
+    announce(&url, json)?;
+
+    axum::serve(listener, app)
+        .await
+        .context("session console server failed")?;
+
+    Ok(CommandOutput::new(
+        json!({ "url": url, "port": port }),
+        View::AgentServe,
+    ))
+}
+
+fn announce(url: &str, json: bool) -> Result<()> {
+    let notice = if json {
+        serde_json::to_string(&json!({ "event": "console", "url": url }))
+            .context("failed to serialize the console announcement")?
+    } else {
+        format!("Session console: {url}")
+    };
+
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    writeln!(stdout, "{notice}").context("failed to write the console announcement")?;
+    stdout
+        .flush()
+        .context("failed to flush the console announcement")
+}
+
+async fn console() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        CONSOLE_PAGE,
+    )
+        .into_response()
+}
+
+async fn session_state(State(directory): State<PathBuf>) -> Response {
+    match tokio::fs::read(directory.join(SESSION_FILE)).await {
+        Ok(contents) => (
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            contents,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

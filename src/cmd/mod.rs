@@ -499,7 +499,7 @@ pub async fn handle(
             crate::describe::generate(crate::Opts::command(), &args.command)?,
             View::Describe,
         )),
-        Command::Agent(args) => crate::agent::handle(args, pod, dashboard_endpoint),
+        Command::Agent(args) => crate::agent::handle(args, pod, dashboard_endpoint, json).await,
         Command::Login(args) => Ok(CommandOutput::new(
             crate::auth::login(
                 dashboard_endpoint,

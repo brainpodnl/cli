@@ -373,7 +373,10 @@
 (() => {
   "use strict";
 
-  const STALE_AFTER = 10000;
+  /* Nothing heartbeats yet: the only writers are the agent's own commands, and
+     a minute of silence during a build is normal. Matches deploy --wait's
+     default timeout, so a genuinely stuck deploy still surfaces. */
+  const STALE_AFTER = 90000;
   const POLL = 400;
 
   const CHECK = "M4 8.6 6.9 11.5 12.4 5.2";
