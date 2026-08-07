@@ -183,14 +183,13 @@ h1 .quiet { color: var(--faint); font-weight: 500; }
 .pip { width: 8px; height: 8px; border-radius: 999px; background: var(--border); }
 .step.is-done .pip { background: var(--foreground); }
 .step.is-now .pip {
-  background: var(--brand);
-  animation: halo 1.8s ease-out infinite;
+  width: 12px; height: 12px;
+  background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  border-top-color: var(--brand);
+  animation: spin .7s linear infinite;
 }
-@keyframes halo {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
-  70%  { box-shadow: 0 0 0 7px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 .tick { width: 15px; height: 15px; }
 .tick circle { fill: var(--foreground); }
 .tick path { stroke: var(--card); stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
@@ -276,5 +275,5 @@ h1 .quiet { color: var(--faint); font-weight: 500; }
 
 @media (prefers-reduced-motion: reduce) {
   .confetti { display: none; }
-  .step.is-now .pip { animation: none; }
+  .step.is-now .pip { animation: none; border-color: var(--brand); }
 }

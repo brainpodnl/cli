@@ -85,11 +85,6 @@
       </div>
     </div>
 
-    <div class="notice" role="status">
-      <span><strong>This deploy stopped reporting.</strong>
-      <span id="stalled"></span></span>
-    </div>
-
     <div class="rail" id="rail"></div>
 
     <section class="out" id="out" aria-live="polite">
@@ -273,10 +268,8 @@
       el("foot").textContent = "Nothing was deployed.";
       burst.style.display = "none";
     } else if (stalled) {
-      el("stalled").textContent = "Nothing has come back for " +
-        Math.round((Date.now() - state.updatedAt) / 1000) +
-        " seconds. Your pod is untouched — start again when you're ready.";
-      el("foot").textContent = "Last update " + Math.round((Date.now() - state.updatedAt) / 1000) + "s ago.";
+      el("foot").textContent =
+        "Last update " + Math.round((Date.now() - state.updatedAt) / 1000) + "s ago.";
       burst.style.display = "none";
     } else {
       el("headline").textContent = running ? running.label : "Getting started.";

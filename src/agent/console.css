@@ -79,17 +79,14 @@
 .step.is-fail .pip { background: var(--destructive); }
 .step.is-fail h2 { color: var(--foreground); }
 .step.is-fail p { color: var(--destructive); }
-.step.is-stall .pip { background: var(--c-gold); animation: none; }
-
-.notice {
-  display: none; gap: .625rem; align-items: flex-start;
-  margin-top: 1.5rem; padding: .75rem .875rem;
-  border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--secondary); font-size: .8125rem; line-height: 1.55;
+/* A stalled step keeps the spinner's shape but stops it: still obviously the
+   current step, no longer claiming to be moving. */
+.step.is-stall .pip {
+  width: 12px; height: 12px; background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--c-gold) 30%, transparent);
+  border-top-color: var(--c-gold);
+  animation: none;
 }
-.notice strong { font-weight: 500; }
-.notice span { color: var(--muted-foreground); }
-[data-run="stalled"] .notice { display: flex; }
 
 .out {
   display: none; margin-top: 1.5rem;
