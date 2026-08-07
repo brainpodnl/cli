@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, BufRead as _, Write as _};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use axum::Router;
 use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use clap::{Args, Subcommand, ValueEnum};
@@ -38,8 +39,8 @@ const SESSION_FILE: &str = "session.json";
 const IGNORE_ENTRY: &str = ".brainpod/";
 const IGNORE_COMMENT: &str = "# Brainpod session console";
 
-const SCHEMA: u32 = 1;
-const LOG_LIMIT: usize = 400;
+const SCHEMA: u32 = 2;
+const LOG_FILE: &str = "session.log";
 /// Enough for the user to see where this is going without becoming a wall.
 const RAIL_SHOWN: usize = 6;
 
@@ -57,8 +58,8 @@ enum AgentCommand {
     Serve(ServeArgs),
     /// Record a step's state in the running session
     Step(StepArgs),
-    /// Append output lines read from stdin to the running session
-    Log(ScopeArgs),
+    /// Append stdin to one of the session's output streams
+    Log(LogArgs),
     /// Close the running session
     Finish(FinishArgs),
     /// Remove the session console from the project
@@ -100,6 +101,16 @@ struct ServeArgs {
 
 #[derive(Debug, Args)]
 struct ScopeArgs {
+    /// Directory holding the console; defaults to the repository root
+    #[arg(long, value_name = "DIR")]
+    path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct LogArgs {
+    /// Name each line is tagged with, so one log can carry several sources
+    #[arg(long, default_value = "output")]
+    stream: String,
     /// Directory holding the console; defaults to the repository root
     #[arg(long, value_name = "DIR")]
     path: Option<PathBuf>,
@@ -187,10 +198,9 @@ struct Session {
     message: Option<String>,
     #[serde(default)]
     steps: Vec<Step>,
-    #[serde(default)]
-    log: Vec<String>,
-    #[serde(default)]
-    log_dropped: usize,
+    /// Where a running `agent serve` will push change events, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    events: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -252,7 +262,16 @@ async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
     let app = Router::new()
         .route(&format!("/{secret}/"), get(console))
         .route(&format!("/{secret}/{SESSION_FILE}"), get(session_state))
-        .with_state(directory);
+        .route(&format!("/{secret}/{LOG_FILE}"), get(log_file))
+        .route(&format!("/{secret}/events"), get(events))
+        .with_state(directory.clone());
+
+    // Advertise the endpoint so a page opened as a local file can find it and
+    // upgrade from polling to push. Never cleared: the page falls back to
+    // polling when the stream drops, and no guard survives the kill that
+    // actually ends this process.
+    let advertised = format!("{url}events");
+    let _ = amend_at(&directory, |session| session.events = Some(advertised));
 
     announce(&url, json)?;
 
@@ -293,6 +312,105 @@ async fn console() -> Response {
         .into_response()
 }
 
+/// Emits a change token whenever the session or any of its logs moves.
+///
+/// Deliberately dumb: it says something changed and the page re-reads what it
+/// already knows how to read, so the polling path and the push path run exactly
+/// the same code.
+async fn events(
+    State(directory): State<PathBuf>,
+) -> Sse<impl tokio_stream::Stream<Item = std::result::Result<Event, std::convert::Infallible>>> {
+    use tokio_stream::StreamExt as _;
+
+    let mut last = String::new();
+    let ticks = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(
+        std::time::Duration::from_millis(200),
+    ));
+
+    Sse::new(ticks.filter_map(move |_| {
+        let current = fingerprint(&directory);
+        if current == last {
+            return None;
+        }
+        last = current.clone();
+        Some(Ok(Event::default().data(current)))
+    }))
+    .keep_alive(KeepAlive::default())
+}
+
+/// A cheap summary of everything the page reads, used to notice changes.
+fn fingerprint(directory: &Path) -> String {
+    let mut parts = vec![
+        fs::metadata(directory.join(SESSION_FILE))
+            .and_then(|meta| Ok((meta.len(), meta.modified()?)))
+            .map(|(len, time)| {
+                let stamp = time
+                    .duration_since(UNIX_EPOCH)
+                    .map(|since| since.as_millis())
+                    .unwrap_or_default();
+                format!("{len}:{stamp}")
+            })
+            .unwrap_or_default(),
+    ];
+    parts.push(
+        fs::metadata(directory.join(LOG_FILE))
+            .map(|meta| meta.len().to_string())
+            .unwrap_or_default(),
+    );
+    parts.join("|")
+}
+
+/// Serves the session log, honouring a byte range so the page can tail it.
+async fn log_file(State(directory): State<PathBuf>, headers: HeaderMap) -> Response {
+    let Ok(contents) = tokio::fs::read(directory.join(LOG_FILE)).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let total = contents.len() as u64;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| parse_range(value, total));
+
+    let common = [
+        (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_owned()),
+        (header::CACHE_CONTROL, "no-store".to_owned()),
+        (header::ACCEPT_RANGES, "bytes".to_owned()),
+    ];
+
+    match range {
+        Some((start, end)) => {
+            let slice = contents[start as usize..=end as usize].to_vec();
+            let mut response = (StatusCode::PARTIAL_CONTENT, common, slice).into_response();
+            if let Ok(value) = format!("bytes {start}-{end}/{total}").parse() {
+                response.headers_mut().insert(header::CONTENT_RANGE, value);
+            }
+            response
+        }
+        None => (common, contents).into_response(),
+    }
+}
+
+/// Parses the one range form a tailing reader needs: `bytes=start-` or a suffix.
+fn parse_range(value: &str, total: u64) -> Option<(u64, u64)> {
+    let spec = value.strip_prefix("bytes=")?;
+    if spec.contains(',') || total == 0 {
+        return None;
+    }
+    let (start, end) = spec.split_once('-')?;
+
+    let (start, end) = match (start.trim(), end.trim()) {
+        ("", last) => (total.saturating_sub(last.parse::<u64>().ok()?), total - 1),
+        (first, "") => (first.parse().ok()?, total - 1),
+        (first, last) => (
+            first.parse().ok()?,
+            last.parse::<u64>().ok()?.min(total - 1),
+        ),
+    };
+
+    (start <= end && start < total).then_some((start, end))
+}
+
 async fn session_state(State(directory): State<PathBuf>) -> Response {
     match tokio::fs::read(directory.join(SESSION_FILE)).await {
         Ok(contents) => (
@@ -322,6 +440,11 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
     } else {
         ensure_ignored(&root)?
     };
+
+    // The session is minted fresh, so its log goes with it. Leaving it would
+    // show the previous run's output under the new run's steps, the exact
+    // confusion truncating the session file exists to prevent.
+    let _ = fs::remove_file(directory.join(LOG_FILE));
 
     let console = directory.join(CONSOLE_FILE);
     replace(&console, console_page().as_bytes())?;
@@ -412,27 +535,57 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
 /// The tail is capped so the file stays a snapshot the page can re-read whole;
 /// `logDropped` is what lets the page say lines were dropped rather than imply
 /// it showed everything.
-fn log(args: ScopeArgs) -> Result<CommandOutput> {
+fn log(args: LogArgs) -> Result<CommandOutput> {
     let directory = session_directory(args.path)?;
-    let mut session = read_session(&directory)?;
-
-    let mut input = String::new();
-    io::stdin()
-        .read_to_string(&mut input)
-        .context("failed to read output from stdin")?;
-
-    for line in input.lines() {
-        session.log.push(line.to_owned());
+    let mut sink = open_log(&directory, &args.stream)?;
+    for line in io::stdin().lock().lines() {
+        sink.write(&line.context("failed to read output from stdin")?);
     }
-    if session.log.len() > LOG_LIMIT {
-        let excess = session.log.len() - LOG_LIMIT;
-        session.log.drain(..excess);
-        session.log_dropped += excess;
+    Ok(summary(&read_session(&directory)?))
+}
+
+/// An appender that tags every line with where it came from.
+///
+/// One file rather than one per source: separate files carry no timestamps, so
+/// nothing could put them back in order. Append order is the ordering.
+pub struct Sink {
+    file: fs::File,
+    prefix: String,
+}
+
+impl Sink {
+    pub fn write(&mut self, line: &str) {
+        let _ = writeln!(self.file, "{}{line}", self.prefix);
+    }
+}
+
+fn open_log(directory: &Path, stream: &str) -> Result<Sink> {
+    if !is_stream_name(stream) {
+        return Err(anyhow!(
+            "stream name may only contain letters, numbers, dashes, and underscores"
+        ));
     }
 
-    session.updated_at = now();
-    write_session(&directory, &session)?;
-    Ok(summary(&session))
+    let path = directory.join(LOG_FILE);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+
+    Ok(Sink {
+        file,
+        prefix: format!("[{stream}] "),
+    })
+}
+
+/// Stream names are shown on every line they tag, so keep them boring.
+fn is_stream_name(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 40
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn finish(args: FinishArgs) -> Result<CommandOutput> {
@@ -533,19 +686,16 @@ pub fn is_active() -> bool {
         .unwrap_or(false)
 }
 
-/// Appends output lines to the session console, if this project has one.
-pub fn append_log(lines: Vec<String>) {
-    if lines.is_empty() {
-        return;
+/// An appender for the session log, if this project has a console.
+///
+/// Best-effort like the rest: a caller that gets `None` simply has nowhere to
+/// mirror its output, which must never be a reason to fail their command.
+pub fn sink(stream: &str) -> Option<Sink> {
+    let directory = project_root(None).ok()?.join(DIRECTORY);
+    if !directory.join(SESSION_FILE).exists() {
+        return None;
     }
-    let _ = amend(|session| {
-        session.log.extend(lines);
-        if session.log.len() > LOG_LIMIT {
-            let excess = session.log.len() - LOG_LIMIT;
-            session.log.drain(..excess);
-            session.log_dropped += excess;
-        }
-    });
+    open_log(&directory, stream).ok()
 }
 
 /// Records a step in the session console, if this project has one.
@@ -586,19 +736,22 @@ pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
 /// Callers in a polling loop double as the heartbeat: without a recent
 /// `updatedAt` the page cannot tell a slow deploy from an abandoned one.
 fn amend(change: impl FnOnce(&mut Session)) -> Result<()> {
-    let directory = project_root(None)?.join(DIRECTORY);
+    amend_at(&project_root(None)?.join(DIRECTORY), change)
+}
+
+fn amend_at(directory: &Path, change: impl FnOnce(&mut Session)) -> Result<()> {
     if !directory.join(SESSION_FILE).exists() {
         return Ok(());
     }
 
-    let mut session = read_session(&directory)?;
+    let mut session = read_session(directory)?;
     if session.state != "running" {
         return Ok(());
     }
 
     change(&mut session);
     session.updated_at = now();
-    write_session(&directory, &session)
+    write_session(directory, &session)
 }
 
 fn summary(session: &Session) -> CommandOutput {
@@ -607,7 +760,7 @@ fn summary(session: &Session) -> CommandOutput {
             "session": session.session,
             "state": session.state,
             "steps": session.steps.len(),
-            "log": session.log.len(),
+            "state": session.state,
         }),
         View::AgentUpdate,
     )

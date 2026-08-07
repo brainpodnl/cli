@@ -107,10 +107,16 @@
   font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
   font-size: .8125rem; line-height: 1.75; color: var(--muted-foreground);
   scrollbar-width: thin;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.lines div { white-space: pre-wrap; overflow-wrap: anywhere; animation: linein .3s ease-out; }
-.lines .dropped { color: var(--faint); font-style: italic; }
-@keyframes linein { from { opacity: 0; transform: translateY(4px); } }
+/* The source tag on each line: present enough to scan by, quiet enough to
+   read past when every line carries the same one. */
+.lines i {
+  font-style: normal; color: var(--faint);
+  display: inline-block; min-width: 4.25rem;
+}
+.lines i::before { content: "["; }
+.lines i::after { content: "]"; }
 
 .landing { display: none; margin-top: 1.5rem; }
 .landing.on { display: flex; }

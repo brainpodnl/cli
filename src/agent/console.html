@@ -129,7 +129,7 @@
   const blade = el("blade"), segments = el("segments"), burst = el("burst");
   const landing = el("landing"), visit = el("visit");
 
-  let session = null, rendered = 0, flared = false, latest = null;
+  let session = null, flared = false, latest = null, pushed = null;
 
   const escape = (text) => {
     const node = document.createElement("div");
@@ -139,7 +139,9 @@
 
   function reset(state) {
     session = state.session;
-    rendered = 0;
+    tail.at = 0;
+    tail.text = "";
+    tail.decoder = new TextDecoder();
     flared = false;
     rail.innerHTML = "";
     lines.innerHTML = "";
@@ -178,28 +180,68 @@
     blade.style.width = state.steps.length ? (done / state.steps.length) * 100 + "%" : "0%";
   }
 
-  function paintLog(state) {
-    const total = (state.logDropped ? 1 : 0) + state.log.length;
-    if (total < rendered) { lines.innerHTML = ""; rendered = 0; }
-    if (!total) return;
+  /* One reader for both ways this page is delivered: the URL is relative, so
+     ./session.log is the sibling file when opened locally and a served route
+     when it is not. One log rather than one per source, because separate files
+     carry no timestamps and nothing could put them back in order. */
+  const tail = { at: 0, text: "", busy: false, decoder: new TextDecoder() };
+
+  async function readLog() {
+    if (tail.busy) return;
+    tail.busy = true;
+
+    /* Ranges are only trustworthy when served: opened as a local file the range
+       is honoured but answered 200 with no Content-Range, which is
+       indistinguishable from the whole file. Re-reading a local file is cheap,
+       so only tail by offset over HTTP. */
+    const ranged = location.protocol !== "file:" && tail.at > 0;
+
+    try {
+      const response = await fetch("./session.log", {
+        cache: "no-store",
+        headers: ranged ? { Range: "bytes=" + tail.at + "-" } : {},
+      });
+      if (!response.ok) { tail.busy = false; return; }
+
+      const buffer = await response.arrayBuffer();
+      const partial = ranged && response.status === 206;
+      if (!partial) tail.decoder = new TextDecoder();
+      const chunk = tail.decoder.decode(buffer, { stream: true });
+
+      tail.text = partial ? tail.text + chunk : chunk;
+      /* Offsets are byte counts; a JS string length is not one once anything
+         outside ASCII shows up in a build log. */
+      const range = response.headers.get("Content-Range");
+      tail.at = range
+        ? Number(range.split("/")[1])
+        : partial
+          ? tail.at + buffer.byteLength
+          : buffer.byteLength;
+
+      if (tail.text.length > 400000) tail.text = tail.text.slice(-400000);
+      render();
+    } catch (error) {
+      /* Transient while the file is being appended to. */
+    }
+    tail.busy = false;
+  }
+
+  function render() {
+    const text = tail.text.replace(/\s+$/, "");
+    if (!text) { out.classList.remove("on"); return; }
     out.classList.add("on");
 
-    if (state.logDropped && !rendered) {
-      const note = document.createElement("div");
-      note.className = "dropped";
-      note.textContent = state.logDropped + " earlier lines not shown";
-      lines.appendChild(note);
-      rendered = 1;
-    }
-
-    const from = Math.max(0, rendered - (state.logDropped ? 1 : 0));
-    state.log.slice(from).forEach((line) => {
-      const row = document.createElement("div");
-      row.textContent = line;
-      lines.appendChild(row);
-    });
-    rendered = total;
-    lines.scrollTop = lines.scrollHeight;
+    const stuck = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
+    lines.innerHTML = text
+      .split("\n")
+      .map((line) => {
+        const tag = line.match(/^\[([A-Za-z0-9_-]{1,40})\] ?/);
+        return tag
+          ? '<i>' + escape(tag[1]) + "</i>" + escape(line.slice(tag[0].length))
+          : escape(line);
+      })
+      .join("\n");
+    if (stuck) lines.scrollTop = lines.scrollHeight;
   }
 
   function paint(state) {
@@ -212,7 +254,7 @@
     el("badge-text").textContent = state.pod || run;
 
     paintRail(state, stalled);
-    paintLog(state);
+    readLog();
 
     const running = state.steps.find((s) => s.state === "running");
     const failed = state.steps.find((s) => s.state === "failed");
@@ -243,7 +285,7 @@
     }
   }
 
-  async function poll() {
+  async function refresh() {
     try {
       const response = await fetch("./session.json", { cache: "no-store" });
       if (response.ok) latest = await response.json();
@@ -251,11 +293,27 @@
       /* The file is replaced by rename, so a failed read is transient. */
     }
     if (latest) paint(latest);
-    setTimeout(poll, POLL);
+  }
+
+  /* Push where a server is running, polling everywhere else. The events only
+     say something moved; the page then re-reads exactly what it reads when
+     polling, so there is one code path either way. */
+  function listen(url) {
+    if (pushed === url) return;
+    pushed = url;
+    const source = new EventSource(url);
+    source.onmessage = refresh;
+    source.onerror = () => { source.close(); pushed = null; };
+  }
+
+  async function loop() {
+    await refresh();
+    if (latest && latest.events) listen(latest.events);
+    setTimeout(loop, pushed ? 5000 : POLL);
   }
 
   burst.style.display = "none";
-  poll();
+  loop();
 })();
 </script>
 </body>

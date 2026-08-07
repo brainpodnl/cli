@@ -482,32 +482,28 @@ async fn run_command(command: &mut Command, description: &str) -> Result<()> {
     run_command_with_timeout(command, description, PROCESS_TIMEOUT).await
 }
 
-/// Forwards a child stream to stderr line by line, teeing it into the console.
+/// Forwards a child stream to stderr, mirroring it into the console's build log.
 ///
-/// Batched rather than written per line: the session file is replaced whole on
-/// every write, and a build emits thousands of lines.
-async fn mirror<R>(stream: R) -> std::io::Result<()>
+/// Each caller opens its own appender: the file is opened in append mode, so
+/// stdout and stderr interleave the way they would in a terminal without
+/// needing to share a handle, and every line carries the `[build]` tag.
+async fn mirror<R>(source: R) -> std::io::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    const BATCH: usize = 24;
-
-    let mut lines = tokio::io::BufReader::new(stream).lines();
+    let mut lines = tokio::io::BufReader::new(source).lines();
     let mut destination = tokio::io::stderr();
-    let mut batch = Vec::with_capacity(BATCH);
+    let mut sink = crate::agent::sink("build");
 
     while let Some(line) = lines.next_line().await? {
         destination.write_all(line.as_bytes()).await?;
         destination.write_all(b"\n").await?;
-        batch.push(line);
-        if batch.len() >= BATCH {
-            crate::agent::append_log(std::mem::take(&mut batch));
+        if let Some(sink) = sink.as_mut() {
+            sink.write(&line);
         }
     }
 
-    destination.flush().await?;
-    crate::agent::append_log(batch);
-    Ok(())
+    destination.flush().await
 }
 
 async fn run_command_with_timeout(
