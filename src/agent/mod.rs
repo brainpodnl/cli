@@ -436,6 +436,59 @@ fn clear(args: ScopeArgs) -> Result<CommandOutput> {
     ))
 }
 
+/// Records a step in the session console, if this project has one.
+///
+/// Every call is best-effort and silent. A read-only checkout, a full disk, or
+/// no console at all must never be able to fail the command the user actually
+/// ran — they would be worse off than if the page had never existed.
+pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
+    let _ = amend(|session| {
+        let now = now();
+        match session.steps.iter_mut().find(|step| step.id == id) {
+            Some(existing) => {
+                if detail.is_some() {
+                    existing.detail = detail.map(str::to_owned);
+                }
+                if state == "running" && existing.started_at.is_none() {
+                    existing.started_at = Some(now);
+                }
+                if matches!(state, "done" | "failed") {
+                    existing.ended_at = Some(now);
+                }
+                existing.state = state.to_owned();
+            }
+            None => session.steps.push(Step {
+                id: id.to_owned(),
+                label: label.to_owned(),
+                state: state.to_owned(),
+                detail: detail.map(str::to_owned),
+                started_at: Some(now),
+                ended_at: matches!(state, "done" | "failed").then_some(now),
+            }),
+        }
+    });
+}
+
+/// Applies a change to the running session and stamps it as still alive.
+///
+/// Callers in a polling loop double as the heartbeat: without a recent
+/// `updatedAt` the page cannot tell a slow deploy from an abandoned one.
+fn amend(change: impl FnOnce(&mut Session)) -> Result<()> {
+    let directory = project_root(None)?.join(DIRECTORY);
+    if !directory.join(SESSION_FILE).exists() {
+        return Ok(());
+    }
+
+    let mut session = read_session(&directory)?;
+    if session.state != "running" {
+        return Ok(());
+    }
+
+    change(&mut session);
+    session.updated_at = now();
+    write_session(&directory, &session)
+}
+
 fn summary(session: &Session) -> CommandOutput {
     CommandOutput::new(
         json!({

@@ -558,6 +558,12 @@ pub async fn handle(
             let deployment = client
                 .post(&["v1", "pods", pod, "deploy"], &[], Some(&body))
                 .await?;
+            crate::agent::note(
+                "deploy",
+                "Deploy accepted",
+                "done",
+                deployment.get("revisionId").and_then(Value::as_str),
+            );
             if !args.wait {
                 return Ok(CommandOutput::new(deployment, View::Deploy));
             }
@@ -893,23 +899,46 @@ async fn handle_image(
                 config_path,
             )
             .await?;
-            Ok(CommandOutput::new(
-                crate::image::build(
-                    image,
-                    context,
-                    tag,
-                    builder,
-                    output,
-                    platform,
-                    pod,
-                    api_token,
-                    registry_endpoint,
-                )
-                .await?,
-                View::ImageBuild,
-            ))
+            crate::agent::note("image", "Packaging your app", "running", None);
+            let built = crate::image::build(
+                image,
+                context,
+                tag,
+                builder,
+                output,
+                platform,
+                pod,
+                api_token,
+                registry_endpoint,
+            )
+            .await;
+            match &built {
+                Ok(value) => crate::agent::note(
+                    "image",
+                    "Packaging your app",
+                    "done",
+                    image_summary(value).as_deref(),
+                ),
+                Err(_) => crate::agent::note("image", "Packaging your app", "failed", None),
+            }
+            Ok(CommandOutput::new(built?, View::ImageBuild))
         }
     }
+}
+
+/// The part of a build result worth showing on one line of the console.
+fn image_summary(value: &Value) -> Option<String> {
+    let text = value.get("builder").and_then(Value::as_str)?;
+    let mut summary = text.to_owned();
+    if let Some(platform) = value.get("platform").and_then(Value::as_str) {
+        summary.push_str(" · ");
+        summary.push_str(platform);
+    }
+    if let Some(digest) = value.get("digest").and_then(Value::as_str) {
+        summary.push_str(" · ");
+        summary.push_str(&digest.chars().take(19).collect::<String>());
+    }
+    Some(summary)
 }
 
 async fn handle_revision(
@@ -1012,6 +1041,20 @@ async fn wait_for_revision(
             current_health.insert(name, healthy);
         }
         previous_health = current_health;
+        let healthy = previous_health.len() - unhealthy.len();
+        crate::agent::note(
+            "healthy",
+            "Serving traffic",
+            if unhealthy.is_empty() {
+                "done"
+            } else {
+                "running"
+            },
+            Some(&format!(
+                "{healthy} of {} resources healthy",
+                previous_health.len()
+            )),
+        );
         if unhealthy.is_empty() {
             return Ok(value);
         }
