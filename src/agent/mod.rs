@@ -28,6 +28,8 @@ const IGNORE_COMMENT: &str = "# Brainpod session console";
 
 const SCHEMA: u32 = 1;
 const LOG_LIMIT: usize = 400;
+/// Enough for the user to see where this is going without becoming a wall.
+const UPCOMING_SHOWN: usize = 6;
 
 #[derive(Debug, Args)]
 pub struct AgentArgs {
@@ -53,12 +55,25 @@ enum AgentCommand {
 
 #[derive(Debug, Args)]
 struct StartArgs {
+    /// Planned step as <id>=<label>; repeat in the order they will run
+    #[arg(long = "step", value_name = "ID=LABEL", value_parser = parse_planned_step)]
+    steps: Vec<(String, String)>,
     /// Directory to write the console into; defaults to the repository root
     #[arg(long, value_name = "DIR")]
     path: Option<PathBuf>,
     /// Leave the repository's .gitignore untouched
     #[arg(long)]
     no_ignore: bool,
+}
+
+fn parse_planned_step(value: &str) -> std::result::Result<(String, String), String> {
+    let (id, label) = value
+        .split_once('=')
+        .ok_or_else(|| "must be <id>=<label>".to_owned())?;
+    if id.trim().is_empty() || label.trim().is_empty() {
+        return Err("both <id> and <label> must be present".to_owned());
+    }
+    Ok((id.trim().to_owned(), label.trim().to_owned()))
 }
 
 #[derive(Debug, Args)]
@@ -308,6 +323,18 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
         updated_at: now,
         pod: pod.map(str::to_owned),
         pod_url: pod.map(|pod| pod_url(dashboard_endpoint, pod)),
+        steps: args
+            .steps
+            .into_iter()
+            .map(|(id, label)| Step {
+                id,
+                label,
+                state: "pending".to_owned(),
+                detail: None,
+                started_at: None,
+                ended_at: None,
+            })
+            .collect(),
         ..Session::default()
     };
     write_session(&directory, &session)?;
@@ -434,6 +461,32 @@ fn clear(args: ScopeArgs) -> Result<CommandOutput> {
         }),
         View::AgentClear,
     ))
+}
+
+/// Labels of the steps a running session still has ahead of it.
+///
+/// Lets a page outside the console — the sign-in page the user is looking at
+/// while `login` waits — tell them what happens after they approve.
+pub fn upcoming() -> Vec<String> {
+    let Ok(root) = project_root(None) else {
+        return Vec::new();
+    };
+    let Ok(session) = read_session(&root.join(DIRECTORY)) else {
+        return Vec::new();
+    };
+    if session.state != "running" {
+        return Vec::new();
+    }
+
+    // Pending only. The running step is the one the user is completing by being
+    // on this page, and listing it as what happens next reads as a loop.
+    session
+        .steps
+        .into_iter()
+        .filter(|step| step.state == "pending")
+        .map(|step| step.label)
+        .take(UPCOMING_SHOWN)
+        .collect()
 }
 
 /// Records a step in the session console, if this project has one.

@@ -283,61 +283,171 @@ struct Page {
     status: StatusCode,
     title: &'static str,
     message: &'static str,
+    tone: Tone,
+    /// Steps the session still has ahead of it, for the agent-driven page.
+    next: Vec<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Signed,
+    Neutral,
+    Failed,
 }
 
 impl Page {
-    const fn success() -> Self {
+    /// The page the user lands on after approving.
+    ///
+    /// An agent that set up a session console leaves steps behind it, and those
+    /// turn this from a dead end into a handover: the user is told what happens
+    /// next and where it is happening. Someone who ran `login` themselves has
+    /// no such context, so they get told to go back to the terminal instead.
+    fn success() -> Self {
+        let next = crate::agent::upcoming();
         Self {
             status: StatusCode::OK,
-            title: "Authentication successful",
-            message: "You can close this window and return to the Brainpod CLI.",
+            title: "You're signed in",
+            message: if next.is_empty() {
+                "Head back to the Brainpod CLI. You can close this tab."
+            } else {
+                "Your deploy is carrying on where you started it. You can close this tab."
+            },
+            tone: Tone::Signed,
+            next,
         }
     }
 
-    const fn cancelled() -> Self {
+    fn cancelled() -> Self {
         Self {
             status: StatusCode::OK,
-            title: "Authentication cancelled",
-            message: "No changes were made. You can close this window.",
+            title: "Sign-in cancelled",
+            message: "Nothing was changed. You can close this tab.",
+            tone: Tone::Neutral,
+            next: Vec::new(),
         }
     }
 
-    const fn invalid() -> Self {
+    fn invalid() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            title: "Authentication failed",
-            message: "The authentication response was invalid. Return to the CLI and try again.",
+            title: "Sign-in failed",
+            message: "That response was not valid. Head back to the CLI and start again.",
+            tone: Tone::Failed,
+            next: Vec::new(),
         }
     }
 
-    const fn storage_failed() -> Self {
+    fn storage_failed() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            title: "Authentication failed",
-            message: "The CLI could not store the API token. Return to the CLI for details.",
+            title: "Sign-in failed",
+            message: "Your token could not be saved. The CLI has the details.",
+            tone: Tone::Failed,
+            next: Vec::new(),
         }
     }
 
-    const fn unavailable() -> Self {
+    fn unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            title: "Authentication failed",
-            message: "The CLI is no longer waiting for an authentication response.",
+            title: "Sign-in failed",
+            message: "The CLI stopped waiting for this. Head back and start again.",
+            tone: Tone::Failed,
+            next: Vec::new(),
         }
     }
+}
+
+const MARK: &str = concat!(
+    r#"<svg class="mark" viewBox="0 0 19.89 21.47" aria-hidden="true">"#,
+    r#"<path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>"#,
+    r##"<path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/>"##,
+    "</svg>"
+);
+
+const STYLE: &str = r#"
+:root{--bg:#fbfaf8;--fg:#16140f;--card:#fff;--border:#e5e0d7;--muted:#6b6660;--faint:#a19b92;--brand:#003399;--ok:#2f7d55;--fail:#b4402f}
+@media(prefers-color-scheme:dark){:root{--bg:#16140f;--fg:#fbfaf8;--card:#1d1b16;--border:#2d2a25;--muted:#a19b92;--faint:#78736c;--brand:#7da4ff;--ok:#5fbd8a;--fail:#d4614c}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:var(--bg);color:var(--fg);font:400 15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:30rem;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:9px;justify-content:center;color:var(--fg)}
+.mark{height:20px;width:auto}
+.word{font-weight:600;font-size:15px;letter-spacing:-.015em}
+.panel{background:color-mix(in srgb,var(--brand) 8%,transparent);border-radius:18px;padding:30px 26px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+.seal{width:42px;height:42px;border-radius:999px;display:grid;place-items:center;background:var(--ok)}
+.seal.failed{background:var(--fail)}
+.seal.neutral{background:var(--faint)}
+.seal svg{width:20px;height:20px;display:block}
+.seal path{stroke:var(--bg);stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+h1{margin:0;font-size:26px;line-height:1.12;letter-spacing:-.028em;font-weight:600;text-wrap:balance}
+p{margin:0;color:var(--muted);text-wrap:balance}
+.next{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.next h2{margin:0;padding:11px 16px;border-bottom:1px solid var(--border);font:500 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+ol{margin:0;padding:12px 16px 14px;list-style:none;display:flex;flex-direction:column;gap:9px}
+li{display:flex;align-items:baseline;gap:11px;font-size:14.5px}
+li span{flex:none;width:17px;height:17px;border-radius:999px;border:1.5px solid var(--border);font:500 10px/16px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;color:var(--faint);align-self:center}
+li:first-child span{border-color:var(--brand);color:var(--brand)}
+.note{text-align:center;font-size:13px;color:var(--faint)}
+"#;
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 impl IntoResponse for Page {
     fn into_response(self) -> Response {
+        let (seal, glyph) = match self.tone {
+            Tone::Signed => ("seal", "M5 10.4 8.4 13.8 15 6.2"),
+            Tone::Neutral => ("seal neutral", "M5 10h10"),
+            Tone::Failed => ("seal failed", "M6 6l8 8M14 6l-8 8"),
+        };
+
+        let next = if self.next.is_empty() {
+            String::new()
+        } else {
+            let items = self
+                .next
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    format!("<li><span>{}</span>{}</li>", index + 1, escape(label))
+                })
+                .collect::<String>();
+            format!("<section class=\"next\"><h2>What happens next</h2><ol>{items}</ol></section>")
+        };
+
         let body = format!(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title></head><body><main><h1>{}</h1><p>{}</p></main></body></html>",
-            self.title, self.title, self.message
+            concat!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+                "<title>{title} · Brainpod</title><style>{style}</style></head><body><main>",
+                "<div class=\"brand\">{mark}<span class=\"word\">brainpod</span></div>",
+                "<div class=\"panel\"><div class=\"{seal}\">",
+                "<svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"{glyph}\"/></svg></div>",
+                "<h1>{title}</h1><p>{message}</p></div>{next}",
+                "<p class=\"note\">Nothing on this page needs saving.</p>",
+                "</main></body></html>"
+            ),
+            title = self.title,
+            style = STYLE,
+            mark = MARK,
+            seal = seal,
+            glyph = glyph,
+            message = self.message,
+            next = next,
         );
+
         (
             self.status,
             [
                 ("cache-control", "no-store"),
-                ("content-security-policy", "default-src 'none'"),
+                (
+                    "content-security-policy",
+                    "default-src 'none'; style-src 'unsafe-inline'",
+                ),
                 ("x-content-type-options", "nosniff"),
             ],
             Html(body),
