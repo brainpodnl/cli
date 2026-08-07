@@ -279,170 +279,120 @@ async fn finish_callback(
     Ok(())
 }
 
+/// What the callback page is for.
+///
+/// Not a styling choice: an agent-driven session has a plan behind it and gets
+/// shown where the workflow has reached, while someone who ran `login` in a
+/// terminal has none and is handed the prompt that starts one instead.
+enum Shape {
+    Agent(Vec<crate::agent::RailStep>),
+    Human,
+    Stopped,
+}
+
 struct Page {
     status: StatusCode,
+    headline: &'static str,
     lead: &'static str,
-    emphasis: &'static str,
-    message: &'static str,
-    tone: Tone,
-    /// Where control goes back to, drawn as the second tile.
-    handoff: Option<Handoff>,
-    /// Steps the session still has ahead of it, for the agent-driven page.
-    next: Vec<String>,
-}
-
-#[derive(Clone, Copy)]
-enum Tone {
-    Signed,
-    Neutral,
-    Failed,
-}
-
-/// What the user is being handed back to.
-#[derive(Clone, Copy)]
-enum Handoff {
-    Console,
-    Terminal,
+    badge: &'static str,
+    badge_tone: &'static str,
+    foot: &'static str,
+    shape: Shape,
 }
 
 impl Page {
-    /// The page the user lands on after approving.
-    ///
-    /// An agent that set up a session console leaves steps behind it, and those
-    /// turn this from a dead end into a handover: the user is told what happens
-    /// next and where it is happening. Someone who ran `login` themselves has no
-    /// such context, so they are pointed back at the terminal instead.
     fn success() -> Self {
-        let next = crate::agent::upcoming();
-        let handed_to_agent = !next.is_empty();
+        let rail = crate::agent::rail();
+        if rail.is_empty() {
+            return Self {
+                status: StatusCode::OK,
+                headline: "Signed in.",
+                lead: "The token is stored. The terminal you started this from is already carrying on.",
+                badge: "signed in",
+                badge_tone: "",
+                foot: "Token stored in your Brainpod config",
+                shape: Shape::Human,
+            };
+        }
+
         Self {
             status: StatusCode::OK,
-            lead: "You're",
-            emphasis: "signed in",
-            message: if handed_to_agent {
-                "Your deploy is carrying on where you started it."
-            } else {
-                "Head back to the Brainpod CLI to pick up where you left off."
-            },
-            tone: Tone::Signed,
-            handoff: Some(if handed_to_agent {
-                Handoff::Console
-            } else {
-                Handoff::Terminal
-            }),
-            next,
+            headline: "Signed in.",
+            lead: "Your agent has the session and is carrying on.",
+            badge: "agent session",
+            badge_tone: "",
+            foot: "Waiting on your agent, not on you.",
+            shape: Shape::Agent(rail),
         }
     }
 
     fn cancelled() -> Self {
         Self {
             status: StatusCode::OK,
-            lead: "Sign-in",
-            emphasis: "cancelled",
-            message: "Nothing was changed. You can close this tab.",
-            tone: Tone::Neutral,
-            handoff: None,
-            next: Vec::new(),
+            headline: "Sign-in was cancelled.",
+            lead: "Nothing changed, and no token was stored. The CLI is still waiting, so you can start again from there.",
+            badge: "not signed in",
+            badge_tone: " is-warn",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
         }
     }
 
     fn invalid() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            lead: "Sign-in",
-            emphasis: "failed",
-            message: "That response was not valid. Head back to the CLI and start again.",
-            tone: Tone::Failed,
-            handoff: None,
-            next: Vec::new(),
+            headline: "Sign-in failed.",
+            lead: "That response was not valid, so no token was stored. Start again from the CLI.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
         }
     }
 
     fn storage_failed() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            lead: "Sign-in",
-            emphasis: "failed",
-            message: "Your token could not be saved. The CLI has the details.",
-            tone: Tone::Failed,
-            handoff: None,
-            next: Vec::new(),
+            headline: "Sign-in failed.",
+            lead: "You approved it, but the token could not be saved. The CLI has the details.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
         }
     }
 
     fn unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            lead: "Sign-in",
-            emphasis: "failed",
-            message: "The CLI stopped waiting for this. Head back and start again.",
-            tone: Tone::Failed,
-            handoff: None,
-            next: Vec::new(),
+            headline: "Sign-in failed.",
+            lead: "The CLI stopped waiting for this response. Start again from the terminal.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
         }
     }
 }
 
-const BRAINPOD_GLYPH: &str = concat!(
-    r#"<svg viewBox="0 0 19.89 21.47" class="glyph" aria-hidden="true">"#,
-    r#"<path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>"#,
-    r##"<path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/>"##,
-    "</svg>"
+const STYLE: &str = include_str!("callback.css");
+const CONFETTI: &str = include_str!("callback-confetti.html");
+
+const MARK: &str = concat!(
+    r#"<svg viewBox="0 0 19.89 21.47" aria-hidden><path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>"#,
+    r##"<path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/></svg>"##
 );
 
-/// The pane the agent is reporting into.
-const CONSOLE_GLYPH: &str = concat!(
-    r#"<svg viewBox="0 0 24 24" class="glyph line" aria-hidden="true">"#,
-    r#"<rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3.2"/>"#,
-    r#"<path d="M2.6 9.1h18.8"/><circle cx="5.9" cy="6.7" r=".85" fill="currentColor" stroke="none"/>"#,
-    r#"<path d="M6.4 12.9h6.4M6.4 16h9.6"/></svg>"#
+const TICK: &str = concat!(
+    r#"<svg class="tick" viewBox="0 0 16 16" aria-hidden><circle cx="8" cy="8" r="8"/>"#,
+    r#"<path d="M4.6 8.2 6.9 10.5 11.4 6"/></svg>"#
 );
 
-const TERMINAL_GLYPH: &str = concat!(
-    r#"<svg viewBox="0 0 24 24" class="glyph line" aria-hidden="true">"#,
-    r#"<rect x="2.6" y="4.2" width="18.8" height="15.6" rx="3.2"/>"#,
-    r#"<path d="M7.2 9.6l3.2 2.6-3.2 2.6M13 15.4h4.2"/></svg>"#
-);
-
-const ARROW: &str = concat!(
-    r#"<svg viewBox="0 0 40 24" class="arrow" aria-hidden="true">"#,
-    r#"<path d="M4 12h28M24 4.5 32.5 12 24 19.5"/></svg>"#
-);
-
-const STYLE: &str = r#"
-:root{--bg:#fbfaf8;--fg:#16140f;--card:#fff;--sec:#f3f0ea;--border:#e5e0d7;--muted:#6b6660;--faint:#a19b92;--brand:#003399;--ink:#003399;--ok:#2f7d55;--fail:#b4402f;--dot:rgba(22,20,15,.09);--stage:color-mix(in srgb,#003399 8%,transparent);--veil:55%;--tileshadow:0 14px 34px -10px rgba(22,20,15,.34);--ring:rgba(22,20,15,.1)}
-@media(prefers-color-scheme:dark){:root{--bg:#16140f;--fg:#fbfaf8;--card:#1d1b16;--sec:#262320;--border:#2d2a25;--muted:#a19b92;--faint:#78736c;--ink:#7da4ff;--ok:#5fbd8a;--fail:#d4614c;--dot:rgba(251,250,248,.07);--stage:color-mix(in srgb,#7da4ff 11%,transparent);--veil:30%;--tileshadow:0 14px 34px -10px rgba(0,0,0,.7);--ring:rgba(251,250,248,.12)}}
-*{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 24px;color:var(--fg);background:var(--bg);background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:22px 22px;font:400 15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
-main{width:100%;max-width:31rem;display:flex;flex-direction:column;gap:26px}
-.brand{display:flex;align-items:center;gap:9px;justify-content:center}
-.brand .glyph{height:19px}
-.word{font-weight:600;font-size:15px;letter-spacing:-.015em}
-.stage{position:relative;display:flex;align-items:center;justify-content:center;gap:22px;padding:38px 24px;border-radius:22px;background:var(--stage);overflow:hidden}
-.stage::after{content:"";position:absolute;inset:0;background:radial-gradient(circle 150px at 50% 50%,transparent 40%,color-mix(in srgb,var(--bg) var(--veil),transparent) 100%);pointer-events:none}
-.tile{position:relative;width:84px;height:84px;border-radius:22px;display:grid;place-items:center;background:linear-gradient(145deg,var(--card),var(--sec));box-shadow:var(--tileshadow),inset 0 0 0 1px var(--ring)}
-.tile .glyph{height:34px;width:auto;color:var(--fg)}
-.tile .glyph.line{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.arrow{width:34px;height:20px;fill:none;stroke:var(--fg);stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round;opacity:.32}
-.badge{position:absolute;right:-7px;bottom:-7px;width:27px;height:27px;border-radius:999px;display:grid;place-items:center;background:var(--ok);box-shadow:0 0 0 3.5px var(--bg)}
-.badge.failed{background:var(--fail)}
-.badge.neutral{background:var(--faint)}
-.badge svg{width:14px;height:14px;fill:none;stroke:var(--bg);stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round}
-.say{display:flex;flex-direction:column;gap:9px;text-align:center}
-h1{margin:0;font-size:clamp(30px,6vw,40px);line-height:1.04;letter-spacing:-.035em;font-weight:400;text-wrap:balance}
-h1 b{font-weight:700}
-p{margin:0;color:var(--muted);text-wrap:balance}
-.next{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
-.next h2{margin:0;padding:12px 18px;border-bottom:1px solid var(--border);font:500 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
-ol{margin:0;padding:14px 18px 16px;list-style:none;display:flex;flex-direction:column;gap:10px}
-li{display:flex;align-items:center;gap:12px;font-size:14.5px}
-li i{flex:none;width:19px;height:19px;border-radius:999px;border:1.5px solid var(--border);font:500 10px/17px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;color:var(--faint);font-style:normal}
-li:first-child i{border-color:var(--ink);color:var(--ink)}
-.note{text-align:center;font-size:13px;color:var(--faint)}
-@media(prefers-reduced-motion:no-preference){main{animation:rise .5s cubic-bezier(.16,.84,.3,1)}}
-@keyframes rise{from{opacity:0;transform:translateY(10px)}}
-"#;
+/// The prompt handed to someone who signed in without an agent driving it.
+///
+/// Brainpod deploys run through an agent, so the useful thing to give a person
+/// at this point is the sentence that starts one — not a congratulation.
+const PROMPT: &str = "Deploy this project to Brainpod using the Brainpod skill from github.com/brainpodnl/skills.\n\nI'm already signed in with the brainpod CLI. Work out what the project needs and hand me the live URL when it's up.";
 
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -450,58 +400,96 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+fn rail_html(steps: &[crate::agent::RailStep]) -> String {
+    let rows = steps
+        .iter()
+        .map(|step| {
+            let (class, mark) = match step.state.as_str() {
+                "done" => ("is-done", TICK.to_owned()),
+                "running" => ("is-now", r#"<span class="pip"></span>"#.to_owned()),
+                _ => ("is-todo", r#"<span class="pip"></span>"#.to_owned()),
+            };
+            let when = if step.state == "running" {
+                r#" <span class="when">now</span>"#
+            } else {
+                ""
+            };
+            let detail = step
+                .detail
+                .as_deref()
+                .filter(|detail| !detail.is_empty())
+                .map(|detail| format!("<p>{}</p>", escape(detail)))
+                .unwrap_or_default();
+            format!(
+                r#"<div class="step {class}"><span class="mark">{mark}</span><div><h2>{}{when}</h2>{detail}</div></div>"#,
+                escape(&step.label)
+            )
+        })
+        .collect::<String>();
+    format!(r#"<div class="rail">{rows}</div>"#)
+}
+
+fn human_html() -> String {
+    format!(
+        concat!(
+            r#"<p class="section-label">Brainpod deploys are agent-driven. Hand this to yours, inside your project.</p>"#,
+            r#"<div class="prompt">{prompt}</div>"#,
+            r#"<div style="margin-top:1.5rem"><p class="section-label">Or stay in the terminal.</p><div class="cmds">"#,
+            r#"<div class="cmd"><code>brainpod whoami</code><span>confirm the session</span></div>"#,
+            r#"<div class="cmd"><code>brainpod pod list</code><span>see what you already run</span></div>"#,
+            r#"<div class="cmd"><code>brainpod describe resource</code><span>the resource kinds you can compose</span></div>"#,
+            "</div></div>"
+        ),
+        prompt = escape(PROMPT)
+    )
+}
+
+fn stopped_html() -> &'static str {
+    concat!(
+        r#"<div class="cmds">"#,
+        r#"<div class="cmd"><code>brainpod login</code><span>try again in this browser</span></div>"#,
+        r#"<div class="cmd"><code>brainpod config set api-token &lt;token&gt;</code><span>no browser? use a dashboard token</span></div>"#,
+        "</div>"
+    )
+}
+
 impl IntoResponse for Page {
     fn into_response(self) -> Response {
-        let (badge, glyph) = match self.tone {
-            Tone::Signed => ("badge", "M4.6 8.4 7.2 11 11.4 5.4"),
-            Tone::Neutral => ("badge neutral", "M4.5 8h7"),
-            Tone::Failed => ("badge failed", "M5 5l6 6M11 5l-6 6"),
-        };
-        let seal = format!(
-            "<span class=\"{badge}\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"{glyph}\"/></svg></span>"
-        );
-
-        let stage = match self.handoff {
-            Some(handoff) => format!(
-                "<div class=\"tile\">{BRAINPOD_GLYPH}</div>{ARROW}<div class=\"tile\">{}{seal}</div>",
-                match handoff {
-                    Handoff::Console => CONSOLE_GLYPH,
-                    Handoff::Terminal => TERMINAL_GLYPH,
-                }
-            ),
-            None => format!("<div class=\"tile\">{BRAINPOD_GLYPH}{seal}</div>"),
-        };
-
-        let next = if self.next.is_empty() {
-            String::new()
+        let celebrate = !matches!(self.shape, Shape::Stopped);
+        let burst = if celebrate {
+            format!(r#"<div class="confetti" aria-hidden>{CONFETTI}</div>"#)
         } else {
-            let items = self
-                .next
-                .iter()
-                .enumerate()
-                .map(|(index, label)| format!("<li><i>{}</i>{}</li>", index + 1, escape(label)))
-                .collect::<String>();
-            format!("<section class=\"next\"><h2>What happens next</h2><ol>{items}</ol></section>")
+            String::new()
+        };
+
+        let content = match &self.shape {
+            Shape::Agent(steps) => rail_html(steps),
+            Shape::Human => human_html(),
+            Shape::Stopped => stopped_html().to_owned(),
         };
 
         let body = format!(
             concat!(
-                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
-                "<title>{lead} {emphasis} · Brainpod</title><style>{style}</style></head><body><main>",
-                "<div class=\"brand\">{mark}<span class=\"word\">brainpod</span></div>",
-                "<div class=\"stage\">{stage}</div>",
-                "<div class=\"say\"><h1>{lead} <b>{emphasis}</b></h1><p>{message}</p></div>",
-                "{next}<p class=\"note\">You can close this tab.</p>",
-                "</main></body></html>"
+                r#"<!doctype html><html lang="en"><head><meta charset="utf-8">"#,
+                r#"<meta name="viewport" content="width=device-width,initial-scale=1">"#,
+                "<title>{headline} — Brainpod</title><style>{style}</style></head><body>",
+                "{burst}",
+                r#"<main class="card"><div class="chrome">{mark}<span class="wordmark">Brainpod</span>"#,
+                r#"<span class="badge{badge_tone}"><span class="dot"></span>{badge}</span></div>"#,
+                r#"<div class="body"><h1>{headline}</h1><p class="lead">{lead}</p>{content}</div>"#,
+                r#"<div class="foot"><span>{foot}</span>"#,
+                r#"<a class="sep" href="https://brainpod.io">brainpod.io &rarr;</a></div></main>"#,
+                "</body></html>"
             ),
-            lead = self.lead,
-            emphasis = self.emphasis,
+            headline = self.headline,
             style = STYLE,
-            mark = BRAINPOD_GLYPH,
-            stage = stage,
-            message = self.message,
-            next = next,
+            burst = burst,
+            mark = MARK,
+            badge_tone = self.badge_tone,
+            badge = self.badge,
+            lead = self.lead,
+            content = content,
+            foot = self.foot,
         );
 
         (

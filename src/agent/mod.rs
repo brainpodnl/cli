@@ -29,7 +29,7 @@ const IGNORE_COMMENT: &str = "# Brainpod session console";
 const SCHEMA: u32 = 1;
 const LOG_LIMIT: usize = 400;
 /// Enough for the user to see where this is going without becoming a wall.
-const UPCOMING_SHOWN: usize = 6;
+const RAIL_SHOWN: usize = 6;
 
 #[derive(Debug, Args)]
 pub struct AgentArgs {
@@ -463,11 +463,20 @@ fn clear(args: ScopeArgs) -> Result<CommandOutput> {
     ))
 }
 
-/// Labels of the steps a running session still has ahead of it.
+/// One step as a page outside the console needs to draw it.
+pub struct RailStep {
+    pub state: String,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+/// The running session's steps, for a page outside the console to render.
 ///
-/// Lets a page outside the console — the sign-in page the user is looking at
-/// while `login` waits — tell them what happens after they approve.
-pub fn upcoming() -> Vec<String> {
+/// Lets the sign-in page the user is looking at while `login` waits show where
+/// the workflow has got to and what is still ahead, rather than being a dead
+/// end. Empty when there is no session, which is also how the caller knows
+/// nobody is driving this but the user.
+pub fn rail() -> Vec<RailStep> {
     let Ok(root) = project_root(None) else {
         return Vec::new();
     };
@@ -478,15 +487,28 @@ pub fn upcoming() -> Vec<String> {
         return Vec::new();
     }
 
-    // Pending only. The running step is the one the user is completing by being
-    // on this page, and listing it as what happens next reads as a loop.
-    session
+    let mut steps: Vec<RailStep> = session
         .steps
         .into_iter()
-        .filter(|step| step.state == "pending")
-        .map(|step| step.label)
-        .take(UPCOMING_SHOWN)
-        .collect()
+        .map(|step| RailStep {
+            state: step.state,
+            label: step.label,
+            detail: step.detail,
+        })
+        .collect();
+
+    // Keep the current step and what follows it. A long plan that has already
+    // run for a while would otherwise push the interesting part off the card.
+    if steps.len() > RAIL_SHOWN {
+        let current = steps
+            .iter()
+            .position(|step| step.state == "running")
+            .unwrap_or(0);
+        let from = current.saturating_sub(1).min(steps.len() - RAIL_SHOWN);
+        steps.drain(..from);
+        steps.truncate(RAIL_SHOWN);
+    }
+    steps
 }
 
 /// Records a step in the session console, if this project has one.
