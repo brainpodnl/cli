@@ -45,6 +45,8 @@
         inherit src;
         strictDeps = true;
         SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+        RUSTFLAGS = "-C link-arg=-Wl,-dead_strip_dylibs";
       };
       cargoArtifacts = craneLib.buildDepsOnly craneArgs;
     in {
@@ -54,6 +56,14 @@
           pname = "brainpod-cli";
           version = "0.1.0";
           meta.mainProgram = "brainpod";
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          postFixup = ''
+            if otool -L "$out/bin/brainpod" | tail -n +2 | grep -F /nix/store/; then
+              echo "brainpod contains a dynamic Nix store dependency" >&2
+              exit 1
+            fi
+          '';
         });
     });
 
