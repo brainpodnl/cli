@@ -24,6 +24,9 @@ impl CommandOutput {
 pub enum View {
     Describe,
     ResourceSchema,
+    AgentStart,
+    AgentUpdate,
+    AgentClear,
     Login,
     ConfigShow,
     ConfigPath,
@@ -152,6 +155,9 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
         View::Describe => render_describe(value),
         View::ResourceSchema => render_resource_schema(value),
+        View::AgentStart => crate::agent::render_start(value),
+        View::AgentUpdate => crate::agent::render_update(value),
+        View::AgentClear => crate::agent::render_clear(value),
         View::Login => vec![format!("Authenticated as: {}", field(value, "email"))],
         View::ConfigShow => render_config_show(value),
         View::ConfigPath => vec![format!("Config: {}", field(value, "path"))],
@@ -1258,7 +1264,7 @@ fn append_next(value: &Value, lines: &mut Vec<String>) {
     }
 }
 
-fn field(value: &Value, path: &str) -> String {
+pub fn field(value: &Value, path: &str) -> String {
     value_at(value, path)
         .filter(|value| !value.is_null())
         .map(scalar)

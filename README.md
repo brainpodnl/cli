@@ -89,6 +89,13 @@ brainpod pod list
 brainpod pod create [--display-name <name>]
 brainpod pod get <pod>
 
+brainpod --pod <pod> agent start [--path <dir>] [--no-ignore]
+brainpod agent step <id> [--label <text>] \
+  [--state <pending|running|done|failed>] [--detail <text>] [--path <dir>]
+brainpod agent log [--path <dir>]
+brainpod agent finish [--state <done|failed>] [--message <text>] [--path <dir>]
+brainpod agent clear [--path <dir>]
+
 brainpod blueprint list
 brainpod blueprint get <blueprint>
 brainpod --pod <pod> blueprint install <blueprint> [--file <path|->]
@@ -127,6 +134,10 @@ Events use the resource URN returned by resource list, get, or mutation response
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 
 `brainpod cluster list` lists active clusters and their supported architectures.
+
+`brainpod agent` maintains a session console: a page an agent puts in front of the user so a deploy is something they watch rather than sit through. `agent start` writes `.brainpod/console.html` and `.brainpod/session.json` at the repository root, adds `.brainpod/` to `.gitignore` unless `--no-ignore` is passed, and prints the page to open. The page reads `session.json` from its own directory and needs no server. Every write replaces the file through a temporary rename, so the page never reads a partial write.
+
+`agent start` always mints a new session and discards the previous one; it never merges, so running a workflow twice cannot leave the earlier deploy's steps showing under the new one. `agent step` requires `--label` the first time an id is recorded and updates it thereafter. `agent log` reads stdin and keeps a bounded tail, reporting anything dropped. Commands resolve the repository root rather than the working directory, so a command run from a subdirectory reaches the same console.
 
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 

@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brainpod session</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #16140f; --card: #ffffff; --secondary: #f3f0ea;
+    --border: #e5e0d7; --muted: #6b6660; --faint: #a19b92;
+    --brand: #003399; --brand-ink: #003399;
+    --fail: #b4402f; --warn: #8a6212; --warn-soft: #f6efdd;
+    --core: #dbe6ff; --core-alpha: 0.78; --bloom-alpha: 0.34; --blade-alpha: 76%;
+    --shadow: 0 1px 2px rgba(22, 20, 15, 0.04), 0 30px 70px -40px rgba(22, 20, 15, 0.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16140f; --fg: #fbfaf8; --card: #1d1b16; --secondary: #262320;
+      --border: #2d2a25; --muted: #a19b92; --faint: #78736c;
+      --brand: #003399; --brand-ink: #7da4ff;
+      --fail: #d4614c; --warn: #d9ab5a; --warn-soft: #262010;
+      --core: #f2f6ff; --core-alpha: 0.88; --bloom-alpha: 0.5; --blade-alpha: 88%;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 30px 70px -40px rgba(0, 0, 0, 0.8);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 400 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 44rem; margin: 0 auto; padding: 40px 24px 56px;
+    display: flex; flex-direction: column; gap: 26px;
+  }
+
+  .masthead { display: flex; align-items: center; gap: 9px; }
+  .mark { height: 19px; width: auto; }
+  .wordmark { font-weight: 600; font-size: 14px; letter-spacing: -0.015em; }
+  .chip {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.03em; color: var(--muted);
+    background: var(--secondary); border-radius: 999px; padding: 5px 9px 5px 7px;
+  }
+  .beacon { width: 6px; height: 6px; border-radius: 999px; background: var(--brand-ink); flex: none; }
+  [data-run="running"] .beacon { animation: halo 1.8s ease-out infinite; }
+  [data-run="done"] .beacon { background: #2f7d55; }
+  [data-run="failed"] .beacon { background: var(--fail); }
+  [data-run="stalled"] .beacon { background: var(--warn); }
+
+  @keyframes halo {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-ink) 45%, transparent); }
+    70% { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  .head { display: flex; flex-direction: column; gap: 7px; }
+  h1 {
+    margin: 0; font-size: clamp(28px, 5.4vw, 38px); line-height: 1.06;
+    letter-spacing: -0.033em; font-weight: 500; text-wrap: balance;
+  }
+  .swapping h1 { animation: swap 520ms cubic-bezier(0.16, 0.84, 0.3, 1); }
+  @keyframes swap {
+    0% { opacity: 0; transform: translateY(9px); filter: blur(4px); }
+    100% { opacity: 1; transform: none; filter: blur(0); }
+  }
+  .sub { margin: 0; color: var(--muted); font-size: 15px; min-height: 1.6em; }
+  .sub .pod { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--fg); }
+
+  .bar { display: flex; align-items: center; }
+  .hilt { flex: none; width: 96px; height: 30px; display: block; z-index: 5; }
+  .hilt-glow { opacity: 0; transition: opacity 500ms ease; }
+  [data-run="running"] .hilt-glow, [data-run="done"] .hilt-glow { opacity: 1; animation: hum 3.7s ease-in-out infinite; }
+  [data-run="failed"] .hilt-glow { opacity: 0.5; }
+  [data-run="stalled"] .hilt-glow { opacity: 0.28; }
+
+  .track {
+    position: relative; flex: 1; min-width: 0; margin-left: -7px;
+    height: 10px; border-radius: 0 999px 999px 0;
+    background: var(--secondary); isolation: isolate;
+  }
+  .segments { position: absolute; inset: 0; display: flex; pointer-events: none; z-index: 3; }
+  .segments i { flex: 1; border-right: 1px solid var(--bg); opacity: 0.85; }
+  .segments i:last-child { border-right: 0; }
+
+  .saber {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 0;
+    border-radius: 1px 999px 999px 1px;
+    background: linear-gradient(to right,
+      color-mix(in srgb, #001d5c var(--blade-alpha), transparent) 0%,
+      color-mix(in srgb, var(--brand) var(--blade-alpha), transparent) 42%,
+      color-mix(in srgb, #0b3ea8 var(--blade-alpha), transparent) 100%);
+    box-shadow: 0 0 2px color-mix(in srgb, var(--core) 45%, transparent);
+    transition: width 900ms cubic-bezier(0.16, 0.84, 0.3, 1);
+  }
+  .saber::before {
+    content: ""; position: absolute; inset: 0 3px 0 1px; border-radius: inherit;
+    background: linear-gradient(to bottom, transparent 6%, var(--core) 38%, var(--core) 62%, transparent 94%);
+    filter: blur(0.6px); opacity: var(--core-alpha);
+    animation: waver 2.3s ease-in-out infinite;
+  }
+  .saber::after {
+    content: ""; position: absolute; inset: -11px -9px -11px 0; z-index: -1;
+    background: linear-gradient(to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--brand) 12%, transparent) 16%,
+      color-mix(in srgb, var(--brand) 38%, transparent) 28%,
+      color-mix(in srgb, var(--brand) 74%, transparent) 38%,
+      var(--brand) 47%, var(--brand) 53%,
+      color-mix(in srgb, var(--brand) 74%, transparent) 62%,
+      color-mix(in srgb, var(--brand) 38%, transparent) 72%,
+      color-mix(in srgb, var(--brand) 12%, transparent) 84%,
+      transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 4px, #000 calc(100% - 22px), transparent 100%);
+    opacity: var(--bloom-alpha);
+    animation: hum 3.7s ease-in-out infinite;
+  }
+  .flare::after { animation: hum 3.7s ease-in-out infinite, flare 700ms ease-out; }
+
+  [data-run="failed"] .saber {
+    background: linear-gradient(to right,
+      color-mix(in srgb, #6b1f14 var(--blade-alpha), transparent) 0%,
+      color-mix(in srgb, var(--fail) var(--blade-alpha), transparent) 100%);
+  }
+  [data-run="failed"] .saber::after,
+  [data-run="stalled"] .saber::after { animation: none; opacity: calc(var(--bloom-alpha) * 0.35); }
+  [data-run="stalled"] .saber::before { animation: none; opacity: calc(var(--core-alpha) * 0.4); }
+
+  @keyframes flare { from { opacity: calc(var(--bloom-alpha) * 2.6); } }
+  @keyframes hum {
+    0%, 100% { opacity: var(--bloom-alpha); }
+    23% { opacity: calc(var(--bloom-alpha) * 1.22); }
+    41% { opacity: calc(var(--bloom-alpha) * 0.86); }
+    67% { opacity: calc(var(--bloom-alpha) * 1.12); }
+    84% { opacity: calc(var(--bloom-alpha) * 0.94); }
+  }
+  @keyframes waver {
+    0%, 100% { opacity: calc(var(--core-alpha) * 0.92); }
+    31% { opacity: var(--core-alpha); }
+    58% { opacity: calc(var(--core-alpha) * 0.85); }
+    79% { opacity: calc(var(--core-alpha) * 0.97); }
+  }
+
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .step { display: grid; grid-template-columns: 18px 1fr auto; gap: 0 13px; align-items: start; }
+  .step .rail {
+    position: relative; display: flex; flex-direction: column; align-items: center;
+    height: 100%; min-height: 34px;
+  }
+  .node {
+    width: 15px; height: 15px; margin-top: 4px; border-radius: 999px;
+    border: 1.5px solid var(--border); display: grid; place-items: center; flex: none;
+    background: var(--bg);
+    transition: border-color 300ms ease, background 300ms ease, transform 300ms cubic-bezier(0.16, 0.84, 0.3, 1);
+  }
+  .wire { flex: 1; width: 1.5px; margin: 3px 0 0; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .wire i {
+    display: block; height: 100%; width: 100%; background: var(--fg);
+    transform: scaleY(0); transform-origin: top; transition: transform 700ms ease-out;
+  }
+  .step:last-child .wire { display: none; }
+
+  .body { padding: 0 0 15px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .label { font-size: 14.5px; font-weight: 500; color: var(--faint); transition: color 300ms ease; }
+  .detail {
+    font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    opacity: 0; transform: translateY(-3px);
+    transition: opacity 340ms ease, transform 340ms ease; overflow-wrap: anywhere;
+  }
+  .detail.show { opacity: 1; transform: none; }
+  .dur {
+    font: 11.5px/1.9 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums; color: var(--faint);
+    opacity: 0; transition: opacity 300ms ease; white-space: nowrap;
+  }
+  .dur.show { opacity: 1; }
+
+  .step[data-state="running"] .label,
+  .step[data-state="done"] .label,
+  .step[data-state="failed"] .label { color: var(--fg); }
+  .step[data-state="running"] .node {
+    border-color: var(--brand-ink); border-right-color: transparent;
+    transform: scale(1.12); animation: spin 780ms linear infinite;
+  }
+  .step[data-state="done"] .node { border-color: var(--fg); background: var(--fg); }
+  .step[data-state="done"] .wire i { transform: scaleY(1); }
+  .step[data-state="failed"] .node { border-color: var(--fail); background: var(--fail); }
+  .step[data-state="failed"] .detail { color: var(--fail); }
+  .step[data-state="stalled"] .node { border-color: var(--warn); animation: none; transform: none; }
+  @keyframes spin { to { transform: rotate(360deg) scale(1.12); } }
+
+  .node svg { width: 9px; height: 9px; display: block; }
+  .node svg path {
+    stroke: var(--bg); stroke-width: 2.6; fill: none;
+    stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 14; stroke-dashoffset: 14;
+  }
+  .step[data-state="done"] .node svg path,
+  .step[data-state="failed"] .node svg path {
+    animation: draw 340ms 90ms cubic-bezier(0.16, 0.84, 0.3, 1) forwards;
+  }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  .notice {
+    display: none; align-items: flex-start; gap: 9px;
+    background: var(--warn-soft); border-radius: 8px; padding: 11px 14px;
+    font-size: 13.5px; color: var(--fg);
+    animation: rise 420ms cubic-bezier(0.16, 0.84, 0.3, 1);
+  }
+  .notice b { font-weight: 600; }
+  .notice span { color: var(--muted); }
+  [data-run="stalled"] .notice { display: flex; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+  .out {
+    display: none; border: 1px solid var(--border); background: var(--card);
+    border-radius: 12px; box-shadow: var(--shadow); overflow: hidden;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 420ms ease, transform 420ms cubic-bezier(0.16, 0.84, 0.3, 1);
+  }
+  .out.mounted { display: block; }
+  .out.show { opacity: 1; transform: none; }
+  .out header {
+    display: flex; align-items: center; gap: 8px; padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint);
+  }
+  .lines {
+    margin: 0; padding: 11px 14px 13px; max-height: 168px; overflow-y: auto;
+    font: 12.5px/1.85 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    scrollbar-width: thin;
+    mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+  }
+  .lines div { animation: line 300ms ease-out; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .lines .dropped { color: var(--faint); font-style: italic; }
+  @keyframes line { from { opacity: 0; transform: translateY(4px); } }
+  .caret {
+    display: inline-block; width: 6px; height: 12px; background: var(--faint);
+    vertical-align: -1px; animation: caret 1.1s steps(1, end) infinite;
+  }
+  @keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+  .landing {
+    display: none; flex-wrap: wrap; align-items: center; gap: 12px;
+    opacity: 0; transform: translateY(10px);
+    transition: opacity 520ms ease, transform 520ms cubic-bezier(0.16, 0.84, 0.3, 1);
+  }
+  .landing.mounted { display: flex; }
+  .landing.show { opacity: 1; transform: none; }
+  .visit {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--brand); color: #fff; border-radius: 999px;
+    padding: 10px 18px; font-size: 14px; font-weight: 500; text-decoration: none;
+    transition: opacity 200ms ease;
+  }
+  .visit:hover { opacity: 0.9; }
+  .visit:focus-visible { outline: 2px solid var(--brand-ink); outline-offset: 3px; }
+  .landing.show .visit { animation: halo 1.8s ease-out 3; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell" id="shell" data-run="running">
+
+  <div class="masthead">
+    <svg class="mark" viewBox="0 0 19.89 21.47" aria-hidden="true">
+      <path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>
+      <path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/>
+    </svg>
+    <span class="wordmark">brainpod</span>
+    <span class="chip"><i class="beacon"></i><span id="chip">starting</span></span>
+  </div>
+
+  <div class="head">
+    <h1 id="phase">Getting started</h1>
+    <p class="sub" id="sub"></p>
+  </div>
+
+  <div class="bar">
+    <svg class="hilt" viewBox="0 0 84 26" aria-hidden="true">
+      <defs>
+        <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6f6b64"/>
+          <stop offset="0.13" stop-color="#cdc8c0"/>
+          <stop offset="0.27" stop-color="#fbf9f6"/>
+          <stop offset="0.42" stop-color="#c8c3bb"/>
+          <stop offset="0.60" stop-color="#8b867e"/>
+          <stop offset="0.83" stop-color="#4c4842"/>
+          <stop offset="1" stop-color="#6b665f"/>
+        </linearGradient>
+        <linearGradient id="ebony" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#35322e"/>
+          <stop offset="0.25" stop-color="#58544d"/>
+          <stop offset="0.55" stop-color="#2a2724"/>
+          <stop offset="1" stop-color="#141312"/>
+        </linearGradient>
+        <radialGradient id="emberglow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#4d7dff" stop-opacity="0.85"/>
+          <stop offset="0.55" stop-color="#003399" stop-opacity="0.32"/>
+          <stop offset="1" stop-color="#003399" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <ellipse class="hilt-glow" cx="80" cy="13" rx="11" ry="13" fill="url(#emberglow)"/>
+      <rect x="0.5" y="8.4" width="6" height="9.2" rx="2.4" fill="url(#chrome)"/>
+      <rect x="6" y="8.1" width="1.7" height="9.8" rx="0.6" fill="url(#ebony)"/>
+      <rect x="7.4" y="9.1" width="8.4" height="7.8" rx="1.5" fill="url(#chrome)"/>
+      <rect x="15.4" y="8.1" width="1.9" height="9.8" rx="0.6" fill="url(#ebony)"/>
+      <rect x="17" y="7.7" width="24" height="10.6" rx="1.4" fill="url(#ebony)"/>
+      <rect x="18.5" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="21.3" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="24.1" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="26.9" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="29.7" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="32.5" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="35.3" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="38.1" y="7.7" width="1.35" height="10.6" fill="url(#chrome)" opacity="0.92"/>
+      <rect x="41" y="7.9" width="2.2" height="10.2" rx="0.7" fill="url(#chrome)"/>
+      <rect x="43" y="5.3" width="12.4" height="15.4" rx="1.8" fill="url(#chrome)"/>
+      <rect x="45.4" y="7" width="4" height="2.8" rx="1" fill="#b4402f"/>
+      <rect x="50.2" y="7" width="3.4" height="2.8" rx="0.8" fill="url(#ebony)"/>
+      <rect x="45.4" y="15.8" width="8.2" height="1.3" rx="0.6" fill="url(#ebony)" opacity="0.9"/>
+      <rect x="45.4" y="17.6" width="8.2" height="1.3" rx="0.6" fill="url(#ebony)" opacity="0.9"/>
+      <rect x="55.2" y="7.5" width="4.2" height="11" rx="1" fill="url(#chrome)"/>
+      <rect x="57.4" y="7.5" width="1.2" height="11" fill="url(#ebony)" opacity="0.75"/>
+      <rect x="59.2" y="8.6" width="3.8" height="8.8" rx="1" fill="url(#ebony)"/>
+      <rect x="62.6" y="4.5" width="10" height="17" rx="2" fill="url(#chrome)"/>
+      <rect x="72" y="6.1" width="9.2" height="13.8" rx="1.2" fill="url(#chrome)"/>
+      <rect x="73.3" y="6.1" width="1.1" height="13.8" fill="url(#ebony)" opacity="0.88"/>
+      <rect x="75.3" y="6.1" width="1.1" height="13.8" fill="url(#ebony)" opacity="0.88"/>
+      <rect x="77.3" y="6.1" width="1.1" height="13.8" fill="url(#ebony)" opacity="0.88"/>
+      <rect x="79.3" y="6.1" width="1.1" height="13.8" fill="url(#ebony)" opacity="0.88"/>
+      <rect x="80.6" y="7.3" width="2.6" height="11.4" rx="1" fill="url(#chrome)"/>
+      <rect x="81.8" y="9.7" width="2.2" height="6.6" rx="1.1" fill="#1b1917"/>
+    </svg>
+    <div class="track">
+      <span class="saber" id="blade"></span>
+      <span class="segments" id="segments" aria-hidden="true"></span>
+    </div>
+  </div>
+
+  <div class="notice" role="status">
+    <span><b>This deploy stopped reporting.</b>
+    <span id="stalled-detail"></span></span>
+  </div>
+
+  <ol class="steps" id="steps"></ol>
+
+  <section class="out" id="out" aria-live="polite">
+    <header><span>Output</span></header>
+    <div class="lines" id="lines"></div>
+  </section>
+
+  <div class="landing" id="landing">
+    <a class="visit" id="visit" href="#">Open the pod page<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a>
+  </div>
+
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const STALE_AFTER = 10000;
+  const POLL = 400;
+
+  const CHECK = "M4 8.6 6.9 11.5 12.4 5.2";
+  const CROSS = "M4.6 4.6 11.4 11.4 M11.4 4.6 4.6 11.4";
+
+  const shell = document.getElementById("shell");
+  const chip = document.getElementById("chip");
+  const phaseEl = document.getElementById("phase");
+  const subEl = document.getElementById("sub");
+  const blade = document.getElementById("blade");
+  const segEl = document.getElementById("segments");
+  const listEl = document.getElementById("steps");
+  const outEl = document.getElementById("out");
+  const linesEl = document.getElementById("lines");
+  const landing = document.getElementById("landing");
+  const visit = document.getElementById("visit");
+  const stalledDetail = document.getElementById("stalled-detail");
+
+  let sessionId = null;
+  let rendered = 0;
+  let headline = null;
+  let flared = false;
+  let latest = null;
+
+  const seconds = (ms) => (ms / 1000).toFixed(1) + "s";
+
+  function reveal(el) {
+    if (el.classList.contains("mounted")) { el.classList.add("show"); return; }
+    el.classList.add("mounted");
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("show")));
+  }
+
+  function reset(session) {
+    sessionId = session.session;
+    rendered = 0;
+    headline = null;
+    flared = false;
+    listEl.innerHTML = "";
+    linesEl.innerHTML = "";
+    segEl.innerHTML = "";
+    outEl.classList.remove("show", "mounted");
+    landing.classList.remove("show", "mounted");
+    blade.classList.remove("flare");
+    blade.style.transition = "none";
+    blade.style.width = "0%";
+    void blade.offsetWidth;
+    blade.style.transition = "";
+  }
+
+  function setHeadline(text) {
+    if (headline === text) return;
+    headline = text;
+    phaseEl.textContent = text;
+    shell.classList.remove("swapping");
+    void shell.offsetWidth;
+    shell.classList.add("swapping");
+  }
+
+  function row(step) {
+    const li = document.createElement("li");
+    li.className = "step";
+    li.dataset.id = step.id;
+    li.innerHTML =
+      '<span class="rail"><span class="node"><svg viewBox="0 0 16 16"><path d=""/></svg></span>' +
+      '<span class="wire"><i></i></span></span>' +
+      '<span class="body"><span class="label"></span><span class="detail"></span></span>' +
+      '<span class="dur"></span>';
+    listEl.appendChild(li);
+    return li;
+  }
+
+  function paintSteps(session, stalled) {
+    if (segEl.children.length !== session.steps.length) {
+      segEl.innerHTML = session.steps.map(() => "<i></i>").join("");
+    }
+
+    session.steps.forEach((step) => {
+      const li = listEl.querySelector('[data-id="' + CSS.escape(step.id) + '"]') || row(step);
+      const state = stalled && step.state === "running" ? "stalled" : step.state;
+
+      if (li.dataset.state !== state) {
+        li.dataset.state = state;
+        if (state === "done" || state === "failed") {
+          li.querySelector(".node path").setAttribute("d", state === "done" ? CHECK : CROSS);
+        }
+      }
+
+      li.querySelector(".label").textContent = step.label;
+
+      const detail = li.querySelector(".detail");
+      if (detail.textContent !== (step.detail || "")) {
+        detail.textContent = step.detail || "";
+      }
+      detail.classList.toggle("show", Boolean(step.detail));
+
+      const dur = li.querySelector(".dur");
+      if (step.startedAt && step.endedAt) {
+        /* A step recorded straight to done never ran here; 0.0s is noise. */
+        const elapsed = step.endedAt - step.startedAt;
+        dur.textContent = elapsed >= 100 ? seconds(elapsed) : "";
+        dur.classList.toggle("show", elapsed >= 100);
+      } else if (step.startedAt && step.state === "running") {
+        dur.textContent = seconds(Math.max(0, Date.now() - step.startedAt));
+        dur.classList.add("show");
+      } else {
+        dur.classList.remove("show");
+      }
+    });
+
+    const done = session.steps.filter((s) => s.state === "done").length;
+    blade.style.width = session.steps.length ? (done / session.steps.length) * 100 + "%" : "0%";
+  }
+
+  function paintLog(session) {
+    const total = (session.logDropped ? 1 : 0) + session.log.length;
+    if (total < rendered) { linesEl.innerHTML = ""; rendered = 0; }
+    if (!total) return;
+
+    reveal(outEl);
+
+    if (session.logDropped && !rendered) {
+      const dropped = document.createElement("div");
+      dropped.className = "dropped";
+      dropped.textContent = session.logDropped + " earlier lines not shown";
+      linesEl.appendChild(dropped);
+      rendered = 1;
+    }
+
+    const from = Math.max(0, rendered - (session.logDropped ? 1 : 0));
+    session.log.slice(from).forEach((line) => {
+      const div = document.createElement("div");
+      div.textContent = line;
+      linesEl.appendChild(div);
+    });
+
+    rendered = total;
+    linesEl.scrollTop = linesEl.scrollHeight;
+  }
+
+  function paint(session) {
+    if (session.session !== sessionId) reset(session);
+
+    const stalled = session.state === "running" && Date.now() - session.updatedAt > STALE_AFTER;
+    const run = stalled ? "stalled" : session.state;
+    shell.dataset.run = run;
+    chip.textContent = session.session.slice(0, 6) + " · " + run;
+
+    paintSteps(session, stalled);
+    paintLog(session);
+
+    const running = session.steps.find((s) => s.state === "running");
+    const failed = session.steps.find((s) => s.state === "failed");
+
+    if (session.state === "done") {
+      setHeadline("Your app is live");
+      subEl.innerHTML = session.message
+        ? escapeHtml(session.message)
+        : session.pod
+          ? 'Deployed to <span class="pod">' + escapeHtml(session.pod) + "</span>."
+          : "";
+      if (!flared) { flared = true; blade.classList.add("flare"); }
+      if (session.podUrl) { visit.href = session.podUrl; reveal(landing); }
+    } else if (session.state === "failed") {
+      setHeadline("The deploy stopped");
+      subEl.textContent = session.message
+        || (failed && failed.detail)
+        || "Nothing was deployed. Your pod is exactly as it was.";
+    } else if (stalled) {
+      stalledDetail.textContent =
+        "Nothing has come back for " + Math.round((Date.now() - session.updatedAt) / 1000) +
+        " seconds. Your pod is untouched — start again when you're ready.";
+      subEl.textContent = running ? running.label : "";
+    } else {
+      setHeadline(running ? running.label : "Getting started");
+      subEl.textContent = running && running.detail ? running.detail : "";
+    }
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function poll() {
+    try {
+      const response = await fetch("./session.json", { cache: "no-store" });
+      if (response.ok) latest = await response.json();
+    } catch (error) {
+      /* The file is rewritten atomically, so a failed read is transient. */
+    }
+    if (latest) paint(latest);
+    setTimeout(poll, POLL);
+  }
+
+  poll();
+})();
+</script>
+</body>
+</html>

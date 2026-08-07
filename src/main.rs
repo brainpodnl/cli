@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use clap::{CommandFactory as _, Parser};
 use serde_json::{Value, json};
 
+mod agent;
 mod auth;
 mod client;
 mod cmd;
