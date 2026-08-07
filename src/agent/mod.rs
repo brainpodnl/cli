@@ -554,8 +554,18 @@ pub struct Sink {
 }
 
 impl Sink {
+    /// Writes one line as a single call.
+    ///
+    /// Formatting straight into the file would emit the tag, the line, and the
+    /// newline as separate writes, which is how two sources appending at once
+    /// end up spliced together mid-line. One write to a file opened for append
+    /// keeps each line whole.
     pub fn write(&mut self, line: &str) {
-        let _ = writeln!(self.file, "{}{line}", self.prefix);
+        let mut row = String::with_capacity(self.prefix.len() + line.len() + 1);
+        row.push_str(&self.prefix);
+        row.push_str(line);
+        row.push('\n');
+        let _ = self.file.write_all(row.as_bytes());
     }
 }
 
