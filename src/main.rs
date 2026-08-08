@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use clap::{CommandFactory as _, Parser};
 use serde_json::{Value, json};
 
+mod agent;
 mod auth;
 mod client;
 mod cmd;
@@ -48,6 +49,10 @@ pub(crate) struct Opts {
     #[arg(long, global = true)]
     pod: Option<String>,
 
+    /// Chat whose session console this command reports into
+    #[arg(long, global = true)]
+    session: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -56,6 +61,7 @@ pub(crate) struct Opts {
 async fn main() -> ExitCode {
     let opts = Opts::parse();
     let json_output = opts.json;
+    agent::configure(opts.session.clone());
 
     match run(opts).await {
         Ok(value) => match output::write(value, json_output).await {

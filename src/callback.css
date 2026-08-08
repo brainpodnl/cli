@@ -1,0 +1,279 @@
+
+:root {
+  --radius: 0.75rem;
+  --background: #fbfaf8;
+  --foreground: #16140f;
+  --card: #ffffff;
+  --secondary: #f3f0ea;
+  --muted-foreground: #6b6660;
+  --faint: #a19b92;
+  --border: #e5e0d7;
+  --grid: #e5e0d7;
+  --brand: #003399;
+  --destructive: #b4402f;
+  --c-brand: #003399;
+  --c-lift: #2f66c9;
+  --c-gold: #ffcc00;
+  --c-ink: #16140f;
+  --c-faint: #a19b92;
+  --shadow: 0 1px 2px rgba(22,20,15,.04), 0 30px 70px -40px rgba(22,20,15,.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #16140f;
+    --foreground: #fbfaf8;
+    --card: #211e18;
+    --secondary: #302b25;
+    --muted-foreground: #a19b92;
+    --faint: #8f8980;
+    --border: #453f35;
+    --grid: #302c26;
+    --brand: #5b8dee;
+    --destructive: #d4614c;
+    --c-brand: #4276d8;
+    --c-lift: #7fa4ff;
+    --c-gold: #ffcc00;
+    --c-ink: #fbfaf8;
+    --c-faint: #a19b92;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 30px 70px -40px rgba(0,0,0,.9);
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-font-smoothing: antialiased; }
+
+body {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background-color: var(--background);
+  background-image: radial-gradient(circle at center, var(--grid) 1px, transparent 1px);
+  background-size: 16px 16px;
+  color: var(--foreground);
+  font-family: ui-sans-serif, -apple-system, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+::selection { background: var(--secondary); }
+
+.card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 33rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.8);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.chrome {
+  display: flex;
+  align-items: center;
+  gap: .625rem;
+  padding: .75rem .875rem;
+  border-bottom: 1px solid var(--border);
+}
+.chrome svg { width: 15px; height: auto; display: block; }
+.wordmark { font-size: .8125rem; font-weight: 500; letter-spacing: -.01em; }
+.badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .1875rem .5rem .1875rem .4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--secondary);
+  font-size: .75rem;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+.badge svg { width: 12px; }
+.dot {
+  width: 6px; height: 6px; border-radius: 999px;
+  background: var(--foreground);
+}
+.badge.is-warn .dot { background: var(--faint); }
+.badge.is-fail .dot { background: var(--destructive); }
+
+.body { padding: 1.75rem 1.5rem 1.5rem; }
+
+h1 {
+  font-size: clamp(1.75rem, 5.5vw, 2.25rem);
+  line-height: 1.12;
+  letter-spacing: -.03em;
+  font-weight: 600;
+}
+h1 .quiet { color: var(--faint); font-weight: 500; }
+
+.lead {
+  margin-top: .625rem;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  max-width: 30rem;
+}
+.lead strong { color: var(--foreground); font-weight: 500; }
+
+/* ── the burst ────────────────────────────────────────────────── */
+.confetti {
+  position: fixed; inset: 0; z-index: 0;
+  overflow: hidden; pointer-events: none;
+}
+.confetti i {
+  position: absolute; left: 50%; top: 56%;
+  display: block;
+  will-change: transform, opacity;
+  animation: toss var(--dur) var(--delay) forwards;
+}
+.confetti b {
+  display: block;
+  width: var(--w); height: var(--h);
+  border-radius: var(--br);
+  background: var(--c);
+  animation: flutter var(--spin) linear infinite;
+}
+
+@keyframes toss {
+  0% {
+    transform: translate3d(0, 0, 0) scale(.5);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(.09, .68, .35, 1);
+  }
+  7%  { opacity: 1; }
+  42% {
+    transform: translate3d(calc(var(--x) * .58), var(--rise), 0) scale(1);
+    animation-timing-function: cubic-bezier(.5, 0, .82, .62);
+  }
+  88% { opacity: 1; }
+  100% {
+    transform: translate3d(var(--x), var(--fall), 0) scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes flutter {
+  to { transform: rotate(var(--turn)) rotate3d(1, .4, 0, 720deg); }
+}
+
+/* ── the rail ─────────────────────────────────────────────────── */
+.rail { display: flex; flex-direction: column; margin-top: 1.625rem; }
+.step { position: relative; display: grid; grid-template-columns: 1rem 1fr; gap: .75rem; }
+.step + .step { margin-top: .875rem; }
+.mark {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 1rem; height: 1.35rem;
+}
+.mark::after {
+  content: ""; position: absolute; top: 1.35rem; bottom: -1.25rem; left: 50%;
+  width: 0; border-left: 1px solid var(--border);
+}
+.step:last-child .mark::after { display: none; }
+.step.is-done .mark::after { border-left-color: color-mix(in srgb, var(--foreground) 30%, transparent); }
+.step.is-now .mark::after { border-left-style: dashed; }
+.step.is-todo .mark::after { border-left-style: dashed; }
+
+.pip { width: 8px; height: 8px; border-radius: 999px; background: var(--border); }
+.step.is-done .pip { background: var(--foreground); }
+.step.is-now .pip {
+  width: 12px; height: 12px;
+  background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  border-top-color: var(--brand);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.tick { width: 15px; height: 15px; }
+.tick circle { fill: var(--foreground); }
+.tick path { stroke: var(--card); stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+.step h2 {
+  font-size: .875rem; font-weight: 500; line-height: 1.35rem;
+  letter-spacing: -.005em;
+  display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+}
+.step.is-todo h2 { color: var(--muted-foreground); font-weight: 400; }
+.step h2 .when { font-size: .75rem; font-weight: 400; color: var(--faint); }
+.step.is-now h2 .when { color: var(--brand); }
+.step p { font-size: .8125rem; line-height: 1.55; color: var(--muted-foreground); margin-top: .0625rem; }
+.step.is-todo p { color: var(--faint); }
+
+/* ── prompt block ─────────────────────────────────────────────── */
+.section-label {
+  font-size: .75rem; line-height: 1.4; color: var(--faint);
+  letter-spacing: .01em;
+}
+.lead + .section-label, .lead + .cmds { margin-top: 1.625rem; }
+.prompt {
+  margin-top: .625rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--secondary);
+  padding: .875rem 1rem;
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: .8125rem; line-height: 1.8;
+  white-space: pre-wrap;
+}
+.prompt .pick {
+  border-bottom: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .875rem; }
+.btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  height: 2.25rem; padding: 0 .875rem;
+  border: 1px solid transparent; border-radius: calc(var(--radius) * .8);
+  font: inherit; font-size: .875rem; font-weight: 500;
+  color: var(--card); background: var(--foreground);
+  cursor: pointer; text-decoration: none;
+  transition: opacity .15s ease;
+}
+.btn:hover { opacity: .9; }
+.btn svg { width: 14px; height: 14px; }
+.btn-ghost {
+  color: var(--foreground); background: transparent; border-color: var(--border);
+}
+.btn-ghost:hover { background: var(--secondary); opacity: 1; }
+
+.cmds { display: flex; flex-direction: column; gap: .5rem; margin-top: .625rem; }
+.cmd {
+  display: grid; grid-template-columns: auto 1fr; gap: .75rem; align-items: baseline;
+  font-size: .8125rem;
+}
+.cmd code {
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: .8125rem;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * .6);
+  padding: .125rem .4rem;
+  white-space: nowrap;
+}
+.cmd span { color: var(--muted-foreground); }
+
+.foot {
+  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  padding: .8125rem .875rem;
+  border-top: 1px solid var(--border);
+  background: var(--secondary);
+  font-size: .75rem; line-height: 1.4;
+  color: var(--muted-foreground);
+}
+.foot a { color: var(--foreground); text-decoration: none; }
+.foot a:hover { opacity: .75; }
+.foot .sep { margin-left: auto; }
+.foot code {
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  color: var(--muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti { display: none; }
+  .step.is-now .pip { animation: none; border-color: var(--brand); }
+}

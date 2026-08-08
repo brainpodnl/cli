@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempDir};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
@@ -194,11 +194,7 @@ fn resolve_method(method: BuildMethod, context: &Path) -> Result<BuildMethod> {
     }
 }
 
-async fn build_dockerfile(
-    context: &Path,
-    temporary: &TempDir,
-    platform: &str,
-) -> Result<PathBuf> {
+async fn build_dockerfile(context: &Path, temporary: &TempDir, platform: &str) -> Result<PathBuf> {
     let destination = temporary.path().join("image");
     eprintln!("Building image from Dockerfile");
     run_command(
@@ -221,11 +217,7 @@ async fn build_dockerfile(
     Ok(destination)
 }
 
-async fn build_railpack(
-    context: &Path,
-    temporary: &TempDir,
-    platform: &str,
-) -> Result<PathBuf> {
+async fn build_railpack(context: &Path, temporary: &TempDir, platform: &str) -> Result<PathBuf> {
     let railpack = railpack_binary().await?;
     let plan = temporary.path().join("railpack-plan.json");
     eprintln!("Preparing Railpack build plan");
@@ -490,23 +482,64 @@ async fn run_command(command: &mut Command, description: &str) -> Result<()> {
     run_command_with_timeout(command, description, PROCESS_TIMEOUT).await
 }
 
+/// Forwards a child stream to stderr, mirroring it into the console's build log.
+///
+/// Each caller opens its own appender: the file is opened in append mode, so
+/// stdout and stderr interleave the way they would in a terminal without
+/// needing to share a handle, and every line carries the `[build]` tag.
+async fn mirror<R>(source: R) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut lines = tokio::io::BufReader::new(source).lines();
+    let mut destination = tokio::io::stderr();
+    let mut sink = crate::agent::sink("build");
+
+    while let Some(line) = lines.next_line().await? {
+        destination.write_all(line.as_bytes()).await?;
+        destination.write_all(b"\n").await?;
+        if let Some(sink) = sink.as_mut() {
+            sink.write(&line);
+        }
+    }
+
+    destination.flush().await
+}
+
 async fn run_command_with_timeout(
     command: &mut Command,
     description: &str,
     timeout: Duration,
 ) -> Result<()> {
+    // Build output is the whole reason the session console has an output panel,
+    // so mirror it there when one exists. Without a console nothing changes:
+    // stdout is copied through byte for byte and the child keeps this process's
+    // stderr, which is what preserves a terminal's redrawing progress display.
+    let capture = crate::agent::is_active();
+
     let mut child = command
         .kill_on_drop(true)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(if capture {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()
         .with_context(|| format!("failed to start {description}"))?;
     let mut stdout = child
         .stdout
         .take()
         .ok_or_else(|| anyhow!("failed to capture {description} stdout"))?;
+    let errors = child
+        .stderr
+        .take()
+        .map(|stderr| tokio::spawn(mirror(stderr)));
     let mut output = tokio::spawn(async move {
+        if capture {
+            return mirror(stdout).await;
+        }
         let mut destination = tokio::io::stderr();
         tokio::io::copy(&mut stdout, &mut destination).await?;
         destination.flush().await
@@ -516,6 +549,9 @@ async fn run_command_with_timeout(
         Ok(status) => status,
         Err(error) => {
             output.abort();
+            if let Some(errors) = errors {
+                errors.abort();
+            }
             return Err(error);
         }
     };
@@ -524,6 +560,14 @@ async fn run_command_with_timeout(
             .with_context(|| format!("{description} output task failed"))?
             .with_context(|| format!("failed while reading {description} output"))?,
         Err(_) => output.abort(),
+    }
+    if let Some(mut errors) = errors {
+        match tokio::time::timeout(PROCESS_OUTPUT_DRAIN_TIMEOUT, &mut errors).await {
+            Ok(result) => result
+                .with_context(|| format!("{description} error output task failed"))?
+                .with_context(|| format!("failed while reading {description} error output"))?,
+            Err(_) => errors.abort(),
+        }
     }
 
     if status.success() {

@@ -117,7 +117,8 @@ pub async fn login(
         return Err(error);
     }
 
-    finish_callback(request.response, Page::success(), shutdown_sender, server).await?;
+    let page = Page::success(handover().await);
+    finish_callback(request.response, page, shutdown_sender, server).await?;
 
     Client::try_new(api_endpoint, &token)?
         .get(&["v1", "me"], &[])
@@ -279,65 +280,279 @@ async fn finish_callback(
     Ok(())
 }
 
+/// What the callback page is for.
+///
+/// Not a styling choice: an agent-driven session has a plan behind it and gets
+/// shown where the workflow has reached, while someone who ran `login` in a
+/// terminal has none and is handed the prompt that starts one instead.
+enum Shape {
+    Agent(Vec<crate::agent::RailStep>),
+    Human,
+    Stopped,
+}
+
 struct Page {
     status: StatusCode,
-    title: &'static str,
-    message: &'static str,
+    headline: &'static str,
+    lead: &'static str,
+    badge: &'static str,
+    badge_tone: &'static str,
+    foot: &'static str,
+    shape: Shape,
+    handover: Option<String>,
 }
 
 impl Page {
-    const fn success() -> Self {
+    fn success(handover: Option<String>) -> Self {
+        let rail = crate::agent::rail();
+        if rail.is_empty() {
+            return Self {
+                status: StatusCode::OK,
+                headline: "Signed in.",
+                lead: "The token is stored. The terminal you started this from is already carrying on.",
+                badge: "signed in",
+                badge_tone: "",
+                foot: "Token stored in your Brainpod config",
+                shape: Shape::Human,
+                handover: None,
+            };
+        }
+
+        let mut page = Self {
+            status: StatusCode::OK,
+            headline: "Signed in.",
+            lead: "Your agent has the session and is carrying on.",
+            badge: "agent session",
+            badge_tone: "",
+            foot: "Waiting on your agent, not on you.",
+            shape: Shape::Agent(rail),
+            handover: None,
+        };
+        if handover.is_some() {
+            page.lead =
+                "Your agent has the session and is carrying on. This tab is about to show it live.";
+            page.foot = "Opening the session console\u{2026}";
+            page.handover = handover;
+        }
+        page
+    }
+
+    fn cancelled() -> Self {
         Self {
             status: StatusCode::OK,
-            title: "Authentication successful",
-            message: "You can close this window and return to the Brainpod CLI.",
+            headline: "Sign-in was cancelled.",
+            lead: "Nothing changed, and no token was stored. The CLI is still waiting, so you can start again from there.",
+            badge: "not signed in",
+            badge_tone: " is-warn",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
+            handover: None,
         }
     }
 
-    const fn cancelled() -> Self {
-        Self {
-            status: StatusCode::OK,
-            title: "Authentication cancelled",
-            message: "No changes were made. You can close this window.",
-        }
-    }
-
-    const fn invalid() -> Self {
+    fn invalid() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            title: "Authentication failed",
-            message: "The authentication response was invalid. Return to the CLI and try again.",
+            headline: "Sign-in failed.",
+            lead: "That response was not valid, so no token was stored. Start again from the CLI.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
+            handover: None,
         }
     }
 
-    const fn storage_failed() -> Self {
+    fn storage_failed() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            title: "Authentication failed",
-            message: "The CLI could not store the API token. Return to the CLI for details.",
+            headline: "Sign-in failed.",
+            lead: "You approved it, but the token could not be saved. The CLI has the details.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
+            handover: None,
         }
     }
 
-    const fn unavailable() -> Self {
+    fn unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            title: "Authentication failed",
-            message: "The CLI is no longer waiting for an authentication response.",
+            headline: "Sign-in failed.",
+            lead: "The CLI stopped waiting for this response. Start again from the terminal.",
+            badge: "not signed in",
+            badge_tone: " is-fail",
+            foot: "You can close this tab.",
+            shape: Shape::Stopped,
+            handover: None,
         }
     }
+}
+
+const STYLE: &str = include_str!("callback.css");
+const CONFETTI: &str = include_str!("callback-confetti.html");
+
+const MARK: &str = concat!(
+    r#"<svg viewBox="0 0 19.89 21.47" aria-hidden><path fill="currentColor" d="M6.14451 14.0293C6.40601 10.6845 9.10699 7.98496 12.4518 7.72417C13.9056 7.61047 15.2721 7.95227 16.4275 8.6181C19.3971 3.77042 16.8525 0 11.8044 0H0.974935C0.436304 0 0 0.436305 0 0.974936V19.7588C0 20.2377 0.348192 20.6485 0.821449 20.7217C3.05485 21.0677 5.18734 20.5604 7.5785 18.8087C6.56306 17.5091 6.00382 15.8363 6.14451 14.0293Z"/>"#,
+    r##"<path fill="#003399" d="M16.4282 8.61755C16.2939 8.83642 16.1497 9.05812 15.9926 9.28125C12.6742 13.9989 9.9938 17.0395 7.57849 18.8096C8.83767 20.422 10.7982 21.4601 13.0018 21.4601C16.8006 21.4601 19.8803 18.3804 19.8803 14.5816C19.8803 12.0305 18.4904 9.80567 16.4282 8.61755Z"/></svg>"##
+);
+
+const TICK: &str = concat!(
+    r#"<svg class="tick" viewBox="0 0 16 16" aria-hidden><circle cx="8" cy="8" r="8"/>"#,
+    r#"<path d="M4.6 8.2 6.9 10.5 11.4 6"/></svg>"#
+);
+
+/// The prompt handed to someone who signed in without an agent driving it.
+///
+/// Brainpod deploys run through an agent, so the useful thing to give a person
+/// at this point is the sentence that starts one — not a congratulation.
+const PROMPT: &str = "Deploy this project to Brainpod using the Brainpod skill from github.com/brainpodnl/skills.\n\nI'm already signed in with the brainpod CLI. Work out what the project needs and hand me the live URL when it's up.";
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The live session console, if one answers.
+///
+/// Probed rather than trusted: `agent serve` advertises its URL in the session
+/// file and never withdraws it, since no guard survives the kill that ends that
+/// process. Sending the browser to an address nobody is listening on would turn
+/// the one page confirming the sign-in into a connection error.
+async fn handover() -> Option<String> {
+    let url = crate::agent::console_url()?;
+    let http = reqwest::Client::builder()
+        .timeout(HANDOVER_PROBE)
+        .build()
+        .ok()?;
+    let answered = http.get(&url).send().await.ok()?.status().is_success();
+    answered.then_some(url)
+}
+
+/// A loopback server either answers immediately or is not there.
+const HANDOVER_PROBE: Duration = Duration::from_millis(500);
+
+/// Hands this tab to the live console, after a beat.
+///
+/// The beat is the point. This page is the only confirmation the user gets that
+/// signing in worked, and a navigation they never see reads as the click having
+/// done nothing.
+fn refresh(handover: Option<&str>) -> String {
+    handover
+        .map(|url| {
+            format!(
+                r#"<meta http-equiv="refresh" content="2;url={}">"#,
+                escape(url)
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn rail_html(steps: &[crate::agent::RailStep]) -> String {
+    let rows = steps
+        .iter()
+        .map(|step| {
+            let (class, mark) = match step.state.as_str() {
+                "done" => ("is-done", TICK.to_owned()),
+                "running" => ("is-now", r#"<span class="pip"></span>"#.to_owned()),
+                _ => ("is-todo", r#"<span class="pip"></span>"#.to_owned()),
+            };
+            let when = if step.state == "running" {
+                r#" <span class="when">now</span>"#
+            } else {
+                ""
+            };
+            let detail = step
+                .detail
+                .as_deref()
+                .filter(|detail| !detail.is_empty())
+                .map(|detail| format!("<p>{}</p>", escape(detail)))
+                .unwrap_or_default();
+            format!(
+                r#"<div class="step {class}"><span class="mark">{mark}</span><div><h2>{}{when}</h2>{detail}</div></div>"#,
+                escape(&step.label)
+            )
+        })
+        .collect::<String>();
+    format!(r#"<div class="rail">{rows}</div>"#)
+}
+
+fn human_html() -> String {
+    format!(
+        concat!(
+            r#"<p class="section-label">Brainpod deploys are agent-driven. Hand this to yours, inside your project.</p>"#,
+            r#"<div class="prompt">{prompt}</div>"#,
+            r#"<div style="margin-top:1.5rem"><p class="section-label">Or stay in the terminal.</p><div class="cmds">"#,
+            r#"<div class="cmd"><code>brainpod whoami</code><span>confirm the session</span></div>"#,
+            r#"<div class="cmd"><code>brainpod pod list</code><span>see what you already run</span></div>"#,
+            r#"<div class="cmd"><code>brainpod describe resource</code><span>the resource kinds you can compose</span></div>"#,
+            "</div></div>"
+        ),
+        prompt = escape(PROMPT)
+    )
+}
+
+fn stopped_html() -> &'static str {
+    concat!(
+        r#"<div class="cmds">"#,
+        r#"<div class="cmd"><code>brainpod login</code><span>try again in this browser</span></div>"#,
+        r#"<div class="cmd"><code>brainpod config set api-token &lt;token&gt;</code><span>no browser? use a dashboard token</span></div>"#,
+        "</div>"
+    )
 }
 
 impl IntoResponse for Page {
     fn into_response(self) -> Response {
+        let celebrate = !matches!(self.shape, Shape::Stopped);
+        let burst = if celebrate {
+            format!(r#"<div class="confetti" aria-hidden>{CONFETTI}</div>"#)
+        } else {
+            String::new()
+        };
+
+        let content = match &self.shape {
+            Shape::Agent(steps) => rail_html(steps),
+            Shape::Human => human_html(),
+            Shape::Stopped => stopped_html().to_owned(),
+        };
+
         let body = format!(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title></head><body><main><h1>{}</h1><p>{}</p></main></body></html>",
-            self.title, self.title, self.message
+            concat!(
+                r#"<!doctype html><html lang="en"><head><meta charset="utf-8">"#,
+                r#"<meta name="viewport" content="width=device-width,initial-scale=1">"#,
+                "{refresh}",
+                "<title>{headline} — Brainpod</title><style>{style}</style></head><body>",
+                "{burst}",
+                r#"<main class="card"><div class="chrome">{mark}<span class="wordmark">Brainpod</span>"#,
+                r#"<span class="badge{badge_tone}"><span class="dot"></span>{badge}</span></div>"#,
+                r#"<div class="body"><h1>{headline}</h1><p class="lead">{lead}</p>{content}</div>"#,
+                r#"<div class="foot"><span>{foot}</span>"#,
+                r#"<a class="sep" href="https://brainpod.io">brainpod.io &rarr;</a></div></main>"#,
+                "</body></html>"
+            ),
+            refresh = refresh(self.handover.as_deref()),
+            headline = self.headline,
+            style = STYLE,
+            burst = burst,
+            mark = MARK,
+            badge_tone = self.badge_tone,
+            badge = self.badge,
+            lead = self.lead,
+            content = content,
+            foot = self.foot,
         );
+
         (
             self.status,
             [
                 ("cache-control", "no-store"),
-                ("content-security-policy", "default-src 'none'"),
+                (
+                    "content-security-policy",
+                    "default-src 'none'; style-src 'unsafe-inline'",
+                ),
                 ("x-content-type-options", "nosniff"),
             ],
             Html(body),
@@ -350,8 +565,24 @@ impl IntoResponse for Page {
 mod tests {
     use super::{
         Callback, CallbackQuery, LoginOptions, authorization_notice, authorization_url,
-        parse_callback_query,
+        parse_callback_query, refresh,
     };
+
+    #[test]
+    fn hands_the_tab_over_only_when_a_console_answers() {
+        assert!(refresh(None).is_empty());
+        assert_eq!(
+            refresh(Some("http://127.0.0.1:5173/9f2c/")),
+            r#"<meta http-equiv="refresh" content="2;url=http://127.0.0.1:5173/9f2c/">"#
+        );
+    }
+
+    /// The URL reaches this page from a file in the user's checkout.
+    #[test]
+    fn cannot_be_talked_out_of_the_refresh_attribute() {
+        let escaped = refresh(Some(r#"http://127.0.0.1:1/" onload="x"#));
+        assert!(!escaped.contains(r#"" onload"#), "{escaped}");
+    }
 
     #[test]
     fn announces_the_authorization_url_as_a_single_json_line() {
