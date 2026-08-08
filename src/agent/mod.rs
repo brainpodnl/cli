@@ -247,6 +247,10 @@ struct Session {
     /// Where a running `agent serve` will push change events, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     events: Option<String>,
+    /// Whether the agent declared its steps up front. When it did, the rail is
+    /// its to write and nothing else may add to it.
+    #[serde(default)]
+    planned: bool,
     /// The chat this console belongs to, when the harness named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chat: Option<String>,
@@ -521,6 +525,7 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
     let session = Session {
         schema: SCHEMA,
         session: identifier,
+        planned: !args.steps.is_empty(),
         chat,
         owners: ancestry(),
         state: "running".to_owned(),
@@ -810,11 +815,36 @@ pub fn sink(stream: &str) -> Option<Sink> {
 /// Every call is best-effort and silent. A read-only checkout, a full disk, or
 /// no console at all must never be able to fail the command the user actually
 /// ran — they would be worse off than if the page had never existed.
+///
+/// The step an agent planned for this work is the one the user is already
+/// watching, so it is matched by its label as well as its id: an agent names
+/// its steps for the user and cannot be expected to guess the ids used here.
+/// Where the agent declared a plan and nothing matches, the note is dropped
+/// rather than added: the rail is the agent's to write, and a step appearing
+/// beneath the ones it declared reads as the workflow having grown a stage.
+/// Sessions started without a plan still collect these, which is the only way
+/// their console shows anything at all.
 pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
-    let _ = amend(|session| {
+    let _ = amend(|session| apply_note(session, id, label, state, detail));
+}
+
+fn apply_note(session: &mut Session, id: &str, label: &str, state: &str, detail: Option<&str>) {
+    {
         let now = now();
-        match session.steps.iter_mut().find(|step| step.id == id) {
-            Some(existing) => {
+        let existing = session
+            .steps
+            .iter()
+            .position(|step| step.id == id)
+            .or_else(|| {
+                session
+                    .steps
+                    .iter()
+                    .position(|step| step.label.eq_ignore_ascii_case(label))
+            });
+
+        match existing {
+            Some(index) => {
+                let existing = &mut session.steps[index];
                 if detail.is_some() {
                     existing.detail = detail.map(str::to_owned);
                 }
@@ -826,6 +856,7 @@ pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
                 }
                 existing.state = state.to_owned();
             }
+            None if session.planned => {}
             None => session.steps.push(Step {
                 id: id.to_owned(),
                 label: label.to_owned(),
@@ -835,7 +866,7 @@ pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
                 ended_at: matches!(state, "done" | "failed").then_some(now),
             }),
         }
-    });
+    }
 }
 
 /// Applies a change to the running session and stamps it as still alive.
@@ -1144,7 +1175,7 @@ pub fn render_clear(value: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        covers_console, locate, pod_url, slug, Owner, Session, DIRECTORY, LOG_FILE, SCHEMA,
+        covers_console, locate, pod_url, slug, Owner, Session, Step, DIRECTORY, LOG_FILE, SCHEMA,
         SESSION_FILE,
     };
     use std::fs;
@@ -1229,6 +1260,67 @@ mod tests {
         fs::write(flat.join(LOG_FILE), b"").unwrap();
 
         assert_eq!(locate(root.path(), Some("chat-a"), &[]).unwrap(), flat);
+    }
+
+    fn noted(session: &mut Session, id: &str, label: &str, state: &str) {
+        super::apply_note(session, id, label, state, None);
+    }
+
+    /// `image build` records its own step under the id `image`, but an agent
+    /// names its steps for the user and planned this one as something else.
+    #[test]
+    fn matches_a_planned_step_by_its_label() {
+        let mut session = Session {
+            planned: true,
+            steps: vec![Step {
+                id: "build".to_owned(),
+                label: "Packaging your app".to_owned(),
+                state: "pending".to_owned(),
+                detail: None,
+                started_at: None,
+                ended_at: None,
+            }],
+            ..Session::default()
+        };
+
+        noted(&mut session, "image", "Packaging your app", "running");
+        assert_eq!(session.steps.len(), 1);
+        assert_eq!(session.steps[0].id, "build");
+        assert_eq!(session.steps[0].state, "running");
+    }
+
+    #[test]
+    fn never_adds_to_a_plan_the_agent_declared() {
+        let mut session = Session {
+            planned: true,
+            steps: vec![Step {
+                id: "verify".to_owned(),
+                label: "Checking your site responds".to_owned(),
+                state: "pending".to_owned(),
+                detail: None,
+                started_at: None,
+                ended_at: None,
+            }],
+            ..Session::default()
+        };
+
+        noted(&mut session, "healthy", "Serving traffic", "done");
+        assert_eq!(session.steps.len(), 1);
+        assert_eq!(session.steps[0].label, "Checking your site responds");
+    }
+
+    /// Without a plan these notes are the only thing the console has to show.
+    #[test]
+    fn still_records_steps_when_no_plan_was_declared() {
+        let mut session = Session::default();
+
+        noted(&mut session, "image", "Packaging your app", "running");
+        noted(&mut session, "image", "Packaging your app", "done");
+        noted(&mut session, "healthy", "Serving traffic", "done");
+
+        let labels: Vec<&str> = session.steps.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, ["Packaging your app", "Serving traffic"]);
+        assert_eq!(session.steps[0].state, "done");
     }
 
     #[test]
