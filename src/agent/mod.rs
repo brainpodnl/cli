@@ -247,6 +247,10 @@ struct Session {
     /// Where a running `agent serve` will push change events, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     events: Option<String>,
+    /// Where a running `agent serve` answers, so a page outside the console can
+    /// hand its tab over to the live one instead of showing a snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    console: Option<String>,
     /// Whether the agent declared its steps up front. When it did, the rail is
     /// its to write and nothing else may add to it.
     #[serde(default)]
@@ -330,12 +334,16 @@ async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
         .route(&format!("/{secret}/events"), get(events))
         .with_state(directory.clone());
 
-    // Advertise the endpoint so a page opened as a local file can find it and
-    // upgrade from polling to push. Never cleared: the page falls back to
-    // polling when the stream drops, and no guard survives the kill that
-    // actually ends this process.
+    // Advertise where this server answers: a console page opened as a local
+    // file upgrades from polling to push, and the sign-in page hands its tab
+    // over. Never cleared, so readers must treat it as a claim and not a fact —
+    // no guard survives the kill that actually ends this process.
     let advertised = format!("{url}events");
-    let _ = amend_at(&directory, |session| session.events = Some(advertised));
+    let root = url.clone();
+    let _ = amend_at(&directory, |session| {
+        session.events = Some(advertised);
+        session.console = Some(root);
+    });
 
     announce(&url, json)?;
 
@@ -786,6 +794,30 @@ pub fn rail() -> Vec<RailStep> {
         steps.truncate(RAIL_SHOWN);
     }
     steps
+}
+
+/// Where the live console is answering, for a page that wants to hand over.
+///
+/// The sign-in page is the one the user is left looking at in a browser the
+/// agent cannot reach, so anything it renders itself is frozen the moment it is
+/// drawn. Where a server is up, the accurate thing to show is the console.
+pub fn console_url() -> Option<String> {
+    let directory = session_directory(None).ok()?;
+    let session = read_session(&directory).ok()?;
+    if session.state != "running" {
+        return None;
+    }
+    loopback(session.console.as_deref()?)
+}
+
+/// Accepts a console URL only where following it cannot leave this machine.
+///
+/// The session file sits in the user's checkout, so a committed one names
+/// whatever address its author chose, and a page that navigates on its word
+/// would send the user there straight after they signed in.
+fn loopback(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    (parsed.scheme() == "http" && parsed.host_str() == Some("127.0.0.1")).then(|| url.to_owned())
 }
 
 /// Whether this project has a session console worth reporting into.
@@ -1321,6 +1353,20 @@ mod tests {
         let labels: Vec<&str> = session.steps.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(labels, ["Packaging your app", "Serving traffic"]);
         assert_eq!(session.steps[0].state, "done");
+    }
+
+    /// The session file is a file in the user's checkout, and a page navigates
+    /// on what it says.
+    #[test]
+    fn follows_a_console_url_only_back_to_this_machine() {
+        assert_eq!(
+            super::loopback("http://127.0.0.1:5173/9f2c/").as_deref(),
+            Some("http://127.0.0.1:5173/9f2c/")
+        );
+        assert_eq!(super::loopback("http://example.com/9f2c/"), None);
+        assert_eq!(super::loopback("https://127.0.0.1:5173/9f2c/"), None);
+        assert_eq!(super::loopback("file:///etc/passwd"), None);
+        assert_eq!(super::loopback("http://127.0.0.1.example.com/"), None);
     }
 
     #[test]

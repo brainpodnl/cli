@@ -117,7 +117,8 @@ pub async fn login(
         return Err(error);
     }
 
-    finish_callback(request.response, Page::success(), shutdown_sender, server).await?;
+    let page = Page::success(handover().await);
+    finish_callback(request.response, page, shutdown_sender, server).await?;
 
     Client::try_new(api_endpoint, &token)?
         .get(&["v1", "me"], &[])
@@ -298,10 +299,11 @@ struct Page {
     badge_tone: &'static str,
     foot: &'static str,
     shape: Shape,
+    handover: Option<String>,
 }
 
 impl Page {
-    fn success() -> Self {
+    fn success(handover: Option<String>) -> Self {
         let rail = crate::agent::rail();
         if rail.is_empty() {
             return Self {
@@ -312,10 +314,11 @@ impl Page {
                 badge_tone: "",
                 foot: "Token stored in your Brainpod config",
                 shape: Shape::Human,
+                handover: None,
             };
         }
 
-        Self {
+        let mut page = Self {
             status: StatusCode::OK,
             headline: "Signed in.",
             lead: "Your agent has the session and is carrying on.",
@@ -323,7 +326,15 @@ impl Page {
             badge_tone: "",
             foot: "Waiting on your agent, not on you.",
             shape: Shape::Agent(rail),
+            handover: None,
+        };
+        if handover.is_some() {
+            page.lead =
+                "Your agent has the session and is carrying on. This tab is about to show it live.";
+            page.foot = "Opening the session console\u{2026}";
+            page.handover = handover;
         }
+        page
     }
 
     fn cancelled() -> Self {
@@ -335,6 +346,7 @@ impl Page {
             badge_tone: " is-warn",
             foot: "You can close this tab.",
             shape: Shape::Stopped,
+            handover: None,
         }
     }
 
@@ -347,6 +359,7 @@ impl Page {
             badge_tone: " is-fail",
             foot: "You can close this tab.",
             shape: Shape::Stopped,
+            handover: None,
         }
     }
 
@@ -359,6 +372,7 @@ impl Page {
             badge_tone: " is-fail",
             foot: "You can close this tab.",
             shape: Shape::Stopped,
+            handover: None,
         }
     }
 
@@ -371,6 +385,7 @@ impl Page {
             badge_tone: " is-fail",
             foot: "You can close this tab.",
             shape: Shape::Stopped,
+            handover: None,
         }
     }
 }
@@ -398,6 +413,42 @@ fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The live session console, if one answers.
+///
+/// Probed rather than trusted: `agent serve` advertises its URL in the session
+/// file and never withdraws it, since no guard survives the kill that ends that
+/// process. Sending the browser to an address nobody is listening on would turn
+/// the one page confirming the sign-in into a connection error.
+async fn handover() -> Option<String> {
+    let url = crate::agent::console_url()?;
+    let http = reqwest::Client::builder()
+        .timeout(HANDOVER_PROBE)
+        .build()
+        .ok()?;
+    let answered = http.get(&url).send().await.ok()?.status().is_success();
+    answered.then_some(url)
+}
+
+/// A loopback server either answers immediately or is not there.
+const HANDOVER_PROBE: Duration = Duration::from_millis(500);
+
+/// Hands this tab to the live console, after a beat.
+///
+/// The beat is the point. This page is the only confirmation the user gets that
+/// signing in worked, and a navigation they never see reads as the click having
+/// done nothing.
+fn refresh(handover: Option<&str>) -> String {
+    handover
+        .map(|url| {
+            format!(
+                r#"<meta http-equiv="refresh" content="2;url={}">"#,
+                escape(url)
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn rail_html(steps: &[crate::agent::RailStep]) -> String {
@@ -472,6 +523,7 @@ impl IntoResponse for Page {
             concat!(
                 r#"<!doctype html><html lang="en"><head><meta charset="utf-8">"#,
                 r#"<meta name="viewport" content="width=device-width,initial-scale=1">"#,
+                "{refresh}",
                 "<title>{headline} — Brainpod</title><style>{style}</style></head><body>",
                 "{burst}",
                 r#"<main class="card"><div class="chrome">{mark}<span class="wordmark">Brainpod</span>"#,
@@ -481,6 +533,7 @@ impl IntoResponse for Page {
                 r#"<a class="sep" href="https://brainpod.io">brainpod.io &rarr;</a></div></main>"#,
                 "</body></html>"
             ),
+            refresh = refresh(self.handover.as_deref()),
             headline = self.headline,
             style = STYLE,
             burst = burst,
@@ -512,8 +565,24 @@ impl IntoResponse for Page {
 mod tests {
     use super::{
         Callback, CallbackQuery, LoginOptions, authorization_notice, authorization_url,
-        parse_callback_query,
+        parse_callback_query, refresh,
     };
+
+    #[test]
+    fn hands_the_tab_over_only_when_a_console_answers() {
+        assert!(refresh(None).is_empty());
+        assert_eq!(
+            refresh(Some("http://127.0.0.1:5173/9f2c/")),
+            r#"<meta http-equiv="refresh" content="2;url=http://127.0.0.1:5173/9f2c/">"#
+        );
+    }
+
+    /// The URL reaches this page from a file in the user's checkout.
+    #[test]
+    fn cannot_be_talked_out_of_the_refresh_attribute() {
+        let escaped = refresh(Some(r#"http://127.0.0.1:1/" onload="x"#));
+        assert!(!escaped.contains(r#"" onload"#), "{escaped}");
+    }
 
     #[test]
     fn announces_the_authorization_url_as_a_single_json_line() {
