@@ -4,6 +4,7 @@ use std::io::{self, BufRead as _, Write as _};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
@@ -16,6 +17,7 @@ use axum::routing::get;
 use clap::{Args, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 
 use crate::output::{CommandOutput, View};
@@ -40,10 +42,50 @@ const SESSION_FILE: &str = "session.json";
 const IGNORE_ENTRY: &str = ".brainpod/";
 const IGNORE_COMMENT: &str = "# Brainpod session console";
 
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 const LOG_FILE: &str = "session.log";
 /// Enough for the user to see where this is going without becoming a wall.
 const RAIL_SHOWN: usize = 6;
+/// Environment variables that name the chat this process was launched from, in
+/// the order they are trusted. Every one of them is set by the harness itself,
+/// so none of them can be relied on being present.
+const CHAT_VARIABLES: [&str; 3] = [
+    "BRAINPOD_AGENT_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_THREAD_ID",
+];
+
+/// The `--session` value, once the top-level parser has seen it.
+///
+/// A global rather than a threaded argument because `image build` mirrors its
+/// output into the console through [`sink`], several layers below anything
+/// holding the parsed options.
+static SESSION_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
+
+pub fn configure(session: Option<String>) {
+    let _ = SESSION_OVERRIDE.set(session.filter(|value| !value.trim().is_empty()));
+}
+
+/// The chat this process belongs to, if anything says so.
+///
+/// `None` is ordinary: Cursor exposes no such value today, and a harness that
+/// gains one later only needs adding to [`CHAT_VARIABLES`].
+fn chat_id() -> Option<String> {
+    if let Some(Some(session)) = SESSION_OVERRIDE.get() {
+        return Some(session.clone());
+    }
+    CHAT_VARIABLES
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+/// A chat identifier reduced to something safe to name a directory.
+fn slug(chat: &str) -> String {
+    let digest = Sha256::digest(chat.as_bytes());
+    digest[..6].iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 #[derive(Debug, Args)]
 pub struct AgentArgs {
@@ -105,6 +147,9 @@ struct ScopeArgs {
     /// Directory holding the console; defaults to the repository root
     #[arg(long, value_name = "DIR")]
     path: Option<PathBuf>,
+    /// Remove every chat's console in this project, not just this chat's
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Debug, Args)]
@@ -202,6 +247,20 @@ struct Session {
     /// Where a running `agent serve` will push change events, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     events: Option<String>,
+    /// The chat this console belongs to, when the harness named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat: Option<String>,
+    /// The processes `start` ran under, so later commands can find their way
+    /// back here without carrying an identifier.
+    #[serde(default)]
+    owners: Vec<Owner>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Owner {
+    pid: u32,
+    since: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -432,7 +491,15 @@ async fn session_state(State(directory): State<PathBuf>) -> Response {
 /// cannot leave the previous deploy's steps showing underneath the new one.
 fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result<CommandOutput> {
     let root = project_root(args.path)?;
-    let directory = root.join(DIRECTORY);
+    prune(&root);
+
+    // A chat that names itself gets a stable directory across restarts; one that
+    // does not still gets its own, it just cannot be rejoined by name later.
+    let chat = chat_id();
+    let identifier = identifier()?;
+    let directory = root
+        .join(DIRECTORY)
+        .join(chat.as_deref().map_or_else(|| identifier.clone(), slug));
     fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
 
@@ -453,7 +520,9 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
     let now = now();
     let session = Session {
         schema: SCHEMA,
-        session: identifier()?,
+        session: identifier,
+        chat,
+        owners: ancestry(),
         state: "running".to_owned(),
         started_at: now,
         updated_at: now,
@@ -621,14 +690,25 @@ fn finish(args: FinishArgs) -> Result<CommandOutput> {
     Ok(summary(&session))
 }
 
+/// Removes this chat's console, or every chat's with `--all`.
+///
+/// Scoped by default because another chat may be mid-deploy in the same
+/// checkout, and its console is the only thing reporting that to anyone.
 fn clear(args: ScopeArgs) -> Result<CommandOutput> {
-    let root = project_root(args.path)?;
-    let directory = root.join(DIRECTORY);
+    let root = project_root(args.path.clone())?;
+    let directory = if args.all {
+        root.join(DIRECTORY)
+    } else {
+        session_directory(args.path)?
+    };
+
     let existed = directory.exists();
     if existed {
         fs::remove_dir_all(&directory)
             .with_context(|| format!("failed to remove {}", directory.display()))?;
     }
+    // Leaving .brainpod/ behind empty reads as a console that is still there.
+    let _ = fs::remove_dir(root.join(DIRECTORY));
 
     Ok(CommandOutput::new(
         json!({
@@ -637,6 +717,22 @@ fn clear(args: ScopeArgs) -> Result<CommandOutput> {
         }),
         View::AgentClear,
     ))
+}
+
+/// Drops finished sessions once they are old enough to be nobody's page.
+///
+/// Without this every chat leaves a directory behind for good. Sessions still
+/// marked running are left alone however old they look: a long deploy that
+/// stopped heartbeating is exactly the one somebody is still staring at.
+fn prune(root: &Path) {
+    const KEEP: u64 = 1000 * 60 * 60 * 24 * 3;
+
+    let cutoff = now().saturating_sub(KEEP);
+    for (path, session) in sessions(root) {
+        if session.state != "running" && session.updated_at < cutoff {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
 }
 
 /// One step as a page outside the console needs to draw it.
@@ -653,10 +749,10 @@ pub struct RailStep {
 /// end. Empty when there is no session, which is also how the caller knows
 /// nobody is driving this but the user.
 pub fn rail() -> Vec<RailStep> {
-    let Ok(root) = project_root(None) else {
+    let Ok(directory) = session_directory(None) else {
         return Vec::new();
     };
-    let Ok(session) = read_session(&root.join(DIRECTORY)) else {
+    let Ok(session) = read_session(&directory) else {
         return Vec::new();
     };
     if session.state != "running" {
@@ -692,8 +788,8 @@ pub fn rail() -> Vec<RailStep> {
 /// Callers use it to decide whether capturing a command's output is worth its
 /// cost, so it checks only that the file is there rather than parsing it.
 pub fn is_active() -> bool {
-    project_root(None)
-        .map(|root| root.join(DIRECTORY).join(SESSION_FILE).exists())
+    session_directory(None)
+        .map(|directory| directory.join(SESSION_FILE).exists())
         .unwrap_or(false)
 }
 
@@ -702,7 +798,7 @@ pub fn is_active() -> bool {
 /// Best-effort like the rest: a caller that gets `None` simply has nowhere to
 /// mirror its output, which must never be a reason to fail their command.
 pub fn sink(stream: &str) -> Option<Sink> {
-    let directory = project_root(None).ok()?.join(DIRECTORY);
+    let directory = session_directory(None).ok()?;
     if !directory.join(SESSION_FILE).exists() {
         return None;
     }
@@ -747,7 +843,7 @@ pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
 /// Callers in a polling loop double as the heartbeat: without a recent
 /// `updatedAt` the page cannot tell a slow deploy from an abandoned one.
 fn amend(change: impl FnOnce(&mut Session)) -> Result<()> {
-    amend_at(&project_root(None)?.join(DIRECTORY), change)
+    amend_at(&session_directory(None)?, change)
 }
 
 fn amend_at(directory: &Path, change: impl FnOnce(&mut Session)) -> Result<()> {
@@ -777,6 +873,44 @@ fn summary(session: &Session) -> CommandOutput {
     )
 }
 
+/// This process's ancestors, nearest first.
+///
+/// The chain is what links a sub-agent back to the session its supervisor
+/// started. Sub-agents are not guaranteed to inherit any of [`CHAT_VARIABLES`]
+/// — some harnesses give a spawned agent an identifier of its own — but they do
+/// run under the same harness process, and that is what this finds.
+///
+/// Each entry carries the process start time as well, so a recycled pid cannot
+/// be mistaken for the process that opened the session.
+fn ancestry() -> Vec<Owner> {
+    let mut pid = std::process::id();
+    let mut chain = Vec::new();
+    // Deep enough for any harness worth supporting, and a hard stop in case a
+    // platform ever reports a cycle.
+    for _ in 0..16 {
+        if pid <= 1 {
+            break;
+        }
+        let Some((parent, since)) = process_parent(pid) else {
+            break;
+        };
+        chain.push(Owner { pid, since });
+        pid = parent;
+    }
+    chain
+}
+
+fn process_parent(pid: u32) -> Option<(u32, String)> {
+    let output = Process::new("ps")
+        .args(["-o", "ppid=,lstart=", "-p", &pid.to_string()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = String::from_utf8(output.stdout).ok()?;
+    let (parent, since) = text.trim().split_once(char::is_whitespace)?;
+    Some((parent.trim().parse().ok()?, since.trim().to_owned()))
+}
+
 /// Resolves the directory the console lives in.
 ///
 /// The repository root rather than the working directory, so a command run from
@@ -802,15 +936,83 @@ fn project_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
+/// Every session directory under this project, newest first.
+fn sessions(root: &Path) -> Vec<(PathBuf, Session)> {
+    let mut found: Vec<(PathBuf, Session)> = fs::read_dir(root.join(DIRECTORY))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter_map(|path| read_session(&path).ok().map(|session| (path, session)))
+        .collect();
+    found.sort_by_key(|(_, session)| std::cmp::Reverse(session.started_at));
+    found
+}
+
+/// Finds the session this invocation belongs to, without ever creating one.
+///
+/// Only `start` creates a session, which is what keeps a mislaid identifier
+/// cheap: the worst it can do is fail to find the console, never quietly open a
+/// second one that nobody is watching. The chain runs from most to least
+/// certain, and stops rather than choosing between equals.
 fn session_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {
-    let directory = project_root(explicit)?.join(DIRECTORY);
-    if !directory.join(SESSION_FILE).exists() {
-        return Err(anyhow!(
-            "no session console in {}; run `brainpod agent start` first",
-            directory.display()
-        ));
+    locate(&project_root(explicit)?, chat_id().as_deref(), &ancestry())
+}
+
+fn locate(root: &Path, chat: Option<&str>, ancestry: &[Owner]) -> Result<PathBuf> {
+    let directory = root.join(DIRECTORY);
+
+    // Layouts written before sessions were separated keep the console loose in
+    // .brainpod/, and an upgrade mid-workflow must not strand it.
+    if directory.join(SESSION_FILE).exists() {
+        return Ok(directory);
     }
-    Ok(directory)
+
+    let found = sessions(root);
+    if let Some(chat) = chat {
+        let wanted = directory.join(slug(chat));
+        if wanted.join(SESSION_FILE).exists() {
+            return Ok(wanted);
+        }
+    }
+
+    // Nearest ancestor wins: two chats in one editor share the application
+    // process further up, and matching that would put both in one console. A
+    // step that matches more than one session is that shared process, and no
+    // step above it can separate them again, so stop rather than guess.
+    for step in ancestry {
+        let mut matched = found
+            .iter()
+            .filter(|(_, session)| session.owners.iter().any(|owner| owner == step));
+        match (matched.next(), matched.next()) {
+            (Some((path, _)), None) => return Ok(path.clone()),
+            (Some(_), Some(_)) => break,
+            _ => {}
+        }
+    }
+
+    let mut live = found.iter().filter(|(_, session)| session.state == "running");
+    match (live.next(), live.next()) {
+        (Some((path, _)), None) => return Ok(path.clone()),
+        (Some(_), Some(_)) => {
+            return Err(anyhow!(
+                "{} sessions are running in {}; pass --session <id> to say which one",
+                found.len(),
+                directory.display()
+            ));
+        }
+        _ => {}
+    }
+
+    if let [(path, _)] = found.as_slice() {
+        return Ok(path.clone());
+    }
+
+    Err(anyhow!(
+        "no session console in {}; run `brainpod agent start` first",
+        directory.display()
+    ))
 }
 
 fn read_session(directory: &Path) -> Result<Session> {
@@ -941,7 +1143,99 @@ pub fn render_clear(value: &Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{covers_console, pod_url};
+    use super::{
+        covers_console, locate, pod_url, slug, Owner, Session, DIRECTORY, LOG_FILE, SCHEMA,
+        SESSION_FILE,
+    };
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn plant(root: &Path, name: &str, state: &str, owners: &[Owner], started_at: u64) {
+        let directory = root.join(DIRECTORY).join(name);
+        fs::create_dir_all(&directory).unwrap();
+        let session = Session {
+            schema: SCHEMA,
+            session: name.to_owned(),
+            state: state.to_owned(),
+            started_at,
+            owners: owners.to_vec(),
+            ..Session::default()
+        };
+        fs::write(
+            directory.join(SESSION_FILE),
+            serde_json::to_vec(&session).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn owner(pid: u32) -> Owner {
+        Owner {
+            pid,
+            since: "Sat Aug  8 11:44:33 2026".to_owned(),
+        }
+    }
+
+    #[test]
+    fn finds_the_session_named_by_the_chat() {
+        let root = TempDir::new().unwrap();
+        plant(root.path(), &slug("chat-a"), "running", &[], 1);
+        plant(root.path(), &slug("chat-b"), "running", &[], 2);
+
+        let found = locate(root.path(), Some("chat-a"), &[]).unwrap();
+        assert_eq!(found, root.path().join(DIRECTORY).join(slug("chat-a")));
+    }
+
+    /// A sub-agent handed an identifier of its own still belongs to the session
+    /// its supervisor started, and the shared process is what proves it.
+    #[test]
+    fn falls_back_to_the_process_that_started_the_session() {
+        let root = TempDir::new().unwrap();
+        plant(root.path(), &slug("chat-a"), "running", &[owner(41)], 1);
+        plant(root.path(), &slug("chat-b"), "running", &[owner(42)], 2);
+
+        let found = locate(root.path(), Some("sub-agent"), &[owner(99), owner(41)]).unwrap();
+        assert_eq!(found, root.path().join(DIRECTORY).join(slug("chat-a")));
+    }
+
+    /// The ancestry two chats share is the editor, not either chat.
+    #[test]
+    fn refuses_the_process_both_sessions_share() {
+        let root = TempDir::new().unwrap();
+        plant(root.path(), &slug("chat-a"), "running", &[owner(7)], 1);
+        plant(root.path(), &slug("chat-b"), "running", &[owner(7)], 2);
+
+        let error = locate(root.path(), None, &[owner(7)]).unwrap_err().to_string();
+        assert!(error.contains("--session"), "{error}");
+    }
+
+    #[test]
+    fn takes_the_only_running_session_when_nothing_identifies_the_chat() {
+        let root = TempDir::new().unwrap();
+        plant(root.path(), "solo", "running", &[], 1);
+        plant(root.path(), "over", "done", &[], 2);
+
+        let found = locate(root.path(), None, &[]).unwrap();
+        assert_eq!(found, root.path().join(DIRECTORY).join("solo"));
+    }
+
+    /// An upgrade mid-workflow must not strand the console already on screen.
+    #[test]
+    fn keeps_reading_a_console_written_before_sessions_were_separated() {
+        let root = TempDir::new().unwrap();
+        let flat = root.path().join(DIRECTORY);
+        fs::create_dir_all(&flat).unwrap();
+        fs::write(flat.join(SESSION_FILE), b"{\"schema\":2,\"session\":\"old\"}").unwrap();
+        fs::write(flat.join(LOG_FILE), b"").unwrap();
+
+        assert_eq!(locate(root.path(), Some("chat-a"), &[]).unwrap(), flat);
+    }
+
+    #[test]
+    fn slugs_are_stable_and_distinct() {
+        assert_eq!(slug("chat-a"), slug("chat-a"));
+        assert_ne!(slug("chat-a"), slug("chat-b"));
+    }
 
     #[test]
     fn recognises_existing_ignore_entries() {
