@@ -1,5 +1,5 @@
 use std::fmt;
-use std::fs::Permissions;
+use std::fs::{self, Permissions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -221,6 +221,64 @@ async fn build_dockerfile(
     Ok(destination)
 }
 
+/// Dependency trees the build installs for itself, and must not take from the
+/// developer's machine.
+///
+/// Railpack layers the build context over its own install step, so whatever is
+/// in the working copy wins. A `node_modules` carried in from a laptop puts
+/// darwin/arm64 binaries — Tailwind's oxide, lightningcss — into a linux/amd64
+/// image, where the build that follows fails on them. Both directories are
+/// rebuilt from the lockfile in the container regardless, so nothing is lost by
+/// refusing the host's copy.
+const HOST_DEPENDENCIES: [&str; 2] = ["node_modules", ".venv"];
+
+/// Keeps the build context from overwriting what the install step produced.
+///
+/// A `.dockerignore` in the project already does this and is still honoured,
+/// but most projects do not have one — `node_modules` being in `.gitignore`
+/// looks like it should be enough and is not — so the plan carries the
+/// exclusions itself.
+fn exclude_host_dependencies(plan: &Path) -> Result<()> {
+    let contents = fs::read(plan)
+        .with_context(|| format!("failed to read the Railpack plan {}", plan.display()))?;
+    let mut document: Value =
+        serde_json::from_slice(&contents).context("Railpack plan is not valid JSON")?;
+
+    let inputs = document
+        .get_mut("steps")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .filter_map(|step| step.get_mut("inputs"))
+        .filter_map(Value::as_array_mut)
+        .flatten();
+
+    for input in inputs {
+        if input.get("local") != Some(&Value::Bool(true)) {
+            continue;
+        }
+        let Some(input) = input.as_object_mut() else {
+            continue;
+        };
+        let excludes = input
+            .entry("exclude")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let Some(excludes) = excludes.as_array_mut() else {
+            continue;
+        };
+        for path in HOST_DEPENDENCIES {
+            if !excludes.iter().any(|value| value.as_str() == Some(path)) {
+                excludes.push(Value::String(path.to_owned()));
+            }
+        }
+    }
+
+    let updated = serde_json::to_vec(&document).context("failed to re-encode the Railpack plan")?;
+    fs::write(plan, updated)
+        .with_context(|| format!("failed to write the Railpack plan {}", plan.display()))?;
+    Ok(())
+}
+
 async fn build_railpack(
     context: &Path,
     temporary: &TempDir,
@@ -238,6 +296,7 @@ async fn build_railpack(
         "Railpack plan generation",
     )
     .await?;
+    exclude_host_dependencies(&plan)?;
 
     let base_layout = temporary.path().join("base");
     eprintln!("Building image with Railpack");
@@ -831,9 +890,47 @@ fn validate_tag(tag: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BuildMethod, resolve_method, validate_namespace, validate_repository, validate_tag,
-        verify_digest,
+        BuildMethod, exclude_host_dependencies, resolve_method, validate_namespace,
+        validate_repository, validate_tag, verify_digest,
     };
+
+    fn patched(plan: serde_json::Value) -> serde_json::Value {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), serde_json::to_vec(&plan).unwrap()).unwrap();
+        exclude_host_dependencies(file.path()).unwrap();
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap()
+    }
+
+    /// The build context is layered over the install step, so a `node_modules`
+    /// from the developer's machine would overwrite the one built for the
+    /// target platform.
+    #[test]
+    fn refuses_host_dependency_trees_from_the_build_context() {
+        let plan = patched(serde_json::json!({
+            "steps": [{
+                "name": "build",
+                "inputs": [{"step": "install"}, {"local": true, "include": ["."]}],
+            }],
+        }));
+
+        let excluded = &plan["steps"][0]["inputs"][1]["exclude"];
+        assert_eq!(excluded, &serde_json::json!(["node_modules", ".venv"]));
+        assert!(plan["steps"][0]["inputs"][0].get("exclude").is_none());
+    }
+
+    #[test]
+    fn keeps_exclusions_the_plan_already_carried() {
+        let plan = patched(serde_json::json!({
+            "steps": [{
+                "inputs": [{"local": true, "include": ["."], "exclude": [".git", "node_modules"]}],
+            }],
+        }));
+
+        assert_eq!(
+            plan["steps"][0]["inputs"][0]["exclude"],
+            serde_json::json!([".git", "node_modules", ".venv"])
+        );
+    }
 
     #[cfg(unix)]
     use super::run_command_with_timeout;
