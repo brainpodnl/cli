@@ -136,6 +136,7 @@
     session = state.session;
     tail.at = 0;
     tail.text = "";
+    tail.seen = 0;
     tail.decoder = new TextDecoder();
     flared = false;
     rail.innerHTML = "";
@@ -191,7 +192,11 @@
      ./session.log is the sibling file when opened locally and a served route
      when it is not. One log rather than one per source, because separate files
      carry no timestamps and nothing could put them back in order. */
-  const tail = { at: 0, text: "", busy: false, decoder: new TextDecoder() };
+  /* `seen` is when the log last grew. Output arriving is proof the workflow is
+     alive, and during a long build or push it is the only proof there is: the
+     session file is only rewritten when a step changes, which can be minutes
+     apart while plenty is happening. */
+  const tail = { at: 0, text: "", busy: false, seen: 0, decoder: new TextDecoder() };
 
   async function readLog() {
     if (tail.busy) return;
@@ -219,11 +224,15 @@
       /* Offsets are byte counts; a JS string length is not one once anything
          outside ASCII shows up in a build log. */
       const range = response.headers.get("Content-Range");
-      tail.at = range
+      const size = range
         ? Number(range.split("/")[1])
         : partial
           ? tail.at + buffer.byteLength
           : buffer.byteLength;
+      /* Growth, not arrival: read whole from a file:// page, every poll returns
+         the same bytes again and would look like activity forever. */
+      if (size > tail.at) tail.seen = Date.now();
+      tail.at = size;
 
       if (tail.text.length > 400000) tail.text = tail.text.slice(-400000);
       render();
@@ -254,7 +263,8 @@
   function paint(state) {
     if (state.session !== session) reset(state);
 
-    const stalled = state.state === "running" && Date.now() - state.updatedAt > STALE_AFTER;
+    const alive = Math.max(state.updatedAt, tail.seen);
+    const stalled = state.state === "running" && Date.now() - alive > STALE_AFTER;
     const run = stalled ? "stalled" : state.state;
     body.dataset.run = run;
     el("badge").className = "badge" + (run === "failed" ? " is-fail" : run === "stalled" ? " is-warn" : "");
@@ -281,7 +291,7 @@
       burst.style.display = "none";
     } else if (stalled) {
       el("foot").textContent =
-        "Last update " + Math.round((Date.now() - state.updatedAt) / 1000) + "s ago.";
+        "Last update " + Math.round((Date.now() - alive) / 1000) + "s ago.";
       burst.style.display = "none";
     } else {
       el("headline").textContent = running ? running.label : "Getting started.";
