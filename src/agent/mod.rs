@@ -334,10 +334,10 @@ async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
         .route(&format!("/{secret}/events"), get(events))
         .with_state(directory.clone());
 
-    // Advertise where this server answers: a console page opened as a local
-    // file upgrades from polling to push, and the sign-in page hands its tab
-    // over. Never cleared, so readers must treat it as a claim and not a fact —
-    // no guard survives the kill that actually ends this process.
+    // Advertise where this server answers: the console page upgrades from
+    // polling to push where its own origin allows the stream, and the sign-in
+    // page hands its tab over. Never cleared, so readers must treat it as a
+    // claim and not a fact — no guard survives the kill that ends this process.
     let advertised = format!("{url}events");
     let root = url.clone();
     let _ = amend_at(&directory, |session| {

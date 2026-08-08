@@ -124,7 +124,7 @@
   const blade = el("blade"), segments = el("segments"), burst = el("burst");
   const landing = el("landing"), visit = el("visit");
 
-  let session = null, flared = false, latest = null, pushed = null, drawn = "";
+  let session = null, flared = false, latest = null, pushed = null, refused = null, drawn = "";
 
   const escape = (text) => {
     const node = document.createElement("div");
@@ -313,12 +313,23 @@
   /* Push where a server is running, polling everywhere else. The events only
      say something moved; the page then re-reads exactly what it reads when
      polling, so there is one code path either way. */
+  /* A stream that never opened is not one to keep trying. Opened as a local
+     file this page is a different origin from the server, and the browser will
+     refuse the stream every time it is offered — which, without this, is every
+     poll for as long as the console is up. One that opened and then dropped is
+     a server restart, and worth reconnecting to. */
   function listen(url) {
-    if (pushed === url) return;
+    if (pushed === url || refused === url) return;
     pushed = url;
+    let opened = false;
     const source = new EventSource(url);
+    source.onopen = () => { opened = true; };
     source.onmessage = refresh;
-    source.onerror = () => { source.close(); pushed = null; };
+    source.onerror = () => {
+      source.close();
+      pushed = null;
+      if (!opened) refused = url;
+    };
   }
 
   async function loop() {
