@@ -1,8 +1,85 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/hero-dark.gif">
+  <img src=".github/hero.gif" alt="Brainpod — build it in Claude, Cursor or Codex, host it in Europe" width="900">
+</picture>
+
 # Brainpod CLI
 
 A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login and event watches use NDJSON.
 
 The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
+
+## Install
+
+Published releases carry a prebuilt binary for Linux and macOS on amd64 and arm64. There is no Windows build; under WSL2, use the Linux asset. Pick the asset for your platform:
+
+| `uname -s` | `uname -m` | Asset |
+|---|---|---|
+| `Linux` | `x86_64` | `brainpod-amd64-linux.tar.gz` |
+| `Linux` | `aarch64` or `arm64` | `brainpod-arm64-linux.tar.gz` |
+| `Darwin` | `x86_64` | `brainpod-amd64-macos.tar.gz` |
+| `Darwin` | `arm64` | `brainpod-arm64-macos.tar.gz` |
+
+Download it alongside the checksum file and verify it before extracting. The `latest` alias redirects to the newest published release:
+
+```sh
+curl -fsSL -O https://github.com/brainpodnl/cli/releases/latest/download/brainpod-arm64-macos.tar.gz
+curl -fsSL -O https://github.com/brainpodnl/cli/releases/latest/download/SHA256SUMS
+shasum -a 256 --ignore-missing -c SHA256SUMS
+tar -xzf brainpod-arm64-macos.tar.gz
+```
+
+Use `sha256sum --ignore-missing -c SHA256SUMS` on Linux. The archive contains a single `brainpod` binary; make it executable and move it into a directory already on your `PATH`. The macOS binaries are not notarized yet, so clear the quarantine attribute if Gatekeeper blocks one:
+
+```sh
+xattr -d com.apple.quarantine brainpod
+```
+
+Confirm the install with a command that needs no API token:
+
+```sh
+brainpod describe
+```
+
+Building from source needs Nix; this is the same build the release workflow runs:
+
+```sh
+nix build
+```
+
+`nix develop` gives you the toolchain, `rustfmt`, and `rust-analyzer` for working on the CLI itself. `direnv` picks up the same shell through `.envrc`.
+
+## Quick start
+
+Authenticate and create a pod. The create response reports the pod's name; store it as the default so later commands do not need `--pod`:
+
+```sh
+brainpod login
+brainpod pod create --display-name "My API"
+brainpod config set pod <pod>
+```
+
+Build the application image from the current directory and push it to the pod's registry namespace. This needs Docker with Buildx; the result includes a digest-pinned reference to use as an App resource's `spec.image`:
+
+```sh
+brainpod image build api . --tag v1
+```
+
+Compose the resources the application needs, then promote the draft revision and wait until every resource reports healthy:
+
+```sh
+brainpod describe resource app --json
+brainpod resource create --file resources.json
+brainpod deploy --summary "First deploy" --wait
+```
+
+Resource create only changes the pod's mutable head; nothing runs until `deploy` promotes it. Follow the application's logs with the URN the resource commands return:
+
+```sh
+brainpod events --watch --resource urn:brain:app:default:api
+```
+
+If you would rather have a coding agent drive this, the [Brainpod skills](https://github.com/brainpodnl/skills) repository teaches Claude Code, Cursor, and Codex to sign up, compose the resource graph, and deploy a project end to end.
 
 ## Configuration
 
