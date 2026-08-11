@@ -155,6 +155,12 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         None
     };
 
+    if let Some(pod) = pod.as_deref()
+        && cmd::needs_client(&opts.command)
+    {
+        agent::adopt(pod, &dashboard_endpoint);
+    }
+
     cmd::handle(
         opts.command,
         client.as_ref(),

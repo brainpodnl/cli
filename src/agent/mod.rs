@@ -542,8 +542,9 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
     let now = now();
 
     let state = args.state.to_string();
-    match session.steps.iter_mut().find(|step| step.id == args.id) {
-        Some(existing) => {
+    let reached = match session.steps.iter().position(|step| step.id == args.id) {
+        Some(index) => {
+            let existing = &mut session.steps[index];
             if let Some(label) = args.label {
                 existing.label = label;
             }
@@ -557,6 +558,7 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
                 existing.ended_at = Some(now);
             }
             existing.state = state;
+            index
         }
         None => {
             let label = args.label.ok_or_else(|| {
@@ -573,12 +575,29 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
                 started_at: (args.state != StepState::Pending).then_some(now),
                 ended_at: matches!(args.state, StepState::Done | StepState::Failed).then_some(now),
             });
+            session.steps.len() - 1
         }
-    }
+    };
+    advance(&mut session, reached);
 
     session.updated_at = now;
     write_session(&directory, &session)?;
     Ok(summary(&session))
+}
+
+/// Closes the steps a plan has already been carried past.
+///
+/// Steps are declared in the order they run, so recording one means the ones
+/// above it are behind you whether or not anyone said so. Without this a step
+/// nobody recorded sits pending underneath steps that have finished, which
+/// reads as a console that stopped following along. No timings: they were
+/// inferred, and a duration nobody measured would be a fabrication.
+fn advance(session: &mut Session, reached: usize) {
+    for step in &mut session.steps[..reached] {
+        if step.state == "pending" {
+            step.state = "done".to_owned();
+        }
+    }
 }
 
 fn log(args: LogArgs) -> Result<CommandOutput> {
@@ -643,12 +662,18 @@ fn finish(args: FinishArgs) -> Result<CommandOutput> {
     let now = now();
 
     for step in &mut session.steps {
-        if step.state == "running" {
-            step.state = match args.state {
-                Outcome::Done => "done".to_owned(),
-                Outcome::Failed => "failed".to_owned(),
-            };
-            step.ended_at = Some(now);
+        match step.state.as_str() {
+            "running" => {
+                step.state = match args.state {
+                    Outcome::Done => "done".to_owned(),
+                    Outcome::Failed => "failed".to_owned(),
+                };
+                step.ended_at = Some(now);
+            }
+            // A session that finished cleanly got through everything it planned.
+            // One that failed did not, so those steps stay as they are.
+            "pending" if matches!(args.state, Outcome::Done) => step.state = "done".to_owned(),
+            _ => {}
         }
     }
 
@@ -741,6 +766,28 @@ pub fn rail() -> Vec<RailStep> {
     steps
 }
 
+/// Names the pod on a console that was opened before there was one.
+///
+/// A first deploy has to open the console before `pod create` runs, so the page
+/// starts with no pod to show and no link to leave the user at the end. Every
+/// command after that carries the resolved pod, and the first one fills it in.
+pub fn adopt(pod: &str, dashboard_endpoint: &str) {
+    let Ok(directory) = session_directory(None) else {
+        return;
+    };
+    let Ok(session) = read_session(&directory) else {
+        return;
+    };
+    if session.pod.is_some() {
+        return;
+    }
+
+    let _ = amend_at(&directory, |session| {
+        session.pod = Some(pod.to_owned());
+        session.pod_url = Some(pod_url(dashboard_endpoint, pod));
+    });
+}
+
 /// Where the live console is answering, for a page that wants to hand over.
 pub fn console_url() -> Option<String> {
     let directory = session_directory(None).ok()?;
@@ -798,6 +845,9 @@ fn apply_note(session: &mut Session, id: &str, label: &str, state: &str, detail:
                     .position(|step| step.label.eq_ignore_ascii_case(label))
             });
 
+        if let Some(index) = existing {
+            advance(session, index);
+        }
         match existing {
             Some(index) => {
                 let existing = &mut session.steps[index];
@@ -945,6 +995,11 @@ fn locate(root: &Path, chat: Option<&str>, ancestry: &[Owner]) -> Result<PathBuf
         let wanted = directory.join(slug(chat));
         if wanted.join(SESSION_FILE).exists() {
             return Ok(wanted);
+        }
+        // The identifier `start` prints is the one the ambiguity error asks for,
+        // so it has to resolve here too and not only as a chat name.
+        if let Some((path, _)) = found.iter().find(|(_, session)| session.session == chat) {
+            return Ok(path.clone());
         }
     }
 
@@ -1262,6 +1317,58 @@ mod tests {
         assert_eq!(super::loopback("https://127.0.0.1:5173/9f2c/"), None);
         assert_eq!(super::loopback("file:///etc/passwd"), None);
         assert_eq!(super::loopback("http://127.0.0.1.example.com/"), None);
+    }
+
+    #[test]
+    fn finds_the_session_by_the_identifier_start_printed() {
+        let root = TempDir::new().unwrap();
+        plant(root.path(), "aaa", "running", &[], 1);
+        plant(root.path(), "bbb", "running", &[], 2);
+
+        let found = locate(root.path(), Some("bbb"), &[]).unwrap();
+        assert_eq!(found, root.path().join(DIRECTORY).join("bbb"));
+    }
+
+    fn planned(ids: &[&str]) -> Session {
+        Session {
+            planned: true,
+            steps: ids
+                .iter()
+                .map(|id| Step {
+                    id: (*id).to_owned(),
+                    label: (*id).to_owned(),
+                    state: "pending".to_owned(),
+                    detail: None,
+                    started_at: None,
+                    ended_at: None,
+                })
+                .collect(),
+            ..Session::default()
+        }
+    }
+
+    fn states(session: &Session) -> Vec<&str> {
+        session.steps.iter().map(|step| step.state.as_str()).collect()
+    }
+
+    #[test]
+    fn closes_the_steps_a_plan_was_carried_past() {
+        let mut session = planned(&["one", "two", "three", "four"]);
+
+        noted(&mut session, "three", "three", "running");
+
+        assert_eq!(states(&session), ["done", "done", "running", "pending"]);
+        assert!(session.steps[0].ended_at.is_none());
+    }
+
+    #[test]
+    fn never_reopens_a_step_that_failed() {
+        let mut session = planned(&["one", "two", "three"]);
+        session.steps[0].state = "failed".to_owned();
+
+        noted(&mut session, "three", "three", "done");
+
+        assert_eq!(states(&session), ["failed", "done", "done"]);
     }
 
     #[test]
