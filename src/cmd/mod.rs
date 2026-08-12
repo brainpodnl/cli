@@ -1236,28 +1236,15 @@ async fn handle_resource(client: &Client, pod: &str, args: ResourceArgs) -> Resu
     }
 }
 
-/// Flattens the variable catalog out of a resource, a variables collection, or a
-/// list of resources, so both invocations of `resource variables` emit one shape.
+/// Reads the catalog off a single resource's `variables` or off the pod-wide
+/// `items` envelope, so both invocations of `resource variables` emit one shape.
 fn variable_entries(response: &Value) -> Vec<Value> {
-    if let Some(variables) = response.get("variables").and_then(Value::as_array) {
-        return variables.clone();
+    for key in ["variables", "items"] {
+        if let Some(entries) = response.get(key).and_then(Value::as_array) {
+            return entries.clone();
+        }
     }
-    let entries = response
-        .get("items")
-        .and_then(Value::as_array)
-        .or_else(|| response.as_array());
-    let Some(entries) = entries else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .flat_map(
-            |entry| match entry.get("variables").and_then(Value::as_array) {
-                Some(variables) => variables.clone(),
-                None => vec![entry.clone()],
-            },
-        )
-        .collect()
+    Vec::new()
 }
 
 async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<CommandOutput> {
@@ -1362,28 +1349,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_a_flat_catalog_with_or_without_an_envelope() {
+    fn reads_the_pod_wide_catalog_out_of_its_envelope() {
         let entry = json!({
+            "urn": "urn:brain:postgres:default:db",
             "name": "host",
-            "ref": "${db.host}",
-            "urn": "urn:brain:postgres:default:db"
+            "ref": "${db.host}"
+        });
+        let response = json!({
+            "items": [entry],
+            "_links": {"self": {"href": "/v1/pods/my-pod/variables"}}
         });
 
-        assert_eq!(
-            variable_entries(&json!({"items": [entry], "_links": {}})),
-            vec![entry.clone()]
-        );
-        assert_eq!(variable_entries(&json!([entry])), vec![entry]);
-    }
-
-    #[test]
-    fn flattens_a_catalog_grouped_by_resource() {
-        let response = json!([
-            {"urn": "urn:brain:postgres:default:db", "variables": [{"name": "host"}]},
-            {"urn": "urn:brain:route:default:public", "variables": [{"name": "host"}]}
-        ]);
-
-        assert_eq!(variable_entries(&response).len(), 2);
+        assert_eq!(variable_entries(&response), vec![entry]);
     }
 
     #[test]
