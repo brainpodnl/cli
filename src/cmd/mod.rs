@@ -301,6 +301,18 @@ enum ResourceCommand {
     },
     /// Delete a resource
     Delete { kind: ResourceKind, name: String },
+    /// Show the variables exported by every resource, or by one resource
+    Variables {
+        /// Resource kind; omit both KIND and NAME for every resource in the pod
+        #[arg(requires = "name")]
+        kind: Option<ResourceKind>,
+        /// Resource name
+        name: Option<String>,
+        #[arg(long, conflicts_with = "at")]
+        revision: Option<String>,
+        #[arg(long, conflicts_with = "revision")]
+        at: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -1196,7 +1208,56 @@ async fn handle_resource(client: &Client, pod: &str, args: ResourceArgs) -> Resu
                 .await?,
             View::ResourceMutation,
         )),
+        ResourceCommand::Variables {
+            kind,
+            name,
+            revision,
+            at,
+        } => {
+            let query = historical_query(revision, at);
+            let path = match (&kind, &name) {
+                (Some(kind), Some(name)) => vec![
+                    "v1",
+                    "pods",
+                    pod,
+                    "resources",
+                    kind.as_api_str(),
+                    "default",
+                    name.as_str(),
+                ],
+                _ => vec!["v1", "pods", pod, "variables"],
+            };
+            let response = client.get(&path, &query).await?;
+            Ok(CommandOutput::new(
+                Value::Array(variable_entries(&response)),
+                View::ResourceVariables,
+            ))
+        }
     }
+}
+
+/// Flattens the variable catalog out of a resource, a variables collection, or a
+/// list of resources, so both invocations of `resource variables` emit one shape.
+fn variable_entries(response: &Value) -> Vec<Value> {
+    if let Some(variables) = response.get("variables").and_then(Value::as_array) {
+        return variables.clone();
+    }
+    let entries = response
+        .get("items")
+        .and_then(Value::as_array)
+        .or_else(|| response.as_array());
+    let Some(entries) = entries else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .flat_map(
+            |entry| match entry.get("variables").and_then(Value::as_array) {
+                Some(variables) => variables.clone(),
+                None => vec![entry.clone()],
+            },
+        )
+        .collect()
 }
 
 async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<CommandOutput> {
@@ -1278,4 +1339,55 @@ fn read_json(path: &Path) -> Result<Value> {
     };
 
     serde_json::from_str(&contents).with_context(|| format!("invalid JSON in {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::variable_entries;
+
+    #[test]
+    fn reads_variables_off_a_single_resource() {
+        let response = json!({
+            "urn": "urn:brain:postgres:default:db",
+            "healthy": true,
+            "variables": [{"name": "host", "ref": "${db.host}"}]
+        });
+
+        assert_eq!(
+            variable_entries(&response),
+            vec![json!({"name": "host", "ref": "${db.host}"})]
+        );
+    }
+
+    #[test]
+    fn reads_a_flat_catalog_with_or_without_an_envelope() {
+        let entry = json!({
+            "name": "host",
+            "ref": "${db.host}",
+            "urn": "urn:brain:postgres:default:db"
+        });
+
+        assert_eq!(
+            variable_entries(&json!({"items": [entry], "_links": {}})),
+            vec![entry.clone()]
+        );
+        assert_eq!(variable_entries(&json!([entry])), vec![entry]);
+    }
+
+    #[test]
+    fn flattens_a_catalog_grouped_by_resource() {
+        let response = json!([
+            {"urn": "urn:brain:postgres:default:db", "variables": [{"name": "host"}]},
+            {"urn": "urn:brain:route:default:public", "variables": [{"name": "host"}]}
+        ]);
+
+        assert_eq!(variable_entries(&response).len(), 2);
+    }
+
+    #[test]
+    fn reports_no_entries_for_an_unexpected_shape() {
+        assert!(variable_entries(&json!({"error": "nope"})).is_empty());
+    }
 }
