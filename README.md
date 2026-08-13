@@ -194,6 +194,7 @@ brainpod --pod <pod> resource get <kind> <name> [--revision <uuid> | --at <times
 brainpod --pod <pod> resource create --file <path|-> [--dry-run]
 brainpod --pod <pod> resource replace <kind> <name> --file <path|->
 brainpod --pod <pod> resource delete <kind> <name>
+brainpod --pod <pod> resource variables [<kind> <name>] [--revision <uuid> | --at <timestamp>]
 
 brainpod --pod <pod> deploy [--summary <text>] [--wait] [--timeout <seconds>]
 brainpod --pod <pod> redeploy
@@ -281,6 +282,19 @@ brainpod describe resource postgres --json
 ```
 
 Resource schemas are fetched from `https://api.prod.brainpod.io/v1/openapi.json` on each request. If the production document cannot be reached or does not contain the expected resource schemas, the version embedded in the CLI is used instead. Set `BRAINPOD_OPENAPI_URL` to override the document URL, or pass `--endpoint` to derive the document URL from another API endpoint.
+
+Each schema carries the variables that kind exports, so the references an App resource can use in `spec.env` are discoverable before the resource exists. Names in this catalog are placeholders: `${<name>.uri}` becomes `${db.uri}` for a resource named `db`. Template-sourced variables also report the template, which contains references only and never values.
+
+## Resource variables
+
+Once resources exist, `resource variables` reports their references resolved against a revision, for the whole pod or for one resource:
+
+```sh
+brainpod --pod my-pod resource variables
+brainpod --pod my-pod resource variables postgres db --json
+```
+
+The text output is a `NAME`, `REF`, `VALUE`, `SECRET` table. `REF` is ready to paste into an App resource's `spec.env`. Secret values are never returned by the API and print as `<secret>`; a variable that cannot be resolved from the current content, such as a route hostname that has not been assigned, prints as `<unresolved>`. `--json` emits the complete variable objects, including each one's description, template, and owning resource URN. Use `--revision` or `--at` to read a historical revision.
 
 ## Blueprint input
 

@@ -301,6 +301,18 @@ enum ResourceCommand {
     },
     /// Delete a resource
     Delete { kind: ResourceKind, name: String },
+    /// Show the variables exported by every resource, or by one resource
+    Variables {
+        /// Resource kind; omit both KIND and NAME for every resource in the pod
+        #[arg(requires = "name")]
+        kind: Option<ResourceKind>,
+        /// Resource name
+        name: Option<String>,
+        #[arg(long, conflicts_with = "at")]
+        revision: Option<String>,
+        #[arg(long, conflicts_with = "revision")]
+        at: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -1196,7 +1208,43 @@ async fn handle_resource(client: &Client, pod: &str, args: ResourceArgs) -> Resu
                 .await?,
             View::ResourceMutation,
         )),
+        ResourceCommand::Variables {
+            kind,
+            name,
+            revision,
+            at,
+        } => {
+            let query = historical_query(revision, at);
+            let path = match (&kind, &name) {
+                (Some(kind), Some(name)) => vec![
+                    "v1",
+                    "pods",
+                    pod,
+                    "resources",
+                    kind.as_api_str(),
+                    "default",
+                    name.as_str(),
+                ],
+                _ => vec!["v1", "pods", pod, "variables"],
+            };
+            let response = client.get(&path, &query).await?;
+            Ok(CommandOutput::new(
+                Value::Array(variable_entries(&response)),
+                View::ResourceVariables,
+            ))
+        }
     }
+}
+
+/// Reads the catalog off a single resource's `variables` or off the pod-wide
+/// `items` envelope, so both invocations of `resource variables` emit one shape.
+fn variable_entries(response: &Value) -> Vec<Value> {
+    for key in ["variables", "items"] {
+        if let Some(entries) = response.get(key).and_then(Value::as_array) {
+            return entries.clone();
+        }
+    }
+    Vec::new()
 }
 
 async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<CommandOutput> {
@@ -1278,4 +1326,45 @@ fn read_json(path: &Path) -> Result<Value> {
     };
 
     serde_json::from_str(&contents).with_context(|| format!("invalid JSON in {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::variable_entries;
+
+    #[test]
+    fn reads_variables_off_a_single_resource() {
+        let response = json!({
+            "urn": "urn:brain:postgres:default:db",
+            "healthy": true,
+            "variables": [{"name": "host", "ref": "${db.host}"}]
+        });
+
+        assert_eq!(
+            variable_entries(&response),
+            vec![json!({"name": "host", "ref": "${db.host}"})]
+        );
+    }
+
+    #[test]
+    fn reads_the_pod_wide_catalog_out_of_its_envelope() {
+        let entry = json!({
+            "urn": "urn:brain:postgres:default:db",
+            "name": "host",
+            "ref": "${db.host}"
+        });
+        let response = json!({
+            "items": [entry],
+            "_links": {"self": {"href": "/v1/pods/my-pod/variables"}}
+        });
+
+        assert_eq!(variable_entries(&response), vec![entry]);
+    }
+
+    #[test]
+    fn reports_no_entries_for_an_unexpected_shape() {
+        assert!(variable_entries(&json!({"error": "nope"})).is_empty());
+    }
 }

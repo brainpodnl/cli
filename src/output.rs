@@ -48,6 +48,7 @@ pub enum View {
     RevisionWait,
     ResourceList,
     ResourceGet,
+    ResourceVariables,
     ResourceMutation,
     ResourceValidation,
     Deploy,
@@ -184,6 +185,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::RevisionWait => render_healthy_revision(value, "Revision is healthy"),
         View::ResourceList => render_resource_list(value),
         View::ResourceGet => render_resource(value),
+        View::ResourceVariables => render_resource_variables(value),
         View::ResourceMutation => render_resource_mutation(value),
         View::ResourceValidation => vec![format!("Valid: {}", yes_no(value_at(value, "valid")))],
         View::Deploy => render_deployment(value, "Deployment accepted"),
@@ -321,6 +323,37 @@ fn render_resource_schema(value: &Value) -> Vec<String> {
         "Properties".to_owned(),
     ];
     render_schema_properties(value.get("schema"), 2, 0, &mut lines);
+    lines.push(String::new());
+    lines.extend(render_variable_catalog(value.get("variables")));
+    lines
+}
+
+fn render_variable_catalog(variables: Option<&Value>) -> Vec<String> {
+    let mut lines = vec!["Variables".to_owned()];
+    let variables = variables
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if variables.is_empty() {
+        lines.push("  none".to_owned());
+        return lines;
+    }
+
+    lines.extend(table(
+        &["NAME", "REF", "SECRET", "TEMPLATE", "DESCRIPTION"],
+        variables
+            .iter()
+            .map(|variable| {
+                vec![
+                    field(variable, "name"),
+                    field(variable, "ref"),
+                    yes_no(variable.get("secret")),
+                    field(variable, "template"),
+                    field(variable, "description"),
+                ]
+            })
+            .collect(),
+    ));
     lines
 }
 
@@ -341,13 +374,28 @@ fn render_resource_schema_list(value: &Value, heading: &str) -> Vec<String> {
                     vec![
                         field(resource, "kind"),
                         schema_required(resource.get("schema")),
+                        variable_names(resource.get("variables")),
                     ]
                 })
                 .collect()
         })
         .unwrap_or_default();
-    lines.extend(table(&["KIND", "REQUIRED FIELDS"], rows));
+    lines.extend(table(&["KIND", "REQUIRED FIELDS", "VARIABLES"], rows));
     lines
+}
+
+fn variable_names(variables: Option<&Value>) -> String {
+    let Some(variables) = variables.and_then(Value::as_array) else {
+        return "none".to_owned();
+    };
+    if variables.is_empty() {
+        return "none".to_owned();
+    }
+    variables
+        .iter()
+        .map(|variable| field(variable, "name"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn schema_required(schema: Option<&Value>) -> String {
@@ -982,6 +1030,38 @@ fn render_resource(value: &Value) -> Vec<String> {
     lines
 }
 
+fn render_resource_variables(value: &Value) -> Vec<String> {
+    let Some(variables) = value.as_array() else {
+        return vec!["No variables returned.".to_owned()];
+    };
+    if variables.is_empty() {
+        return vec!["No variables.".to_owned()];
+    }
+
+    let rows = variables
+        .iter()
+        .map(|variable| {
+            vec![
+                field(variable, "name"),
+                field(variable, "ref"),
+                variable_value(variable),
+                yes_no(variable.get("secret")),
+            ]
+        })
+        .collect();
+    table(&["NAME", "REF", "VALUE", "SECRET"], rows)
+}
+
+fn variable_value(variable: &Value) -> String {
+    if variable.get("resolved").and_then(Value::as_bool) == Some(false) {
+        return "<unresolved>".to_owned();
+    }
+    if variable.get("secret").and_then(Value::as_bool) == Some(true) {
+        return "<secret>".to_owned();
+    }
+    field(variable, "value")
+}
+
 fn render_resource_mutation(value: &Value) -> Vec<String> {
     let resources = value
         .get("resources")
@@ -1330,7 +1410,8 @@ mod tests {
 
     use super::{
         render_cluster_list, render_event, render_image_inspect, render_image_list,
-        render_whoami, stream_error, write_login_json, write_stream_json,
+        render_resource_schema, render_resource_variables, render_whoami, stream_error,
+        write_login_json, write_stream_json,
     };
 
     #[test]
@@ -1514,5 +1595,102 @@ mod tests {
         assert!(lines.iter().any(|line| line == "Variants"));
         assert!(lines.iter().any(|line| line.contains("amd64")));
         assert!(lines.iter().any(|line| line.contains("80/tcp")));
+    }
+
+    #[test]
+    fn withholds_secret_and_unresolved_variable_values() {
+        let lines = render_resource_variables(&json!([
+            {
+                "name": "host",
+                "ref": "${db.host}",
+                "secret": false,
+                "resolved": true,
+                "value": "db",
+                "description": "Cluster-internal hostname."
+            },
+            {
+                "name": "password",
+                "ref": "${db.password}",
+                "secret": true,
+                "resolved": true,
+                "value": null,
+                "description": "Generated in-cluster."
+            },
+            {
+                "name": "host",
+                "ref": "${public.host}",
+                "secret": false,
+                "resolved": false,
+                "value": null,
+                "description": "Not assigned yet."
+            }
+        ]));
+
+        assert_eq!(
+            lines[0].split_whitespace().collect::<Vec<_>>(),
+            vec!["NAME", "REF", "VALUE", "SECRET"]
+        );
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("host") && line.contains("db") && line.ends_with("no")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("<secret>") && line.ends_with("yes")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("<unresolved>") && line.ends_with("no")));
+        assert!(!lines.iter().any(|line| line.contains("Generated in-cluster")));
+    }
+
+    #[test]
+    fn reports_an_empty_variable_catalog() {
+        assert_eq!(render_resource_variables(&json!([])), vec!["No variables."]);
+    }
+
+    #[test]
+    fn renders_the_static_variable_catalog_beside_the_schema() {
+        let lines = render_resource_schema(&json!({
+            "resource": "Postgres",
+            "source": "embedded",
+            "sourceUrl": "https://api.example/v1/openapi.json",
+            "schema": {"required": ["kind"], "properties": {"kind": {"const": "Postgres"}}},
+            "variables": [{
+                "name": "uri",
+                "ref": "${<name>.uri}",
+                "secret": true,
+                "template": "postgres://${<name>.user}@<name>:5432/brainpod",
+                "description": "Full connection string."
+            }]
+        }));
+
+        assert!(lines.iter().any(|line| line == "Variables"));
+        assert!(lines.iter().any(|line| line.contains("${<name>.uri}")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("postgres://${<name>.user}@<name>:5432/brainpod")));
+    }
+
+    #[test]
+    fn lists_variable_names_per_kind() {
+        let lines = render_resource_schema(&json!({
+            "source": "embedded",
+            "sourceUrl": "https://api.example/v1/openapi.json",
+            "resources": [
+                {
+                    "kind": "Postgres",
+                    "schema": {"required": ["kind"]},
+                    "variables": [{"name": "host"}, {"name": "uri"}]
+                },
+                {"kind": "Disk", "schema": {"required": ["kind"]}, "variables": []}
+            ]
+        }));
+
+        assert!(lines.iter().any(|line| line.contains("VARIABLES")));
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("Postgres") && line.contains("host, uri")));
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("Disk") && line.contains("none")));
     }
 }

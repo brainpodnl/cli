@@ -46,7 +46,8 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
             "Use resource URNs returned by resource commands when querying events.",
-            "Use `brainpod describe resource <kind>` to inspect the resource schema fetched from the production OpenAPI document; the embedded document is used when it is unavailable."
+            "Use `brainpod describe resource <kind>` to inspect the resource schema and the variables that kind exports, fetched from the production OpenAPI document; the embedded document is used when it is unavailable. It needs no pod and no API token, so run it before creating anything.",
+            "Use `brainpod --pod <pod> resource variables` to read the resolved references of resources that already exist; secret values are never returned."
         ]
     }))
 }
@@ -275,7 +276,8 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         | ["blueprint", "get"]
         | ["revision", _]
         | ["resource", "list"]
-        | ["resource", "get"] => ("read", "Reads remote state without changing it."),
+        | ["resource", "get"]
+        | ["resource", "variables"] => ("read", "Reads remote state without changing it."),
         ["events"] => ("read-or-stream", "Reads or continuously streams remote events."),
         ["image", "list"] | ["image", "inspect"] => (
             "read",
@@ -321,10 +323,17 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
         | ["resource", "replace"]
         | ["resource", "delete"] => vec![
             "Inspect the updated draft with `brainpod resource list`.",
+            "Read the references other resources can use with `brainpod resource variables`.",
+            "Discover the variables a kind exports before creating it with `brainpod describe resource <kind>`; it needs no pod and no API token.",
             "Deploy it with `brainpod deploy` when ready.",
         ],
         ["resource", "list"] | ["resource", "get"] => vec![
             "Use a returned resource URN with `brainpod events --resource <urn>`.",
+            "Read the resolved references with `brainpod resource variables`.",
+        ],
+        ["resource", "variables"] => vec![
+            "Reference a variable from an App resource's spec.env as its `ref` value, such as ${db.uri}.",
+            "Secret values are never returned; reference them instead of reading them.",
         ],
         _ => Vec::new(),
     }
@@ -336,6 +345,8 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
             "brainpod describe",
             "brainpod describe resource create",
             "brainpod describe resource create --json",
+            "brainpod describe resource postgres",
+            "brainpod describe resource --json",
         ],
         ["login"] => vec!["brainpod login"],
         ["config", "set"] => vec![
@@ -363,6 +374,10 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["resource", "create"] => vec![
             "brainpod --pod my-pod resource create --file resources.json --dry-run --json",
             "brainpod --pod my-pod resource create --file resources.json --json",
+        ],
+        ["resource", "variables"] => vec![
+            "brainpod --pod my-pod resource variables",
+            "brainpod --pod my-pod resource variables postgres db --json",
         ],
         ["revision", "wait"] => vec![
             "brainpod --pod my-pod revision wait <revision>",
@@ -440,6 +455,53 @@ mod tests {
             value.pointer("/command/effect").and_then(|value| value.as_str()),
             Some("read")
         );
+    }
+
+    #[test]
+    fn describes_resource_variables_as_an_authenticated_read() {
+        let path = vec!["resource".to_owned(), "variables".to_owned()];
+        let value = generate(crate::Opts::command(), &path).unwrap();
+
+        assert_eq!(
+            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            Some("read")
+        );
+        assert_eq!(
+            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(!value
+            .pointer("/command/examples")
+            .and_then(|value| value.as_array())
+            .is_none_or(Vec::is_empty));
+        assert!(!value
+            .pointer("/command/nextSteps")
+            .and_then(|value| value.as_array())
+            .is_none_or(Vec::is_empty));
+    }
+
+    #[test]
+    fn points_resource_mutations_at_the_variable_catalog() {
+        let path = vec!["resource".to_owned(), "create".to_owned()];
+        let value = generate(crate::Opts::command(), &path).unwrap();
+        let next_steps = value
+            .pointer("/command/nextSteps")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|step| step.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(next_steps
+            .iter()
+            .any(|step| step.contains("brainpod resource variables")));
+        assert!(next_steps
+            .iter()
+            .any(|step| step.contains("brainpod describe resource <kind>")));
     }
 
     #[test]

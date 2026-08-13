@@ -263,6 +263,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_resource_variables_for_a_whole_pod() {
+        let opts =
+            Opts::try_parse_from(["brainpod", "--pod", "my-pod", "resource", "variables"]).unwrap();
+
+        assert!(matches!(opts.command, Command::Resource(_)));
+        assert!(super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
+    fn parses_resource_variables_for_one_resource() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "--pod",
+            "my-pod",
+            "resource",
+            "variables",
+            "postgres",
+            "db",
+        ])
+        .unwrap();
+
+        assert!(matches!(opts.command, Command::Resource(_)));
+    }
+
+    #[test]
+    fn rejects_resource_variables_with_a_kind_but_no_name() {
+        let result = Opts::try_parse_from(["brainpod", "resource", "variables", "postgres"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn parses_login_without_browser() {
         let opts = Opts::try_parse_from(["brainpod", "--json", "login", "--no-browser"]).unwrap();
 

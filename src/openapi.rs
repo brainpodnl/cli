@@ -7,12 +7,13 @@ use serde_json::{Value, json};
 const PRODUCTION_OPENAPI_URL: &str = "https://api.prod.brainpod.io/v1/openapi.json";
 const EMBEDDED_OPENAPI: &str = include_str!("openapi.json");
 
+const RESOURCE_SUBCOMMANDS: &[&str] = &["list", "get", "create", "replace", "delete", "variables"];
+
 pub fn is_resource_path(path: &[String]) -> bool {
     match path {
         [resource] => resource == "resource",
         [resource, kind] => {
-            resource == "resource"
-                && !matches!(kind.as_str(), "list" | "get" | "create" | "replace" | "delete")
+            resource == "resource" && !RESOURCE_SUBCOMMANDS.contains(&kind.as_str())
         }
         _ => false,
     }
@@ -26,13 +27,13 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
 
     if let Some(requested_kind) = requested_kind {
         let requested_kind = requested_kind.to_ascii_lowercase();
-        let Some((kind, schema)) = resources
+        let Some(resource) = resources
             .iter()
-            .find(|(kind, _)| kind.to_ascii_lowercase() == requested_kind)
+            .find(|resource| resource.kind.to_ascii_lowercase() == requested_kind)
         else {
             let available = resources
                 .iter()
-                .map(|(kind, _)| kind.to_ascii_lowercase())
+                .map(|resource| resource.kind.to_ascii_lowercase())
                 .collect::<Vec<_>>();
             return Err(anyhow!(
                 "unknown resource kind `{requested_kind}`; available resource kinds: {}",
@@ -42,10 +43,11 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
 
         return Ok(json!({
             "schemaVersion": 1,
-            "resource": kind,
+            "resource": resource.kind,
             "source": source,
             "sourceUrl": url,
-            "schema": schema,
+            "schema": resource.schema,
+            "variables": resource.variables,
         }));
     }
 
@@ -53,9 +55,10 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
         "schemaVersion": 1,
         "source": source,
         "sourceUrl": url,
-        "resources": resources.into_iter().map(|(kind, schema)| json!({
-            "kind": kind,
-            "schema": schema,
+        "resources": resources.into_iter().map(|resource| json!({
+            "kind": resource.kind,
+            "schema": resource.schema,
+            "variables": resource.variables,
         })).collect::<Vec<_>>(),
     }))
 }
@@ -115,7 +118,15 @@ fn openapi_url(endpoint: Option<&str>) -> Result<String> {
     Ok(url.to_string())
 }
 
-fn resource_schemas(spec: &Value) -> Result<Vec<(String, Value)>> {
+const VARIABLES_EXTENSION: &str = "x-brainpod-variables";
+
+struct ResourceCatalog {
+    kind: String,
+    schema: Value,
+    variables: Value,
+}
+
+fn resource_schemas(spec: &Value) -> Result<Vec<ResourceCatalog>> {
     let branches = spec
         .pointer("/components/schemas/ResourceInput/oneOf")
         .and_then(Value::as_array)
@@ -123,11 +134,22 @@ fn resource_schemas(spec: &Value) -> Result<Vec<(String, Value)>> {
 
     let resources = branches
         .iter()
-        .filter_map(|schema| {
-            let kind = schema
+        .filter_map(|branch| {
+            let kind = branch
                 .pointer("/properties/kind/const")
-                .and_then(Value::as_str)?;
-            Some((kind.to_owned(), schema.clone()))
+                .and_then(Value::as_str)?
+                .to_owned();
+            let mut schema = branch.clone();
+            let variables = schema
+                .as_object_mut()
+                .and_then(|schema| schema.remove(VARIABLES_EXTENSION))
+                .filter(Value::is_array)
+                .unwrap_or_else(|| json!([]));
+            Some(ResourceCatalog {
+                kind,
+                schema,
+                variables,
+            })
         })
         .collect::<Vec<_>>();
 
@@ -142,7 +164,7 @@ fn resource_schemas(spec: &Value) -> Result<Vec<(String, Value)>> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{is_resource_path, resource_schemas};
 
@@ -153,6 +175,14 @@ mod tests {
         assert!(!is_resource_path(&[
             "resource".to_owned(),
             "create".to_owned()
+        ]));
+    }
+
+    #[test]
+    fn treats_variables_as_a_subcommand_not_a_resource_kind() {
+        assert!(!is_resource_path(&[
+            "resource".to_owned(),
+            "variables".to_owned()
         ]));
     }
 
@@ -174,8 +204,68 @@ mod tests {
         let resources = resource_schemas(&spec).unwrap();
 
         assert_eq!(
-            resources.iter().map(|(kind, _)| kind.as_str()).collect::<Vec<_>>(),
+            resources
+                .iter()
+                .map(|resource| resource.kind.as_str())
+                .collect::<Vec<_>>(),
             vec!["App", "Disk"]
         );
+    }
+
+    #[test]
+    fn extracts_the_variable_catalog_out_of_the_schema() {
+        let spec = json!({
+            "components": {
+                "schemas": {
+                    "ResourceInput": {
+                        "oneOf": [{
+                            "properties": {"kind": {"const": "Postgres"}},
+                            "x-brainpod-variables": [{
+                                "name": "uri",
+                                "ref": "${<name>.uri}",
+                                "secret": true,
+                                "template": "postgres://${<name>.user}@<name>:5432/brainpod",
+                                "description": "Full connection string."
+                            }]
+                        }]
+                    }
+                }
+            }
+        });
+
+        let resources = resource_schemas(&spec).unwrap();
+        let [postgres] = resources.as_slice() else {
+            panic!("expected one resource");
+        };
+
+        assert_eq!(
+            postgres.variables.pointer("/0/ref").and_then(Value::as_str),
+            Some("${<name>.uri}")
+        );
+        assert_eq!(
+            postgres
+                .variables
+                .pointer("/0/secret")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(postgres.schema.get("x-brainpod-variables").is_none());
+    }
+
+    #[test]
+    fn reports_an_empty_catalog_for_kinds_without_variables() {
+        let spec = json!({
+            "components": {
+                "schemas": {
+                    "ResourceInput": {
+                        "oneOf": [{"properties": {"kind": {"const": "Disk"}}}]
+                    }
+                }
+            }
+        });
+
+        let resources = resource_schemas(&spec).unwrap();
+
+        assert_eq!(resources[0].variables, json!([]));
     }
 }
