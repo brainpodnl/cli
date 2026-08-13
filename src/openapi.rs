@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde_json::{Value, json};
 
-const PRODUCTION_OPENAPI_URL: &str = "https://api.prod.brainpod.io/v1/openapi.json";
+const PRODUCTION_OPENAPI_URL: &str = "https://api.brainpod.io/v1/openapi.json";
 const EMBEDDED_OPENAPI: &str = include_str!("openapi.json");
 
 const RESOURCE_SUBCOMMANDS: &[&str] = &["list", "get", "create", "replace", "delete", "variables"];

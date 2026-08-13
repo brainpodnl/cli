@@ -120,7 +120,7 @@ Values are resolved in this order:
 
 For image builds, `--platform` overrides the configured architecture. Without it, the CLI probes the available clusters, prefers `amd64` and then `arm64`, and stores the selected architecture in the configuration.
 
-`brainpod login` uses `https://brainpod.io` as its dashboard and supports overriding it with `BRAINPOD_DASHBOARD_ENDPOINT` for local or test environments.
+`brainpod login` uses `https://console.brainpod.io` as its dashboard and supports overriding it with `BRAINPOD_DASHBOARD_ENDPOINT` for local or test environments.
 
 The config file is written with mode `0600` on Unix. `config show` never reveals the API token.
 
@@ -144,7 +144,7 @@ brainpod --json resource list
 Login writes both the authorization notice and the successful authentication result to stdout. With `--json`, it emits newline-delimited JSON so callers receive the authorization URL before the callback completes. A successful login emits an `authorize` event followed by an `authenticated` event containing the complete user response:
 
 ```json
-{"event":"authorize","url":"https://brainpod.io/cli/authorize?...","expiresInSeconds":600}
+{"event":"authorize","url":"https://console.brainpod.io/cli/authorize?...","expiresInSeconds":600}
 {"event":"authenticated","user":{"email":"user@example.com"}}
 ```
 
@@ -152,7 +152,7 @@ Event watches are also streamed as newline-delimited JSON so each event is avail
 
 Text event output uses color for timestamps, levels, platform events, and HTTP statuses when stdout is a terminal. JSON and redirected output never contain ANSI color sequences.
 
-Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details. Account-limit validation errors include instructions and an `upgradeUrl` pointing to `https://brainpod.io/onboarding?upgrade=1`.
+Errors go to stderr and return a non-zero exit code. With `--json`, errors also use JSON and API errors retain the API's stable error code, request ID, and details. Account-limit validation errors include instructions and an `upgradeUrl` pointing to `https://console.brainpod.io/onboarding?upgrade=1`.
 
 ## Commands
 
