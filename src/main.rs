@@ -19,7 +19,7 @@ use client::{ApiError, Client};
 use cmd::Command;
 use config::{Config, DEFAULT_DASHBOARD_ENDPOINT, DEFAULT_ENDPOINT, DEFAULT_REGISTRY_ENDPOINT};
 
-const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
+const UPGRADE_URL: &str = "https://console.brainpod.io/onboarding?upgrade=1";
 
 #[derive(Debug, Parser)]
 #[command(

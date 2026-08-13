@@ -1389,12 +1389,12 @@ mod tests {
     #[test]
     fn builds_pod_url_without_doubling_the_separator() {
         assert_eq!(
-            pod_url("https://brainpod.io/", "imagination"),
-            "https://brainpod.io/pods/imagination"
+            pod_url("https://console.brainpod.io/", "imagination"),
+            "https://console.brainpod.io/pods/imagination"
         );
         assert_eq!(
-            pod_url("https://brainpod.io", "imagination"),
-            "https://brainpod.io/pods/imagination"
+            pod_url("https://console.brainpod.io", "imagination"),
+            "https://console.brainpod.io/pods/imagination"
         );
     }
 }

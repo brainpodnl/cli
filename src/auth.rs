@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn announces_the_authorization_url_as_a_single_json_line() {
         let notice = authorization_notice(
-            "https://brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value",
+            "https://console.brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value",
             LoginOptions {
                 no_browser: true,
                 json: true,
@@ -575,26 +575,28 @@ mod tests {
 
         assert_eq!(
             notice,
-            "{\"event\":\"authorize\",\"url\":\"https://brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value\",\"expiresInSeconds\":600}"
+            "{\"event\":\"authorize\",\"url\":\"https://console.brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value\",\"expiresInSeconds\":600}"
         );
     }
 
     #[test]
     fn announces_the_authorization_url_as_prose_without_json() {
-        let notice =
-            authorization_notice("https://brainpod.io/cli/authorize", LoginOptions::default())
-                .unwrap();
+        let notice = authorization_notice(
+            "https://console.brainpod.io/cli/authorize",
+            LoginOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             notice,
-            "Open this URL in a browser on this machine to authenticate: https://brainpod.io/cli/authorize"
+            "Open this URL in a browser on this machine to authenticate: https://console.brainpod.io/cli/authorize"
         );
     }
 
     #[test]
     fn builds_authorization_url_with_encoded_callback() {
         let url = authorization_url(
-            "https://brainpod.io",
+            "https://console.brainpod.io",
             "http://127.0.0.1:1234/callback",
             "state-value",
         )
