@@ -1,7 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    nix-filter.url = "github:numtide/nix-filter";
     crane.url = "github:ipetkov/crane";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -13,7 +12,6 @@
       nixpkgs,
       crane,
       rust-overlay,
-      nix-filter,
       ...
     }:
     let
@@ -24,7 +22,6 @@
         "aarch64-darwin"
       ];
       overlays = [ (import rust-overlay) ];
-      filter = import nix-filter;
       eachSystem = nixpkgs.lib.genAttrs supportedSystems;
 
       rustTargetFor =
@@ -67,16 +64,22 @@
             }
           );
           craneLib = (crane.mkLib pkgs).overrideToolchain toolchainFor;
-          src = filter {
-            root = ./.;
-            include = [
-              "src"
-              "Cargo.toml"
-              "Cargo.lock"
-            ];
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter =
+              path: _:
+              let
+                relative = pkgs.lib.removePrefix "${toString ./.}/" (toString path);
+              in
+              relative == "Cargo.toml"
+              || relative == "Cargo.lock"
+              || relative == "src"
+              || pkgs.lib.hasPrefix "src/" relative;
           };
           craneArgs = {
             inherit src;
+            cargoTomlContents = builtins.readFile ./Cargo.toml;
+            cargoLockContents = builtins.readFile ./Cargo.lock;
             strictDeps = true;
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           }
@@ -94,8 +97,6 @@
             craneArgs
             // {
               inherit cargoArtifacts;
-              pname = "brainpod-cli";
-              version = "0.1.0";
               meta.mainProgram = "brainpod";
             }
             // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
