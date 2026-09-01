@@ -36,16 +36,18 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "json": "Pass --json to emit the complete API response as one JSON value for non-streaming commands.",
             "loginJson": "Login emits an authorize event followed by an authenticated event as NDJSON on stdout.",
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
+            "tunnelJson": "Tunnels emit listening, optional credentials, and closed events as NDJSON.",
             "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
-            "Use --json for complete machine-readable API responses and errors; login and event watches are streamed as NDJSON.",
+            "Use --json for complete machine-readable API responses and errors; login, event watches, and tunnels are streamed as NDJSON.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
+            "Database tunnels resolve a resource name, URN, or stable UUID in the selected pod and listen on loopback by default until Ctrl-C is pressed.",
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
-            "Use resource URNs returned by resource commands when querying events.",
+            "Event queries accept a resource name, URN, or stable UUID in the selected pod.",
             "Use `brainpod describe resource <kind>` to inspect the resource schema and the variables that kind exports, fetched from the production OpenAPI document; the embedded document is used when it is unavailable. It needs no pod and no API token, so run it before creating anything.",
             "Use `brainpod --pod <pod> resource variables` to read the resolved references of resources that already exist; secret values are never returned."
         ]
@@ -141,7 +143,11 @@ fn describe_argument(command: &Command, argument: &Arg) -> Value {
         .get_value_names()
         .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>())
         .unwrap_or_else(|| {
-            if takes_value { vec![argument.get_id().as_str().to_ascii_uppercase()] } else { Default::default() }
+            if takes_value {
+                vec![argument.get_id().as_str().to_ascii_uppercase()]
+            } else {
+                Default::default()
+            }
         });
     let defaults = argument
         .get_default_values()
@@ -172,7 +178,10 @@ fn describe_argument(command: &Command, argument: &Arg) -> Value {
 
     let mut value = Map::new();
     value.insert("id".to_owned(), json!(argument.get_id().as_str()));
-    value.insert("syntax".to_owned(), json!(argument_syntax(argument, &value_names)));
+    value.insert(
+        "syntax".to_owned(),
+        json!(argument_syntax(argument, &value_names)),
+    );
     value.insert(
         "kind".to_owned(),
         json!(if argument.get_index().is_some() {
@@ -188,10 +197,12 @@ fn describe_argument(command: &Command, argument: &Arg) -> Value {
     value.insert("numValues".to_owned(), json!(num_values));
     value.insert(
         "help".to_owned(),
-        json!(argument
-            .get_long_help()
-            .or_else(|| argument.get_help())
-            .map(ToString::to_string)),
+        json!(
+            argument
+                .get_long_help()
+                .or_else(|| argument.get_help())
+                .map(ToString::to_string)
+        ),
     );
     value.insert("defaultValues".to_owned(), json!(defaults));
     value.insert("possibleValues".to_owned(), json!(possible_values));
@@ -237,18 +248,16 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         ["describe"] | ["login"] | ["config"] | ["config", _] => (Some(false), Some(false)),
         ["blueprint"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
-        ["blueprint", _]
-        | ["whoami"]
-        | ["cluster"]
-        | ["cluster", _]
-        | ["pod"]
-        | ["pod", _] => (Some(true), Some(false)),
+        ["blueprint", _] | ["whoami"] | ["cluster"] | ["cluster", _] | ["pod"] | ["pod", _] => {
+            (Some(true), Some(false))
+        }
         ["image"]
         | ["image", _]
         | ["revision"]
         | ["revision", _]
         | ["resource"]
         | ["resource", _]
+        | ["tunnel"]
         | ["deploy"]
         | ["redeploy"]
         | ["events"] => (Some(true), Some(true)),
@@ -258,9 +267,10 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
 
 fn effect(path: &[&str]) -> (&'static str, &'static str) {
     match path {
-        ["describe"] | ["config", "show"] | ["config", "path"] => {
-            ("read", "Reads local CLI information without changing state.")
-        }
+        ["describe"] | ["config", "show"] | ["config", "path"] => (
+            "read",
+            "Reads local CLI information without changing state.",
+        ),
         ["config", "set"] | ["config", "unset"] => {
             ("local-write", "Changes the local CLI configuration.")
         }
@@ -278,7 +288,14 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         | ["resource", "list"]
         | ["resource", "get"]
         | ["resource", "variables"] => ("read", "Reads remote state without changing it."),
-        ["events"] => ("read-or-stream", "Reads or continuously streams remote events."),
+        ["events"] => (
+            "read-or-stream",
+            "Reads or continuously streams remote events.",
+        ),
+        ["tunnel"] => (
+            "local-and-remote-stream",
+            "Creates a remote tunnel session and forwards local TCP connections until Ctrl-C.",
+        ),
         ["image", "list"] | ["image", "inspect"] => (
             "read",
             "Reads active registry images visible from the selected pod.",
@@ -305,15 +322,15 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
 fn next_steps(path: &[&str]) -> Vec<&'static str> {
     match path {
         ["login"] => vec!["Confirm the authenticated identity with `brainpod whoami`."],
-        ["pod", "create"] => vec![
-            "Select the new pod with --pod or `brainpod config set pod <pod>`.",
-        ],
+        ["pod", "create"] => {
+            vec!["Select the new pod with --pod or `brainpod config set pod <pod>`."]
+        }
         ["image", "list"] => vec![
             "Inspect an exact pod image with `brainpod image inspect <repository> <tag>`; use --visibility public for a public image.",
         ],
-        ["image", "inspect"] => vec![
-            "Use a returned digest-pinned variant reference as an App resource's spec.image.",
-        ],
+        ["image", "inspect"] => {
+            vec!["Use a returned digest-pinned variant reference as an App resource's spec.image."]
+        }
         ["image", "build"] => vec![
             "Use the returned digest-pinned reference as an App resource's spec.image.",
             "Deploy the updated App resource with `brainpod deploy` when ready.",
@@ -328,12 +345,16 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
             "Deploy it with `brainpod deploy` when ready.",
         ],
         ["resource", "list"] | ["resource", "get"] => vec![
-            "Use a returned resource URN with `brainpod events --resource <urn>`.",
+            "Use the resource name or returned URN with `brainpod events --resource <resource>`.",
             "Read the resolved references with `brainpod resource variables`.",
         ],
         ["resource", "variables"] => vec![
             "Reference a variable from an App resource's spec.env as its `ref` value, such as ${db.uri}.",
             "Secret values are never returned; reference them instead of reading them.",
+        ],
+        ["tunnel"] => vec![
+            "Keep the tunnel running while the local database client is connected.",
+            "Press Ctrl-C to close the tunnel session.",
         ],
         _ => Vec::new(),
     }
@@ -354,6 +375,10 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
             "brainpod config set pod my-pod",
         ],
         ["pod", "list"] => vec!["brainpod pod list --json"],
+        ["tunnel"] => vec![
+            "brainpod --pod my-pod tunnel db",
+            "brainpod --pod my-pod tunnel urn:brain:postgres:default:db 127.0.0.1:15432",
+        ],
         ["blueprint", "get"] => vec!["brainpod blueprint get laravel"],
         ["blueprint", "install"] => vec![
             "brainpod --pod my-pod blueprint install laravel",
@@ -387,7 +412,7 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
             "brainpod --pod my-pod deploy --summary \"Configure application resources\" --wait --json",
         ],
         ["events"] => vec![
-            "brainpod --pod my-pod events --resource urn:brain:app:default:api",
+            "brainpod --pod my-pod events --resource api",
             "brainpod --pod my-pod events --watch --resource urn:brain:app:default:api --json",
         ],
         _ => Vec::new(),
@@ -406,15 +431,21 @@ mod tests {
         let value = generate(crate::Opts::command(), &path).unwrap();
 
         assert_eq!(
-            value.pointer("/command/invocation").and_then(|value| value.as_str()),
+            value
+                .pointer("/command/invocation")
+                .and_then(|value| value.as_str()),
             Some("brainpod resource create")
         );
         assert_eq!(
-            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/pod")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            value
+                .pointer("/command/effect")
+                .and_then(|value| value.as_str()),
             Some("conditional-draft-write")
         );
     }
@@ -425,15 +456,21 @@ mod tests {
         let value = generate(crate::Opts::command(), &path).unwrap();
 
         assert_eq!(
-            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/apiToken")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/pod")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            value
+                .pointer("/command/effect")
+                .and_then(|value| value.as_str()),
             Some("local-and-remote-write")
         );
     }
@@ -444,15 +481,21 @@ mod tests {
         let value = generate(crate::Opts::command(), &path).unwrap();
 
         assert_eq!(
-            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/apiToken")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/pod")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            value
+                .pointer("/command/effect")
+                .and_then(|value| value.as_str()),
             Some("read")
         );
     }
@@ -463,25 +506,35 @@ mod tests {
         let value = generate(crate::Opts::command(), &path).unwrap();
 
         assert_eq!(
-            value.pointer("/command/effect").and_then(|value| value.as_str()),
+            value
+                .pointer("/command/effect")
+                .and_then(|value| value.as_str()),
             Some("read")
         );
         assert_eq!(
-            value.pointer("/command/requirements/apiToken").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/apiToken")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
         assert_eq!(
-            value.pointer("/command/requirements/pod").and_then(|value| value.as_bool()),
+            value
+                .pointer("/command/requirements/pod")
+                .and_then(|value| value.as_bool()),
             Some(true)
         );
-        assert!(!value
-            .pointer("/command/examples")
-            .and_then(|value| value.as_array())
-            .is_none_or(Vec::is_empty));
-        assert!(!value
-            .pointer("/command/nextSteps")
-            .and_then(|value| value.as_array())
-            .is_none_or(Vec::is_empty));
+        assert!(
+            !value
+                .pointer("/command/examples")
+                .and_then(|value| value.as_array())
+                .is_none_or(Vec::is_empty)
+        );
+        assert!(
+            !value
+                .pointer("/command/nextSteps")
+                .and_then(|value| value.as_array())
+                .is_none_or(Vec::is_empty)
+        );
     }
 
     #[test]
@@ -496,12 +549,16 @@ mod tests {
             .filter_map(|step| step.as_str())
             .collect::<Vec<_>>();
 
-        assert!(next_steps
-            .iter()
-            .any(|step| step.contains("brainpod resource variables")));
-        assert!(next_steps
-            .iter()
-            .any(|step| step.contains("brainpod describe resource <kind>")));
+        assert!(
+            next_steps
+                .iter()
+                .any(|step| step.contains("brainpod resource variables"))
+        );
+        assert!(
+            next_steps
+                .iter()
+                .any(|step| step.contains("brainpod describe resource <kind>"))
+        );
     }
 
     #[test]

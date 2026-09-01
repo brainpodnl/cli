@@ -1,5 +1,6 @@
 use std::io::{self, IsTerminal as _};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory as _, Parser};
@@ -14,10 +15,14 @@ mod describe;
 mod image;
 mod openapi;
 mod output;
+mod tunnel;
 
 use client::{ApiError, Client};
 use cmd::Command;
-use config::{Config, DEFAULT_DASHBOARD_ENDPOINT, DEFAULT_ENDPOINT, DEFAULT_REGISTRY_ENDPOINT};
+use config::{
+    Config, DEFAULT_CONTROL_PLANE_ENDPOINT, DEFAULT_DASHBOARD_ENDPOINT, DEFAULT_ENDPOINT,
+    DEFAULT_REGISTRY_ENDPOINT,
+};
 
 const UPGRADE_URL: &str = "https://console.brainpod.io/onboarding?upgrade=1";
 
@@ -25,7 +30,7 @@ const UPGRADE_URL: &str = "https://console.brainpod.io/onboarding?upgrade=1";
 #[command(
     name = "brainpod",
     version,
-    about = "Manage Brainpod deployments, images, and resources",
+    about = "Manage Brainpod deployments, images, resources, and database tunnels",
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
 pub(crate) struct Opts {
@@ -40,6 +45,10 @@ pub(crate) struct Opts {
     /// Brainpod API token (overrides environment and config)
     #[arg(long, global = true)]
     api_token: Option<String>,
+
+    /// Brainpod control-plane gRPC endpoint (overrides environment and config)
+    #[arg(long, global = true)]
+    control_plane_endpoint: Option<String>,
 
     /// Brainpod registry endpoint (overrides environment and config)
     #[arg(long, global = true)]
@@ -61,6 +70,10 @@ pub(crate) struct Opts {
 async fn main() -> ExitCode {
     let opts = Opts::parse();
     let json_output = opts.json;
+    if let Err(error) = install_crypto_provider() {
+        write_error(&error, json_output);
+        return ExitCode::FAILURE;
+    }
     agent::configure(opts.session.clone());
 
     match run(opts).await {
@@ -127,6 +140,11 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         .api_token
         .or_else(|| environment("BRAINPOD_API_TOKEN"))
         .or_else(|| config.api_token.clone());
+    let control_plane_endpoint = opts
+        .control_plane_endpoint
+        .or_else(|| environment("BRAINPOD_CONTROL_PLANE_ENDPOINT"))
+        .or_else(|| config.control_plane_endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_CONTROL_PLANE_ENDPOINT.to_owned());
     let dashboard_endpoint = environment("BRAINPOD_DASHBOARD_ENDPOINT")
         .unwrap_or_else(|| DEFAULT_DASHBOARD_ENDPOINT.to_owned());
     let registry_endpoint = opts
@@ -163,18 +181,43 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
 
     cmd::handle(
         opts.command,
-        client.as_ref(),
-        &endpoint,
-        &dashboard_endpoint,
-        pod.as_deref(),
-        api_token.as_deref(),
-        &registry_endpoint,
-        &mut config,
-        &config_path,
-        show_progress,
-        json,
+        cmd::CommandContext {
+            client: client.as_ref(),
+            endpoint: &endpoint,
+            control_plane_endpoint: &control_plane_endpoint,
+            dashboard_endpoint: &dashboard_endpoint,
+            pod: pod.as_deref(),
+            api_token: api_token.as_deref(),
+            registry_endpoint: &registry_endpoint,
+            config: &mut config,
+            config_path: &config_path,
+            show_progress,
+            json,
+        },
     )
     .await
+}
+
+fn install_crypto_provider() -> Result<()> {
+    static INSTALL: OnceLock<std::result::Result<(), ()>> = OnceLock::new();
+    let installed = INSTALL.get_or_init(|| {
+        if rustls::crypto::CryptoProvider::get_default().is_some() {
+            Ok(())
+        } else {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .map_err(|_| ())
+        }
+    });
+    installed
+        .as_ref()
+        .map(|_| ())
+        .map_err(|_| anyhow!("failed to install the rustls ring crypto provider"))
+}
+
+pub(crate) fn http_client_builder() -> Result<reqwest::ClientBuilder> {
+    install_crypto_provider()?;
+    Ok(reqwest::Client::builder())
 }
 
 fn environment(name: &str) -> Option<String> {
@@ -317,25 +360,15 @@ mod tests {
 
     #[test]
     fn parses_api_token() {
-        let opts = Opts::try_parse_from([
-            "brainpod",
-            "--api-token",
-            "brain_example",
-            "whoami",
-        ])
-        .unwrap();
+        let opts =
+            Opts::try_parse_from(["brainpod", "--api-token", "brain_example", "whoami"]).unwrap();
 
         assert_eq!(opts.api_token.as_deref(), Some("brain_example"));
     }
 
     #[test]
     fn rejects_api_key_flag() {
-        let result = Opts::try_parse_from([
-            "brainpod",
-            "--api-key",
-            "brain_example",
-            "whoami",
-        ]);
+        let result = Opts::try_parse_from(["brainpod", "--api-key", "brain_example", "whoami"]);
 
         assert!(result.is_err());
     }
@@ -346,6 +379,29 @@ mod tests {
 
         assert!(matches!(opts.command, Command::Cluster(_)));
         assert!(super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
+    fn parses_database_tunnel() {
+        let opts = Opts::try_parse_from([
+            "brainpod",
+            "--pod",
+            "my-pod",
+            "tunnel",
+            "db",
+            "127.0.0.1:15432",
+            "--skip-preflight",
+        ])
+        .unwrap();
+
+        let Command::Tunnel(args) = &opts.command else {
+            panic!("expected tunnel command");
+        };
+        assert_eq!(args.resource, "db");
+        assert_eq!(args.listen_address.unwrap().port(), 15432);
+        assert!(args.skip_preflight);
+        assert!(super::cmd::needs_client(&opts.command));
+        assert!(super::cmd::needs_api_token(&opts.command));
     }
 
     #[test]
@@ -412,21 +468,14 @@ mod tests {
 
     #[test]
     fn parses_image_inspect_with_default_visibility() {
-        let opts = Opts::try_parse_from(["brainpod", "image", "inspect", "api", "latest"])
-            .unwrap();
+        let opts = Opts::try_parse_from(["brainpod", "image", "inspect", "api", "latest"]).unwrap();
 
         assert!(matches!(opts.command, Command::Image(_)));
     }
 
     #[test]
     fn rejects_invalid_image_list_limit() {
-        let result = Opts::try_parse_from([
-            "brainpod",
-            "image",
-            "list",
-            "--limit",
-            "101",
-        ]);
+        let result = Opts::try_parse_from(["brainpod", "image", "list", "--limit", "101"]);
 
         assert!(result.is_err());
     }
@@ -480,10 +529,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_event_resource_urn() {
-        let result = Opts::try_parse_from(["brainpod", "events", "--resource", "api"]);
+    fn accepts_event_resource_name() {
+        let opts = Opts::try_parse_from(["brainpod", "events", "--resource", "api"]).unwrap();
 
-        assert!(result.is_err());
+        assert!(matches!(opts.command, Command::Events(_)));
     }
 
     #[test]

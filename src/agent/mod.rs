@@ -74,7 +74,10 @@ fn chat_id() -> Option<String> {
 
 fn slug(chat: &str) -> String {
     let digest = Sha256::digest(chat.as_bytes());
-    digest[..6].iter().map(|byte| format!("{byte:02x}")).collect()
+    digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[derive(Debug, Args)]
@@ -1016,7 +1019,9 @@ fn locate(root: &Path, chat: Option<&str>, ancestry: &[Owner]) -> Result<PathBuf
         }
     }
 
-    let mut live = found.iter().filter(|(_, session)| session.state == "running");
+    let mut live = found
+        .iter()
+        .filter(|(_, session)| session.state == "running");
     match (live.next(), live.next()) {
         (Some((path, _)), None) => return Ok(path.clone()),
         (Some(_), Some(_)) => {
@@ -1166,8 +1171,8 @@ pub fn render_clear(value: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        covers_console, locate, pod_url, slug, Owner, Session, Step, DIRECTORY, LOG_FILE, SCHEMA,
-        SESSION_FILE,
+        DIRECTORY, LOG_FILE, Owner, SCHEMA, SESSION_FILE, Session, Step, covers_console, locate,
+        pod_url, slug,
     };
     use std::fs;
     use std::path::Path;
@@ -1224,7 +1229,9 @@ mod tests {
         plant(root.path(), &slug("chat-a"), "running", &[owner(7)], 1);
         plant(root.path(), &slug("chat-b"), "running", &[owner(7)], 2);
 
-        let error = locate(root.path(), None, &[owner(7)]).unwrap_err().to_string();
+        let error = locate(root.path(), None, &[owner(7)])
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("--session"), "{error}");
     }
 
@@ -1243,7 +1250,11 @@ mod tests {
         let root = TempDir::new().unwrap();
         let flat = root.path().join(DIRECTORY);
         fs::create_dir_all(&flat).unwrap();
-        fs::write(flat.join(SESSION_FILE), b"{\"schema\":2,\"session\":\"old\"}").unwrap();
+        fs::write(
+            flat.join(SESSION_FILE),
+            b"{\"schema\":2,\"session\":\"old\"}",
+        )
+        .unwrap();
         fs::write(flat.join(LOG_FILE), b"").unwrap();
 
         assert_eq!(locate(root.path(), Some("chat-a"), &[]).unwrap(), flat);
@@ -1348,7 +1359,11 @@ mod tests {
     }
 
     fn states(session: &Session) -> Vec<&str> {
-        session.steps.iter().map(|step| step.state.as_str()).collect()
+        session
+            .steps
+            .iter()
+            .map(|step| step.state.as_str())
+            .collect()
     }
 
     #[test]

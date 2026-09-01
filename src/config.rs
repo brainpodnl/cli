@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.brainpod.io";
+pub const DEFAULT_CONTROL_PLANE_ENDPOINT: &str = "https://control-plane.brainpod.io";
 pub const DEFAULT_DASHBOARD_ENDPOINT: &str = "https://console.brainpod.io";
 pub const DEFAULT_REGISTRY_ENDPOINT: &str = "https://registry.brainpod.io";
 
@@ -12,6 +13,7 @@ pub const DEFAULT_REGISTRY_ENDPOINT: &str = "https://registry.brainpod.io";
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub endpoint: Option<String>,
+    pub control_plane_endpoint: Option<String>,
     pub registry_endpoint: Option<String>,
     pub api_token: Option<String>,
     pub pod: Option<String>,

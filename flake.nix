@@ -73,6 +73,9 @@
               in
               relative == "Cargo.toml"
               || relative == "Cargo.lock"
+              || relative == "build.rs"
+              || relative == "proto"
+              || pkgs.lib.hasPrefix "proto/" relative
               || relative == "src"
               || pkgs.lib.hasPrefix "src/" relative;
           };

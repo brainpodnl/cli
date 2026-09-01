@@ -35,6 +35,8 @@ pub enum Command {
     Image(ImageArgs),
     /// Inspect pod revisions
     Revision(RevisionArgs),
+    /// Create a local TCP tunnel to a deployed database
+    Tunnel(TunnelArgs),
     /// Create and manage pod resources
     Resource(ResourceArgs),
     /// Deploy the current draft revision
@@ -60,6 +62,17 @@ pub struct LoginArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct TunnelArgs {
+    /// Database resource name, URN, or stable UUID
+    pub resource: String,
+    /// Local IP address and port; defaults to loopback and the database engine's standard port
+    pub listen_address: Option<std::net::SocketAddr>,
+    /// Skip database credential preflight and password output
+    #[arg(long)]
+    pub skip_preflight: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct ConfigArgs {
     #[command(subcommand)]
     command: ConfigCommand,
@@ -80,6 +93,7 @@ enum ConfigCommand {
 #[derive(Clone, Debug, ValueEnum)]
 enum ConfigKey {
     Endpoint,
+    ControlPlaneEndpoint,
     RegistryEndpoint,
     ApiToken,
     Pod,
@@ -364,8 +378,8 @@ pub struct EventsArgs {
     /// Event stream; omit to return all streams for the resource
     #[arg(long)]
     kind: Option<EventKind>,
-    /// Event-capable resource URN
-    #[arg(long, value_name = "URN", value_parser = parse_event_resource_urn)]
+    /// Event-capable resource name, URN, or stable UUID
+    #[arg(long, value_name = "RESOURCE")]
     resource: String,
     /// Filter app events by level
     #[arg(long, requires = "kind")]
@@ -458,22 +472,19 @@ impl EventRange {
     }
 }
 
-fn parse_event_resource_urn(value: &str) -> std::result::Result<String, String> {
+fn is_event_resource_urn(value: &str) -> bool {
     let mut parts = value.split(':');
-    let valid = parts.next() == Some("urn")
+    parts.next() == Some("urn")
         && parts.next() == Some("brain")
         && parts.next().is_some_and(|kind| {
-            matches!(kind, "app" | "postgres" | "mariadb" | "valkey" | "route")
+            matches!(
+                kind,
+                "app" | "postgres" | "mariadb" | "valkey" | "mssql" | "route"
+            )
         })
         && parts.next() == Some("default")
         && parts.next().is_some_and(|name| !name.is_empty())
-        && parts.next().is_none();
-
-    if valid {
-        Ok(value.to_owned())
-    } else {
-        Err("must match urn:brain:<app|postgres|mariadb|valkey|route>:default:<name>".to_owned())
-    }
+        && parts.next().is_none()
 }
 
 pub fn needs_api_token(command: &Command) -> bool {
@@ -486,26 +497,38 @@ pub fn needs_api_token(command: &Command) -> bool {
 pub fn needs_client(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_)
-            | Command::Agent(_)
-            | Command::Login(_)
-            | Command::Config(_)
+        Command::Describe(_) | Command::Agent(_) | Command::Login(_) | Command::Config(_)
     )
 }
 
-pub async fn handle(
-    command: Command,
-    client: Option<&Client>,
-    endpoint: &str,
-    dashboard_endpoint: &str,
-    pod: Option<&str>,
-    api_token: Option<&str>,
-    registry_endpoint: &str,
-    config: &mut Config,
-    config_path: &Path,
-    show_progress: bool,
-    json: bool,
-) -> Result<CommandOutput> {
+pub struct CommandContext<'a> {
+    pub client: Option<&'a Client>,
+    pub endpoint: &'a str,
+    pub control_plane_endpoint: &'a str,
+    pub dashboard_endpoint: &'a str,
+    pub pod: Option<&'a str>,
+    pub api_token: Option<&'a str>,
+    pub registry_endpoint: &'a str,
+    pub config: &'a mut Config,
+    pub config_path: &'a Path,
+    pub show_progress: bool,
+    pub json: bool,
+}
+
+pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<CommandOutput> {
+    let CommandContext {
+        client,
+        endpoint,
+        control_plane_endpoint,
+        dashboard_endpoint,
+        pod,
+        api_token,
+        registry_endpoint,
+        config,
+        config_path,
+        show_progress,
+        json,
+    } = context;
     match command {
         Command::Describe(args) => Ok(CommandOutput::new(
             crate::describe::generate(crate::Opts::command(), &args.command)?,
@@ -533,9 +556,18 @@ pub async fn handle(
         )),
         Command::Cluster(args) => handle_cluster(client_required(client)?, args).await,
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
-        Command::Blueprint(args) => {
-            handle_blueprint(client_required(client)?, pod, args).await
+        Command::Tunnel(args) => {
+            crate::tunnel::handle(
+                client_required(client)?,
+                pod_required(pod)?,
+                args,
+                control_plane_endpoint,
+                api_token.ok_or_else(|| anyhow!("API token is required"))?,
+                json,
+            )
+            .await
         }
+        Command::Blueprint(args) => handle_blueprint(client_required(client)?, pod, args).await,
         Command::Image(args) => {
             handle_image(
                 client,
@@ -618,6 +650,7 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
             json!({
                 "path": path,
                 "endpoint": config.endpoint,
+                "controlPlaneEndpoint": config.control_plane_endpoint,
                 "registryEndpoint": config.registry_endpoint,
                 "apiTokenConfigured": config.api_token.is_some(),
                 "pod": config.pod,
@@ -637,6 +670,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 ConfigKey::Endpoint => {
                     config.endpoint = Some(value);
                     "endpoint"
+                }
+                ConfigKey::ControlPlaneEndpoint => {
+                    config.control_plane_endpoint = Some(value);
+                    "controlPlaneEndpoint"
                 }
                 ConfigKey::RegistryEndpoint => {
                     config.registry_endpoint = Some(value);
@@ -666,6 +703,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 ConfigKey::Endpoint => {
                     config.endpoint = None;
                     "endpoint"
+                }
+                ConfigKey::ControlPlaneEndpoint => {
+                    config.control_plane_endpoint = None;
+                    "controlPlaneEndpoint"
                 }
                 ConfigKey::RegistryEndpoint => {
                     config.registry_endpoint = None;
@@ -862,10 +903,7 @@ async fn handle_image(
             limit,
             offset,
         } => {
-            let mut query = vec![
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ];
+            let mut query = vec![("limit", limit.to_string()), ("offset", offset.to_string())];
             push_query(&mut query, "search", search);
             push_query(
                 &mut query,
@@ -904,25 +942,20 @@ async fn handle_image(
             platform,
             output,
         } => {
-            let platform = resolve_platform(
-                client_required(client)?,
-                platform,
-                config,
-                config_path,
-            )
-            .await?;
+            let platform =
+                resolve_platform(client_required(client)?, platform, config, config_path).await?;
             crate::agent::note("image", "Packaging your app", "running", None);
-            let built = crate::image::build(
+            let built = crate::image::build(crate::image::BuildRequest {
                 image,
                 context,
                 tag,
-                builder,
+                method: builder,
                 output,
                 platform,
                 pod,
                 api_token,
                 registry_endpoint,
-            )
+            })
             .await;
             match &built {
                 Ok(value) => crate::agent::note(
@@ -1252,8 +1285,13 @@ async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<C
         return Err(anyhow!("--level requires --kind app"));
     }
 
+    let resource = if is_event_resource_urn(&args.resource) {
+        args.resource
+    } else {
+        client.resolve_resource(pod, &args.resource).await?.urn
+    };
     let mut query = vec![
-        ("resource", args.resource),
+        ("resource", resource),
         ("range", args.range.as_api_str().to_owned()),
     ];
     push_query(

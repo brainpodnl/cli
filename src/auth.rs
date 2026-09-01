@@ -407,7 +407,8 @@ fn escape(text: &str) -> String {
 /// advertises, so the session file routinely outlives the server that wrote it.
 async fn handover() -> Option<String> {
     let url = crate::agent::console_url()?;
-    let http = reqwest::Client::builder()
+    let http = crate::http_client_builder()
+        .ok()?
         .timeout(HANDOVER_PROBE)
         .build()
         .ok()?;

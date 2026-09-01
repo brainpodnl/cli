@@ -43,7 +43,7 @@ impl<'a> Registry<'a> {
             api_token,
             authority,
             base,
-            http: Client::builder()
+            http: crate::http_client_builder()?
                 .timeout(NETWORK_TIMEOUT)
                 .build()
                 .context("failed to create registry client")?,
@@ -219,6 +219,11 @@ async fn expect_status(response: Response, expected: &[StatusCode]) -> Result<Re
     }
 }
 
+fn short(digest: &str) -> &str {
+    let digest = digest.strip_prefix("sha256:").unwrap_or(digest);
+    &digest[..digest.len().min(12)]
+}
+
 #[cfg(test)]
 mod tests {
     use reqwest::Url;
@@ -241,9 +246,4 @@ mod tests {
 
         assert!(registry.validate_upload_url(&other).is_err());
     }
-}
-
-fn short(digest: &str) -> &str {
-    let digest = digest.strip_prefix("sha256:").unwrap_or(digest);
-    &digest[..digest.len().min(12)]
 }
