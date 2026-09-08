@@ -5,7 +5,7 @@
 
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login and event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, database tunnels, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login, database tunnels, and event watches use NDJSON.
 
 The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
 
@@ -95,6 +95,7 @@ The default configuration file is `~/.config/brainpod/config.toml`. `XDG_CONFIG_
 brainpod config set api-token brain_example
 brainpod config set pod my-pod
 brainpod config set endpoint https://api.brainpod.io
+brainpod config set control-plane-endpoint https://control-plane.brainpod.io
 brainpod config set registry-endpoint https://registry.brainpod.io
 brainpod config set architecture arm64
 brainpod config show
@@ -105,6 +106,7 @@ Configuration uses TOML:
 
 ```toml
 endpoint = "https://api.brainpod.io"
+control_plane_endpoint = "https://control-plane.brainpod.io"
 registry_endpoint = "https://registry.brainpod.io"
 api_token = "brain_example"
 pod = "my-pod"
@@ -113,10 +115,10 @@ architecture = "amd64"
 
 Values are resolved in this order:
 
-1. Global flags: `--endpoint`, `--registry-endpoint`, `--api-token`, `--pod`
-2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_REGISTRY_ENDPOINT`, `BRAINPOD_API_TOKEN`, `BRAINPOD_POD`
+1. Global flags: `--endpoint`, `--control-plane-endpoint`, `--registry-endpoint`, `--api-token`, `--pod`
+2. `BRAINPOD_API_ENDPOINT`, `BRAINPOD_CONTROL_PLANE_ENDPOINT`, `BRAINPOD_REGISTRY_ENDPOINT`, `BRAINPOD_API_TOKEN`, `BRAINPOD_POD`
 3. The configuration file
-4. The defaults `https://api.brainpod.io` and `https://registry.brainpod.io`
+4. The defaults `https://api.brainpod.io`, `https://control-plane.brainpod.io`, and `https://registry.brainpod.io`
 
 For image builds, `--platform` overrides the configured architecture. Without it, the CLI probes the available clusters, prefers `amd64` and then `arm64`, and stores the selected architecture in the configuration.
 
@@ -196,19 +198,45 @@ brainpod --pod <pod> resource replace <kind> <name> --file <path|->
 brainpod --pod <pod> resource delete <kind> <name>
 brainpod --pod <pod> resource variables [<kind> <name>] [--revision <uuid> | --at <timestamp>]
 
+brainpod --pod <pod> tunnel <database-resource> [<listen-address>] [--skip-preflight]
+
 brainpod --pod <pod> deploy [--summary <text>] [--wait] [--timeout <seconds>]
 brainpod --pod <pod> redeploy
 
-brainpod --pod <pod> events --resource <urn> [--kind <app|http-access|platform>] \
+brainpod --pod <pod> events --resource <resource> [--kind <app|http-access|platform>] \
   [--level <trace|debug|info|warn|error>] [--search <text>] \
   [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>]
-brainpod --pod <pod> events --watch --resource <urn> \
+brainpod --pod <pod> events --watch --resource <resource> \
   [--kind <app|http-access|platform>] [--level <trace|debug|info|warn|error>] \
   [--search <text>] [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>] \
   [--duration <1-20>] [--last-event-id <id>]
 ```
 
-Events use the resource URN returned by resource list, get, or mutation responses, such as `urn:brain:app:default:api`. Omit `--kind` to return every stream available for that resource. `--level` requires `--kind app`.
+`brainpod tunnel` creates a two-hour database tunnel session and forwards local TCP connections until Ctrl-C is pressed. Select the pod with `--pod`, `BRAINPOD_POD`, or the configured default, then identify a deployed PostgreSQL, MariaDB, Valkey, or Microsoft SQL Server resource by name, URN, or stable UUID. For example, `brainpod --pod my-pod tunnel db` resolves `db` through the API before opening the tunnel. The listener defaults to `127.0.0.1` and the engine's standard port; pass an explicit address such as `127.0.0.1:15432` to override it. By default, the command prints an engine-specific banner with the local-to-remote port mapping, credentials, client command, and DSN before it starts accepting connections, so GUI clients such as DBeaver can be configured first. Pass `--skip-preflight` to skip credential retrieval and omit the password and DSN. The API token must grant `resources:read` and `database:connect` for the database or its pod.
+
+```text
+╭─ ◆ Brainpod tunnel
+│
+│  PostgreSQL
+│  Local      127.0.0.1:15432
+│  Remote     PostgreSQL:5432
+│
+│  Username   brainpod
+│  Database   brainpod
+│  Password   ...
+│
+├─ Client
+│  psql "host=127.0.0.1 port=15432 user=brainpod dbname=brainpod sslmode=require"
+│
+├─ DSN
+│  postgres://brainpod:...@127.0.0.1:15432/brainpod?sslmode=require
+│
+╰─ ● Ready · press Ctrl+C to stop
+```
+
+New, closed, and failed local connections are reported as concise status lines while the tunnel is running.
+
+Events accept a resource name, URN, or stable UUID. For example, `brainpod --pod my-pod events --resource api` resolves `api` to its canonical URN before querying events. Passing a URN directly skips resolution, so an API token with only `events:read` remains sufficient; resolving a name or UUID also requires `resources:read`. Omit `--kind` to return every stream available for the resource. `--level` requires `--kind app`.
 
 Event watches flush text or JSON output as messages arrive and reconnect after each server-imposed stream duration, continuing until interrupted. The per-request duration defaults to 10 seconds. Reconnects use the latest SSE event ID to avoid replaying emitted events. Use `--last-event-id` to set the initial event ID; `--cursor` resumes the initial request from an API event cursor.
 

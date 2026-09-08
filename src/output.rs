@@ -7,7 +7,7 @@ use crate::client::{EventStreamMessage, EventWatch};
 
 pub enum CommandOutput {
     Buffered { value: Value, view: View },
-    EventWatch(EventWatch),
+    EventWatch(Box<EventWatch>),
 }
 
 impl CommandOutput {
@@ -15,8 +15,8 @@ impl CommandOutput {
         Self::Buffered { value, view }
     }
 
-    pub const fn event_watch(watch: EventWatch) -> Self {
-        Self::EventWatch(watch)
+    pub fn event_watch(watch: EventWatch) -> Self {
+        Self::EventWatch(Box::new(watch))
     }
 }
 
@@ -42,6 +42,7 @@ pub enum View {
     ImageBuild,
     ImageList,
     ImageInspect,
+    Tunnel,
     RevisionList,
     RevisionGet,
     RevisionDiff,
@@ -60,7 +61,7 @@ pub enum View {
 pub async fn write(output: CommandOutput, json: bool) -> Result<()> {
     match output {
         CommandOutput::Buffered { value, view } => write_buffered(&value, view, json),
-        CommandOutput::EventWatch(watch) => write_event_watch(watch, json).await,
+        CommandOutput::EventWatch(watch) => write_event_watch(*watch, json).await,
     }
 }
 
@@ -72,6 +73,9 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
     if json {
         if matches!(view, View::Login) {
             write_login_json(&mut stdout, value)?;
+        } else if matches!(view, View::Tunnel) {
+            serde_json::to_writer(&mut stdout, value)?;
+            writeln!(stdout)?;
         } else {
             serde_json::to_writer_pretty(&mut stdout, value)?;
             writeln!(stdout)?;
@@ -179,6 +183,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::ImageBuild => render_image_build(value),
         View::ImageList => render_image_list(value),
         View::ImageInspect => render_image_inspect(value),
+        View::Tunnel => vec![format!("Tunnel closed: {}", field(value, "address"))],
         View::RevisionList => render_revision_list(value),
         View::RevisionGet => render_revision(value),
         View::RevisionDiff => render_revision_diff(value),
@@ -266,7 +271,11 @@ fn render_describe(value: &Value) -> Vec<String> {
     if !examples.is_empty() {
         lines.push(String::new());
         lines.push("Examples".to_owned());
-        lines.extend(examples.iter().map(|example| format!("  {}", scalar(example))));
+        lines.extend(
+            examples
+                .iter()
+                .map(|example| format!("  {}", scalar(example))),
+        );
     }
 
     let next_steps = command
@@ -292,16 +301,15 @@ fn render_describe(value: &Value) -> Vec<String> {
     if !guidance.is_empty() {
         lines.push(String::new());
         lines.push("Guidance".to_owned());
-        lines.extend(
-            guidance
-                .iter()
-                .map(|item| format!("  - {}", scalar(item))),
-        );
+        lines.extend(guidance.iter().map(|item| format!("  - {}", scalar(item))));
     }
 
     if let Some(resource_schemas) = value.get("resourceSchemas") {
         lines.push(String::new());
-        lines.extend(render_resource_schema_list(resource_schemas, "Resource kinds"));
+        lines.extend(render_resource_schema_list(
+            resource_schemas,
+            "Resource kinds",
+        ));
     }
 
     lines
@@ -425,9 +433,9 @@ fn render_schema_properties(
         .and_then(|schema| schema.get("required"))
         .and_then(Value::as_array);
     for (name, property) in properties {
-        let marker = if required.is_some_and(|required| {
-            required.iter().any(|value| value.as_str() == Some(name))
-        }) {
+        let marker = if required
+            .is_some_and(|required| required.iter().any(|value| value.as_str() == Some(name)))
+        {
             " (required)"
         } else {
             ""
@@ -449,7 +457,10 @@ fn schema_summary(schema: &Value) -> String {
         .map(scalar)
         .map(|value| format!("const {value}"))
         .or_else(|| {
-            schema.get("type").and_then(Value::as_str).map(str::to_owned)
+            schema
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
         })
         .unwrap_or_else(|| {
             schema
@@ -498,6 +509,10 @@ fn render_config_show(value: &Value) -> Vec<String> {
     vec![
         format!("Config: {}", field(value, "path")),
         format!("Endpoint: {}", field(value, "endpoint")),
+        format!(
+            "Control-plane endpoint: {}",
+            field(value, "controlPlaneEndpoint")
+        ),
         format!("Registry endpoint: {}", field(value, "registryEndpoint")),
         format!(
             "API token configured: {}",
@@ -653,10 +668,7 @@ fn render_cluster_list(value: &Value) -> Vec<String> {
             ]
         })
         .collect();
-    table(
-        &["ID", "PROVIDER", "REGION", "ARCHITECTURES"],
-        rows,
-    )
+    table(&["ID", "PROVIDER", "REGION", "ARCHITECTURES"], rows)
 }
 
 fn render_pod_list(value: &Value) -> Vec<String> {
@@ -764,7 +776,10 @@ fn render_blueprint(value: &Value) -> Vec<String> {
         String::new(),
         "Documentation".to_owned(),
     ];
-    let body = value.get("body").and_then(Value::as_str).unwrap_or_default();
+    let body = value
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if body.is_empty() {
         lines.push("  None".to_owned());
     } else {
@@ -1383,11 +1398,7 @@ fn truncated_string_list(value: Option<&Value>, limit: usize) -> String {
         return "-".to_owned();
     }
 
-    let mut items = values
-        .iter()
-        .take(limit)
-        .map(scalar)
-        .collect::<Vec<_>>();
+    let mut items = values.iter().take(limit).map(scalar).collect::<Vec<_>>();
     if values.len() > limit {
         items.push("...".to_owned());
     }
@@ -1444,12 +1455,18 @@ mod tests {
         assert!(lines.iter().any(|line| line == "Policy (version 1):"));
         assert!(lines.iter().any(|line| line == "  pods-read (allow)"));
         assert!(lines.iter().any(|line| line == "    Actions: pods:read"));
-        assert!(lines
-            .iter()
-            .any(|line| line == "    Resources: urn:brain:pod:*"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "    Resources: urn:brain:pod:*")
+        );
         assert!(lines.iter().any(|line| line == "Permissions"));
         assert!(lines.iter().any(|line| line == "  pods:read"));
-        assert!(lines.iter().any(|line| line == "    Excluded resources: none"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "    Excluded resources: none")
+        );
         assert!(lines.iter().any(|line| line == "Links"));
         assert!(lines.iter().any(|line| line == "  Pods: /v1/pods"));
     }
@@ -1566,9 +1583,11 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("amd64, arm64, ...")));
         assert!(!lines.iter().any(|line| line.contains("VISIBILITY")));
         assert!(!lines.iter().any(|line| line.contains("REFERENCE")));
-        assert!(!lines
-            .iter()
-            .any(|line| line.contains("registry.example/my-pod/api@sha256:abc")));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.contains("registry.example/my-pod/api@sha256:abc"))
+        );
         assert!(lines.iter().any(|line| line.starts_with("Next: ")));
     }
 
@@ -1630,16 +1649,26 @@ mod tests {
             lines[0].split_whitespace().collect::<Vec<_>>(),
             vec!["NAME", "REF", "VALUE", "SECRET"]
         );
-        assert!(lines
-            .iter()
-            .any(|line| line.starts_with("host") && line.contains("db") && line.ends_with("no")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("<secret>") && line.ends_with("yes")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("<unresolved>") && line.ends_with("no")));
-        assert!(!lines.iter().any(|line| line.contains("Generated in-cluster")));
+        assert!(
+            lines.iter().any(|line| line.starts_with("host")
+                && line.contains("db")
+                && line.ends_with("no"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("<secret>") && line.ends_with("yes"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("<unresolved>") && line.ends_with("no"))
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.contains("Generated in-cluster"))
+        );
     }
 
     #[test]
@@ -1665,9 +1694,11 @@ mod tests {
 
         assert!(lines.iter().any(|line| line == "Variables"));
         assert!(lines.iter().any(|line| line.contains("${<name>.uri}")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("postgres://${<name>.user}@<name>:5432/brainpod")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("postgres://${<name>.user}@<name>:5432/brainpod"))
+        );
     }
 
     #[test]
@@ -1686,11 +1717,15 @@ mod tests {
         }));
 
         assert!(lines.iter().any(|line| line.contains("VARIABLES")));
-        assert!(lines
-            .iter()
-            .any(|line| line.starts_with("Postgres") && line.contains("host, uri")));
-        assert!(lines
-            .iter()
-            .any(|line| line.starts_with("Disk") && line.contains("none")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Postgres") && line.contains("host, uri"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Disk") && line.contains("none"))
+        );
     }
 }

@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package brainpod.tunnel.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Client-facing control-plane API. Calls are authenticated with the client's
+// control-plane credentials, not with a tunnel ticket.
+service TunnelBroker {
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  // Prevents new connections. Existing connections keep their fixed deadline.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message OpenSessionRequest {
+  string database_id = 1;
+  // Client-generated UUID used to make retries idempotent for these credentials.
+  string request_id = 2;
+}
+
+message OpenSessionResponse {
+  // URI of the endpoint implementing TunnelService.
+  string endpoint = 1;
+  // Bearer capability reusable for connections until the session expires.
+  string ticket = 2;
+  string session_id = 3;
+  // Fixed deadline. Existing connections are closed when it is reached.
+  google.protobuf.Timestamp expires_at = 4;
+  DatabaseEngine engine = 5;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
+
+enum DatabaseEngine {
+  DATABASE_ENGINE_UNSPECIFIED = 0;
+  DATABASE_ENGINE_POSTGRES = 1;
+  DATABASE_ENGINE_MARIADB = 2;
+  DATABASE_ENGINE_VALKEY = 3;
+  DATABASE_ENGINE_MSSQL = 4;
+}

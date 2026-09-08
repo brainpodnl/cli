@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package brainpod.tunnel.v1;
+
+// Relays one TCP connection. The client presents its opaque ticket using
+// `authorization: Bearer <ticket>` gRPC metadata for broker authorization.
+service TunnelService {
+  rpc Open(stream Chunk) returns (stream Chunk);
+}
+
+message Chunk {
+  // Chunks must contain between 1 byte and 64 KiB.
+  bytes data = 1;
+}

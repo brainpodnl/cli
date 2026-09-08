@@ -3,6 +3,7 @@ use std::fmt;
 use anyhow::{Context, Result, anyhow};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderValue};
 use reqwest::{Method, Response, StatusCode, Url};
+use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -32,6 +33,12 @@ pub struct EventStreamMessage {
     pub data: String,
 }
 
+#[derive(Deserialize)]
+pub struct ResourceIdentity {
+    pub urn: String,
+    pub uuid: String,
+}
+
 impl Client {
     pub fn try_new(endpoint: &str, api_token: &str) -> Result<Self> {
         if api_token.trim().is_empty() {
@@ -43,7 +50,7 @@ impl Client {
         let authorization = reqwest::header::HeaderValue::from_str(&format!("Bearer {api_token}"))
             .context("API token contains invalid header characters")?;
         headers.insert(reqwest::header::AUTHORIZATION, authorization);
-        let http = reqwest::Client::builder()
+        let http = crate::http_client_builder()?
             .default_headers(headers)
             .build()
             .context("failed to create HTTP client")?;
@@ -53,6 +60,17 @@ impl Client {
 
     pub async fn get(&self, path: &[&str], query: &[(&str, String)]) -> Result<Value> {
         self.request(Method::GET, path, query, None).await
+    }
+
+    pub async fn resolve_resource(&self, pod: &str, identifier: &str) -> Result<ResourceIdentity> {
+        let value = self
+            .get(
+                &["v1", "pods", pod, "resources", "resolve", identifier],
+                &[],
+            )
+            .await
+            .with_context(|| format!("failed to resolve resource `{identifier}` in pod `{pod}`"))?;
+        serde_json::from_value(value).context("Brainpod API returned an invalid resource identity")
     }
 
     pub async fn post(

@@ -110,17 +110,30 @@ pub(super) struct ImageLayout {
     runtime_user: Option<String>,
 }
 
-pub async fn build(
-    image: String,
-    context: PathBuf,
-    tag: String,
-    method: BuildMethod,
-    output: Option<PathBuf>,
-    platform: String,
-    pod: &str,
-    api_token: &str,
-    registry_endpoint: &str,
-) -> Result<Value> {
+pub struct BuildRequest<'a> {
+    pub image: String,
+    pub context: PathBuf,
+    pub tag: String,
+    pub method: BuildMethod,
+    pub output: Option<PathBuf>,
+    pub platform: String,
+    pub pod: &'a str,
+    pub api_token: &'a str,
+    pub registry_endpoint: &'a str,
+}
+
+pub async fn build(request: BuildRequest<'_>) -> Result<Value> {
+    let BuildRequest {
+        image,
+        context,
+        tag,
+        method,
+        output,
+        platform,
+        pod,
+        api_token,
+        registry_endpoint,
+    } = request;
     validate_repository(&image)?;
     validate_namespace(pod)?;
     validate_tag(&tag)?;
@@ -604,7 +617,7 @@ async fn railpack_binary() -> Result<PathBuf> {
         "https://github.com/railwayapp/railpack/releases/download/{RAILPACK_VERSION}/{archive_name}"
     );
     eprintln!("Downloading Railpack {RAILPACK_VERSION}");
-    let http = reqwest::Client::builder()
+    let http = crate::http_client_builder()?
         .timeout(NETWORK_TIMEOUT)
         .build()
         .context("failed to create Railpack download client")?;

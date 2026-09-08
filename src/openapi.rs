@@ -65,9 +65,10 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
 
 async fn load_spec(url: &str) -> Result<(Value, &'static str)> {
     if let Ok(spec) = fetch_spec(url).await
-        && resource_schemas(&spec).is_ok() {
-            return Ok((spec, "remote"));
-        }
+        && resource_schemas(&spec).is_ok()
+    {
+        return Ok((spec, "remote"));
+    }
 
     let embedded = serde_json::from_str(EMBEDDED_OPENAPI)
         .context("embedded Brainpod OpenAPI specification is invalid JSON")?;
@@ -75,7 +76,7 @@ async fn load_spec(url: &str) -> Result<(Value, &'static str)> {
 }
 
 async fn fetch_spec(url: &str) -> Result<Value> {
-    let http = reqwest::Client::builder()
+    let http = crate::http_client_builder()?
         .timeout(Duration::from_secs(5))
         .build()
         .context("failed to create OpenAPI client")?;
