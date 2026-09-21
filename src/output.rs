@@ -1174,7 +1174,7 @@ fn render_event(event: &Value, color: bool) -> String {
     }
 }
 
-fn style(value: &str, code: &str, enabled: bool) -> String {
+pub(crate) fn style(value: &str, code: &str, enabled: bool) -> String {
     if enabled && !code.is_empty() {
         format!("\u{1b}[{code}m{value}\u{1b}[0m")
     } else {

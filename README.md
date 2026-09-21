@@ -42,6 +42,17 @@ Confirm the install with a command that needs no API token:
 brainpod describe
 ```
 
+### Staying current
+
+Interactive runs report a newer release once it exists, after the command's own output:
+
+```
+Update Available
+New version 0.0.6 is available, you are on 0.0.5. Download: https://github.com/brainpodnl/cli/releases/latest
+```
+
+The check reads where the `latest` alias redirects, which costs one request carrying no body, at most once a day; the answer is cached in `version-check.json` beside the configuration file and every other run that day reads it from there. An attempt that never came back — an unreachable GitHub, or a link slower than the moment the CLI is willing to wait — is retried an hour later rather than a day later, and a configuration directory that cannot be written to disables the check rather than turning it into a request per command. It never delays a command by more than a moment: the request runs alongside the command and anything still in flight when the command ends is left for the next run to read. Runs that a program reads stay silent and make no request at all — `--json`, anything whose standard error is not a terminal, and anything with `CI` set. Set `BRAINPOD_NO_UPDATE_CHECK=1` to turn it off entirely. Unstamped builds report `0.0.0-dev` (see [Versioning](#versioning)) and are never compared against a release, so a checkout build stays quiet.
+
 Building from source needs Nix; this is the same build the release workflow runs:
 
 ```sh
