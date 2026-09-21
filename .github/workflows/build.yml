@@ -59,6 +59,21 @@ jobs:
       - name: Build
         run: nix build ".#packages.${{ matrix.system }}.${{ matrix.package }}"
 
+      - name: Verify reported version
+        if: matrix.package == 'default'
+        run: |
+          set -euo pipefail
+          expected="brainpod $(tr -d '[:space:]' < VERSION)"
+          if ! reported="$(./result/bin/brainpod --version 2>&1)"; then
+            echo "::error::could not run the ${{ matrix.system }} binary on ${{ matrix.runner }}: $reported"
+            exit 1
+          fi
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::binary reports '$reported' but VERSION expects '$expected'"
+            exit 1
+          fi
+          echo "$reported"
+
       - name: Package Unix binary
         if: matrix.package == 'default'
         run: |
