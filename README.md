@@ -11,14 +11,15 @@ The CLI builds application images locally from an existing Dockerfile or with Ra
 
 ## Install
 
-Published releases carry a prebuilt binary for Linux and macOS on amd64 and arm64. There is no Windows build; under WSL2, use the Linux asset. Pick the asset for your platform:
+Published releases carry prebuilt binaries for Linux and macOS on amd64 and arm64, and for Windows on amd64. Pick the asset for your platform:
 
-| `uname -s` | `uname -m` | Asset |
+| OS | Architecture | Asset |
 |---|---|---|
-| `Linux` | `x86_64` | `brainpod-amd64-linux.tar.gz` |
-| `Linux` | `aarch64` or `arm64` | `brainpod-arm64-linux.tar.gz` |
-| `Darwin` | `x86_64` | `brainpod-amd64-macos.tar.gz` |
-| `Darwin` | `arm64` | `brainpod-arm64-macos.tar.gz` |
+| Linux | `x86_64` | `brainpod-amd64-linux.tar.gz` |
+| Linux | `aarch64` or `arm64` | `brainpod-arm64-linux.tar.gz` |
+| macOS | `x86_64` | `brainpod-amd64-macos.tar.gz` |
+| macOS | `arm64` | `brainpod-arm64-macos.tar.gz` |
+| Windows | `x86_64` | `brainpod-amd64-windows.zip` |
 
 Download it alongside the checksum file and verify it before extracting. The `latest` alias redirects to the newest published release:
 
@@ -29,7 +30,7 @@ shasum -a 256 --ignore-missing -c SHA256SUMS
 tar -xzf brainpod-arm64-macos.tar.gz
 ```
 
-Use `sha256sum --ignore-missing -c SHA256SUMS` on Linux. The archive contains a single `brainpod` binary; make it executable and move it into a directory already on your `PATH`. The macOS binaries are not notarized yet, so clear the quarantine attribute if Gatekeeper blocks one:
+Use `sha256sum --ignore-missing -c SHA256SUMS` on Linux. The Unix archives contain a single `brainpod` binary; the Windows zip contains `brainpod.exe`. Extract it into a directory already on your `PATH`. Make the Unix binary executable first. The macOS binaries are not notarized yet, so clear the quarantine attribute if Gatekeeper blocks one:
 
 ```sh
 xattr -d com.apple.quarantine brainpod
@@ -46,6 +47,14 @@ Building from source needs Nix; this is the same build the release workflow runs
 ```sh
 nix build
 ```
+
+Cross-compile the Windows binary from an x86_64 Linux Nix host with:
+
+```sh
+nix build .#packages.x86_64-linux.windows
+```
+
+The result is `result/bin/brainpod.exe`. API commands and database tunnels work natively on Windows. Railpack image builds are unavailable because Railpack does not publish a Windows binary; use a Dockerfile or run image builds under WSL2.
 
 `nix develop` gives you the toolchain, `rustfmt`, and `rust-analyzer` for working on the CLI itself. `direnv` picks up the same shell through `.envrc`.
 

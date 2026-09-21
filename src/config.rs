@@ -30,10 +30,17 @@ impl Config {
             return Ok(PathBuf::from(path).join("brainpod/config.toml"));
         }
 
-        let home = std::env::var_os("HOME")
+        #[cfg(windows)]
+        let directory =
+            dirs::config_dir().ok_or_else(|| anyhow!("cannot locate config directory"))?;
+
+        #[cfg(not(windows))]
+        let directory = std::env::var_os("HOME")
             .map(PathBuf::from)
-            .ok_or_else(|| anyhow!("cannot locate config directory: HOME is not set"))?;
-        Ok(home.join(".config/brainpod/config.toml"))
+            .ok_or_else(|| anyhow!("cannot locate config directory: HOME is not set"))?
+            .join(".config");
+
+        Ok(directory.join("brainpod/config.toml"))
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -69,6 +76,12 @@ impl Config {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
                 .with_context(|| format!("failed to secure config {}", temporary.display()))?;
+        }
+
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path)
+                .with_context(|| format!("failed to replace config {}", path.display()))?;
         }
 
         fs::rename(&temporary, path)

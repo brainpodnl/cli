@@ -10,24 +10,37 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.system }}
+    name: Build ${{ matrix.artifact }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - system: x86_64-linux
+            package: default
             runner: ubuntu-latest
             artifact: brainpod-amd64-linux
+            archive: brainpod-amd64-linux.tar.gz
           - system: x86_64-darwin
+            package: default
             runner: macos-14
             artifact: brainpod-amd64-macos
+            archive: brainpod-amd64-macos.tar.gz
           - system: aarch64-linux
+            package: default
             runner: ubuntu-24.04-arm
             artifact: brainpod-arm64-linux
+            archive: brainpod-arm64-linux.tar.gz
           - system: aarch64-darwin
+            package: default
             runner: macos-14
             artifact: brainpod-arm64-macos
+            archive: brainpod-arm64-macos.tar.gz
+          - system: x86_64-linux
+            package: windows
+            runner: ubuntu-latest
+            artifact: brainpod-amd64-windows
+            archive: brainpod-amd64-windows.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -39,24 +52,33 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-v1-${{ matrix.system }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
-          restore-prefixes-first-match: nix-v1-${{ matrix.system }}-
+          primary-key: nix-v1-${{ matrix.system }}-${{ matrix.package }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-v1-${{ matrix.system }}-${{ matrix.package }}-
           gc-max-store-size: 2G
 
       - name: Build
-        run: nix build ".#packages.${{ matrix.system }}.default"
+        run: nix build ".#packages.${{ matrix.system }}.${{ matrix.package }}"
 
-      - name: Package
+      - name: Package Unix binary
+        if: matrix.package == 'default'
         run: |
           mkdir package
           cp -L result/bin/brainpod package/brainpod
-          tar -C package -czf "${{ matrix.artifact }}.tar.gz" brainpod
+          tar -C package -czf "${{ matrix.archive }}" brainpod
+
+      - name: Package Windows binary
+        if: matrix.package == 'windows'
+        run: |
+          mkdir package
+          cp -L result/bin/brainpod.exe package/brainpod.exe
+          cd package
+          zip "../${{ matrix.archive }}" brainpod.exe
 
       - name: Publish artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
+          path: ${{ matrix.archive }}
           if-no-files-found: error
 
   publish:
@@ -75,7 +97,7 @@ jobs:
 
       - name: Checksums
         working-directory: binaries
-        run: sha256sum *.tar.gz > SHA256SUMS
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS
 
       - name: Upload to release
         working-directory: binaries
@@ -83,4 +105,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" *.tar.gz SHA256SUMS --clobber
+        run: gh release upload "$TAG" *.tar.gz *.zip SHA256SUMS --clobber
