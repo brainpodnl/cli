@@ -16,6 +16,7 @@ mod image;
 mod openapi;
 mod output;
 mod tunnel;
+mod update;
 
 use client::{ApiError, Client};
 use cmd::Command;
@@ -76,7 +77,11 @@ async fn main() -> ExitCode {
     }
     agent::configure(opts.session.clone());
 
-    match run(opts).await {
+    // Started before the command so the two run side by side: whatever the
+    // command spends talking to the API is time this costs nobody.
+    let update = update::start(json_output);
+
+    let code = match run(opts).await {
         Ok(value) => match output::write(value, json_output).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,
@@ -90,7 +95,10 @@ async fn main() -> ExitCode {
             write_error(&error, json_output);
             ExitCode::FAILURE
         }
-    }
+    };
+
+    update.notify().await;
+    code
 }
 
 async fn run(opts: Opts) -> Result<output::CommandOutput> {
@@ -220,7 +228,7 @@ pub(crate) fn http_client_builder() -> Result<reqwest::ClientBuilder> {
     Ok(reqwest::Client::builder())
 }
 
-fn environment(name: &str) -> Option<String> {
+pub(crate) fn environment(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
         .filter(|value| !value.trim().is_empty())
