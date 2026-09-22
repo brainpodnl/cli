@@ -399,9 +399,26 @@ mod tests {
         };
         assert_eq!(args.resource, "db");
         assert_eq!(args.listen_address.unwrap().port(), 15432);
+        assert_eq!(args.port, None);
         assert!(args.skip_preflight);
         assert!(super::cmd::needs_client(&opts.command));
         assert!(super::cmd::needs_api_token(&opts.command));
+    }
+
+    #[test]
+    fn parses_app_tunnel_with_an_explicit_remote_port() {
+        let opts = Opts::try_parse_from([
+            "brainpod", "--pod", "my-pod", "tunnel", "web", "--port", "9090",
+        ])
+        .unwrap();
+
+        let Command::Tunnel(args) = &opts.command else {
+            panic!("expected tunnel command");
+        };
+        assert_eq!(args.resource, "web");
+        assert_eq!(args.listen_address, None);
+        assert_eq!(args.port, Some(9090));
+        assert!(!args.skip_preflight);
     }
 
     #[test]
