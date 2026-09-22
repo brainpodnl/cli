@@ -36,14 +36,14 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "json": "Pass --json to emit the complete API response as one JSON value for non-streaming commands.",
             "loginJson": "Login emits an authorize event followed by an authenticated event as NDJSON on stdout.",
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
-            "tunnelJson": "Tunnels emit listening, optional credentials, and closed events as NDJSON.",
+            "tunnelJson": "Tunnels emit listening, optional credentials, and closed events as NDJSON. The listening and closed events carry targetKind (database or app); engine is null for apps, and the credentials event is emitted for database targets only.",
             "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
             "Use --json for complete machine-readable API responses and errors; login, event watches, and tunnels are streamed as NDJSON.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
-            "Database tunnels resolve a resource name, URN, or stable UUID in the selected pod and listen on loopback by default until Ctrl-C is pressed.",
+            "Tunnels resolve a resource name, URN, or stable UUID in the selected pod and listen on loopback by default until Ctrl-C is pressed. The target is a database or an app that declares ports; a session reaches exactly one remote port, so use --port to pick among an app's ports and run one tunnel per port.",
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
@@ -353,7 +353,8 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
             "Secret values are never returned; reference them instead of reading them.",
         ],
         ["tunnel"] => vec![
-            "Keep the tunnel running while the local database client is connected.",
+            "Keep the tunnel running while the local client is connected.",
+            "Open one tunnel per port when an app exposes several.",
             "Press Ctrl-C to close the tunnel session.",
         ],
         _ => Vec::new(),
@@ -378,6 +379,7 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["tunnel"] => vec![
             "brainpod --pod my-pod tunnel db",
             "brainpod --pod my-pod tunnel urn:brain:postgres:default:db 127.0.0.1:15432",
+            "brainpod --pod my-pod tunnel web --port 8080",
         ],
         ["blueprint", "get"] => vec!["brainpod blueprint get laravel"],
         ["blueprint", "install"] => vec![

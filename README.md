@@ -5,7 +5,7 @@
 
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, database tunnels, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login, database tunnels, and event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, tunnels, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login, tunnels, and event watches use NDJSON.
 
 The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
 
@@ -54,7 +54,7 @@ Cross-compile the Windows binary from an x86_64 Linux Nix host with:
 nix build .#packages.x86_64-linux.windows
 ```
 
-The result is `result/bin/brainpod.exe`. API commands and database tunnels work natively on Windows. Railpack image builds are unavailable because Railpack does not publish a Windows binary; use a Dockerfile or run image builds under WSL2.
+The result is `result/bin/brainpod.exe`. API commands and tunnels work natively on Windows. Railpack image builds are unavailable because Railpack does not publish a Windows binary; use a Dockerfile or run image builds under WSL2.
 
 `nix develop` gives you the toolchain, `rustfmt`, and `rust-analyzer` for working on the CLI itself. `direnv` picks up the same shell through `.envrc`.
 
@@ -207,7 +207,7 @@ brainpod --pod <pod> resource replace <kind> <name> --file <path|->
 brainpod --pod <pod> resource delete <kind> <name>
 brainpod --pod <pod> resource variables [<kind> <name>] [--revision <uuid> | --at <timestamp>]
 
-brainpod --pod <pod> tunnel <database-resource> [<listen-address>] [--skip-preflight]
+brainpod --pod <pod> tunnel <resource> [<listen-address>] [--port <port>] [--skip-preflight]
 
 brainpod --pod <pod> deploy [--summary <text>] [--wait] [--timeout <seconds>]
 brainpod --pod <pod> redeploy
@@ -221,7 +221,13 @@ brainpod --pod <pod> events --watch --resource <resource> \
   [--duration <1-20>] [--last-event-id <id>]
 ```
 
-`brainpod tunnel` creates a two-hour database tunnel session and forwards local TCP connections until Ctrl-C is pressed. Select the pod with `--pod`, `BRAINPOD_POD`, or the configured default, then identify a deployed PostgreSQL, MariaDB, Valkey, or Microsoft SQL Server resource by name, URN, or stable UUID. For example, `brainpod --pod my-pod tunnel db` resolves `db` through the API before opening the tunnel. The listener defaults to `127.0.0.1` and the engine's standard port; pass an explicit address such as `127.0.0.1:15432` to override it. By default, the command prints an engine-specific banner with the local-to-remote port mapping, credentials, client command, and DSN before it starts accepting connections, so GUI clients such as DBeaver can be configured first. Pass `--skip-preflight` to skip credential retrieval and omit the password and DSN. The API token must grant `resources:read` and `database:connect` for the database or its pod.
+`brainpod tunnel` creates a two-hour tunnel session and forwards local TCP connections until Ctrl-C is pressed. Select the pod with `--pod`, `BRAINPOD_POD`, or the configured default, then identify the target by name, URN, or stable UUID: a deployed PostgreSQL, MariaDB, Valkey, or Microsoft SQL Server resource, or an app that declares ports. For example, `brainpod --pod my-pod tunnel db` resolves `db` through the API before opening the tunnel.
+
+A session reaches exactly one remote port. Databases use their engine port and ignore `--port`. An app that declares a single port needs no `--port`; an app that declares several requires one, and the error lists the ports it exposes. To reach two ports of the same app, run two tunnels.
+
+The listener defaults to `127.0.0.1` and the remote port, so `brainpod --pod my-pod tunnel web` on an app serving 8080 listens on `127.0.0.1:8080`. Pass an explicit address such as `127.0.0.1:15432` to override it.
+
+Before accepting connections the command prints a banner with the local-to-remote port mapping and a client command. Database targets also preflight their managed credentials and print the username, database, password, and DSN, so GUI clients such as DBeaver can be configured; pass `--skip-preflight` to suppress that. Apps have no managed credentials, so nothing is fetched and no password is printed.
 
 ```text
 ╭─ ◆ Brainpod tunnel
@@ -239,6 +245,21 @@ brainpod --pod <pod> events --watch --resource <resource> \
 │
 ├─ DSN
 │  postgres://brainpod:...@127.0.0.1:15432/brainpod?sslmode=require
+│
+╰─ ● Ready · press Ctrl+C to stop
+```
+
+An app tunnel prints the same frame without the credential block:
+
+```text
+╭─ ◆ Brainpod tunnel
+│
+│  App
+│  Local      127.0.0.1:8080
+│  Remote     App:8080
+│
+├─ Client
+│  curl http://127.0.0.1:8080/
 │
 ╰─ ● Ready · press Ctrl+C to stop
 ```
