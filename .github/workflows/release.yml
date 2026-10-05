@@ -23,7 +23,7 @@ jobs:
             archive: brainpod-amd64-linux.tar.gz
           - system: x86_64-darwin
             package: default
-            runner: macos-14
+            runner: macos-15-intel
             artifact: brainpod-amd64-macos
             archive: brainpod-amd64-macos.tar.gz
           - system: aarch64-linux
@@ -33,7 +33,7 @@ jobs:
             archive: brainpod-arm64-linux.tar.gz
           - system: aarch64-darwin
             package: default
-            runner: macos-14
+            runner: macos-15
             artifact: brainpod-arm64-macos
             archive: brainpod-arm64-macos.tar.gz
           - system: x86_64-linux
