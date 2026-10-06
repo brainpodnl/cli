@@ -13,9 +13,13 @@ service TunnelBroker {
 }
 
 message OpenSessionRequest {
-  string database_id = 1;
+  // Stable UUID of the resource to tunnel to.
+  string resource_id = 1;
   // Client-generated UUID used to make retries idempotent for these credentials.
   string request_id = 2;
+  // Port to reach on the target. Required when an app declares more than one
+  // port. Ignored for databases, which expose a single engine port.
+  uint32 port = 3;
 }
 
 message OpenSessionResponse {
@@ -26,7 +30,11 @@ message OpenSessionResponse {
   string session_id = 3;
   // Fixed deadline. Existing connections are closed when it is reached.
   google.protobuf.Timestamp expires_at = 4;
+  // Set only when target_kind is TARGET_KIND_DATABASE.
   DatabaseEngine engine = 5;
+  TargetKind target_kind = 6;
+  // Remote port this session is bound to.
+  uint32 port = 7;
 }
 
 message CloseSessionRequest {
@@ -34,6 +42,12 @@ message CloseSessionRequest {
 }
 
 message CloseSessionResponse {}
+
+enum TargetKind {
+  TARGET_KIND_UNSPECIFIED = 0;
+  TARGET_KIND_DATABASE = 1;
+  TARGET_KIND_APP = 2;
+}
 
 enum DatabaseEngine {
   DATABASE_ENGINE_UNSPECIFIED = 0;

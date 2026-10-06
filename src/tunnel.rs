@@ -25,7 +25,7 @@ mod pb {
 
 use pb::tunnel_broker_client::TunnelBrokerClient;
 use pb::tunnel_service_client::TunnelServiceClient;
-use pb::{Chunk, CloseSessionRequest, DatabaseEngine, OpenSessionRequest};
+use pb::{Chunk, CloseSessionRequest, DatabaseEngine, OpenSessionRequest, TargetKind};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CHUNK_BYTES: usize = 64 * 1024;
@@ -90,6 +90,51 @@ impl fmt::Display for RemoteTunnelError {
 
 impl std::error::Error for RemoteTunnelError {}
 
+/// What a tunnel session points at. A session binds exactly one remote port,
+/// so an app exposing several ports needs one session per port.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Target {
+    Database(DatabaseEngine),
+    App,
+}
+
+impl Target {
+    fn decode(target_kind: i32, engine: i32) -> Result<Self> {
+        match TargetKind::try_from(target_kind) {
+            Ok(TargetKind::Database) => DatabaseEngine::try_from(engine)
+                .ok()
+                .filter(|engine| *engine != DatabaseEngine::Unspecified)
+                .map(Self::Database)
+                .ok_or_else(|| {
+                    anyhow!("Brainpod tunnel broker returned an unknown database engine")
+                }),
+            Ok(TargetKind::App) => Ok(Self::App),
+            Ok(TargetKind::Unspecified) | Err(_) => Err(anyhow!(
+                "Brainpod tunnel broker returned an unknown target kind; update the Brainpod CLI"
+            )),
+        }
+    }
+
+    /// Databases hand out a managed password; apps have no credentials.
+    const fn has_credentials(self) -> bool {
+        matches!(self, Self::Database(_))
+    }
+
+    const fn kind_name(self) -> &'static str {
+        match self {
+            Self::Database(_) => "database",
+            Self::App => "app",
+        }
+    }
+
+    const fn engine_name(self) -> Option<&'static str> {
+        match self {
+            Self::Database(engine) => Some(engine_name(engine)),
+            Self::App => None,
+        }
+    }
+}
+
 pub async fn handle(
     client: &Client,
     pod: &str,
@@ -98,7 +143,7 @@ pub async fn handle(
     api_token: &str,
     json_output: bool,
 ) -> Result<CommandOutput> {
-    let database_id = client
+    let resource_id = client
         .resolve_resource(pod, &args.resource)
         .await?
         .uuid
@@ -110,8 +155,9 @@ pub async fn handle(
         .context("failed to connect to the Brainpod tunnel broker")?;
     let mut broker = TunnelBrokerClient::new(channel);
     let mut open_request = Request::new(OpenSessionRequest {
-        database_id: database_id.to_string(),
+        resource_id: resource_id.to_string(),
         request_id: Uuid::new_v4().to_string(),
+        port: u32::from(args.port.unwrap_or_default()),
     });
     open_request
         .metadata_mut()
@@ -121,19 +167,21 @@ pub async fn handle(
         .await
         .map_err(|status| RemoteTunnelError::status("failed to create tunnel session", status))?
         .into_inner();
-    let engine = DatabaseEngine::try_from(session.engine)
+    let target = Target::decode(session.target_kind, session.engine)?;
+    let remote_port = u16::try_from(session.port)
         .ok()
-        .filter(|engine| *engine != DatabaseEngine::Unspecified)
-        .ok_or_else(|| anyhow!("Brainpod tunnel broker returned an unknown database engine"))?;
+        .filter(|port| *port != 0)
+        .ok_or_else(|| anyhow!("Brainpod tunnel broker returned an invalid remote port"))?;
     let listen_address = args
         .listen_address
-        .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), default_port(engine)));
+        .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), remote_port));
 
     let proxy_result = run_proxy(
         listen_address,
         &session.endpoint,
         &session.ticket,
-        engine,
+        target,
+        remote_port,
         json_output,
         args.skip_preflight,
     )
@@ -160,7 +208,8 @@ pub async fn handle(
         json!({
             "event": "closed",
             "address": bound_address,
-            "engine": engine_name(engine),
+            "targetKind": target.kind_name(),
+            "engine": target.engine_name(),
         }),
         View::Tunnel,
     ))
@@ -170,7 +219,8 @@ async fn run_proxy(
     listen_address: SocketAddr,
     endpoint: &str,
     ticket: &str,
-    engine: DatabaseEngine,
+    target: Target,
+    remote_port: u16,
     json_output: bool,
     skip_preflight: bool,
 ) -> Result<SocketAddr> {
@@ -185,7 +235,7 @@ async fn run_proxy(
         .context("failed to connect to the Brainpod tunnel service")?;
     let client = TunnelServiceClient::new(channel);
     let ticket = ticket.to_owned();
-    let password = if skip_preflight {
+    let password = if skip_preflight || !target.has_credentials() {
         None
     } else {
         let mut connection = open_remote(client.clone(), ticket.clone(), true).await?;
@@ -196,7 +246,13 @@ async fn run_proxy(
         drop(connection);
         Some(password)
     };
-    announce(listen_address, engine, password.as_deref(), json_output)?;
+    announce(
+        listen_address,
+        target,
+        remote_port,
+        password.as_deref(),
+        json_output,
+    )?;
     let mut connections = JoinSet::new();
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -364,11 +420,12 @@ async fn connect_channel(endpoint: &str) -> Result<Channel> {
 
 fn announce(
     address: SocketAddr,
-    engine: DatabaseEngine,
+    target: Target,
+    remote_port: u16,
     password: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
-    let details = connection_details(address, engine, password);
+    let details = connection_details(address, target, password);
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     if json_output {
@@ -380,8 +437,9 @@ fn announce(
                 "address": address,
                 "host": address.ip(),
                 "localPort": address.port(),
-                "remotePort": details.remote_port,
-                "engine": engine_name(engine),
+                "remotePort": remote_port,
+                "targetKind": target.kind_name(),
+                "engine": target.engine_name(),
                 "clientCommand": details.client_command,
             }))?
         )
@@ -403,20 +461,19 @@ fn announce(
     } else {
         let color = stdout.is_terminal();
         let title = style("◆ Brainpod tunnel", "1;35", color);
-        let engine = style(details.display_name, "1;36", color);
+        let display_name = style(details.display_name, "1;36", color);
         let ready = style("● Ready", "1;32", color);
         let label = |value: &str| style(&format!("{value:<10}"), "2", color);
 
         writeln!(stdout, "╭─ {title}")?;
         writeln!(stdout, "│")?;
-        writeln!(stdout, "│  {engine}")?;
+        writeln!(stdout, "│  {display_name}")?;
         writeln!(stdout, "│  {} {address}", label("Local"))?;
         writeln!(
             stdout,
-            "│  {} {}:{}",
+            "│  {} {}:{remote_port}",
             label("Remote"),
-            details.display_name,
-            details.remote_port
+            details.display_name
         )?;
         if details.username.is_some() || details.database.is_some() || password.is_some() {
             writeln!(stdout, "│")?;
@@ -511,7 +568,6 @@ fn style(value: &str, code: &str, enabled: bool) -> String {
 
 struct ConnectionDetails {
     display_name: &'static str,
-    remote_port: u16,
     username: Option<&'static str>,
     database: Option<&'static str>,
     client_command: String,
@@ -520,17 +576,28 @@ struct ConnectionDetails {
 
 fn connection_details(
     address: SocketAddr,
-    engine: DatabaseEngine,
+    target: Target,
     password: Option<&str>,
 ) -> ConnectionDetails {
     let host = address.ip();
     let dsn_host = dsn_host(host);
     let port = address.port();
     let password = password.map(percent_encode);
+    let engine = match target {
+        Target::App => {
+            return ConnectionDetails {
+                display_name: "App",
+                username: None,
+                database: None,
+                client_command: format!("curl http://{dsn_host}:{port}/"),
+                dsn: None,
+            };
+        }
+        Target::Database(engine) => engine,
+    };
     match engine {
         DatabaseEngine::Postgres => ConnectionDetails {
             display_name: "PostgreSQL",
-            remote_port: 5432,
             username: Some("brainpod"),
             database: Some("brainpod"),
             client_command: format!(
@@ -544,7 +611,6 @@ fn connection_details(
         },
         DatabaseEngine::Mariadb => ConnectionDetails {
             display_name: "MariaDB",
-            remote_port: 3306,
             username: Some("brainpod"),
             database: Some("brainpod"),
             client_command: format!(
@@ -556,7 +622,6 @@ fn connection_details(
         },
         DatabaseEngine::Valkey => ConnectionDetails {
             display_name: "Valkey",
-            remote_port: 6379,
             username: None,
             database: None,
             client_command: format!("valkey-cli --tls --insecure -h {host} -p {port}"),
@@ -565,7 +630,6 @@ fn connection_details(
         },
         DatabaseEngine::Mssql => ConnectionDetails {
             display_name: "Microsoft SQL Server",
-            remote_port: 1433,
             username: Some("brainpod"),
             database: Some("brainpod"),
             client_command: format!(
@@ -579,7 +643,6 @@ fn connection_details(
         },
         DatabaseEngine::Unspecified => ConnectionDetails {
             display_name: "Database",
-            remote_port: 0,
             username: None,
             database: None,
             client_command: address.to_string(),
@@ -613,16 +676,6 @@ fn bearer_value(token: &str) -> Result<MetadataValue<tonic::metadata::Ascii>> {
         .context("API token contains invalid header characters")
 }
 
-const fn default_port(engine: DatabaseEngine) -> u16 {
-    match engine {
-        DatabaseEngine::Postgres => 5432,
-        DatabaseEngine::Mariadb => 3306,
-        DatabaseEngine::Valkey => 6379,
-        DatabaseEngine::Mssql => 1433,
-        DatabaseEngine::Unspecified => 0,
-    }
-}
-
 const fn engine_name(engine: DatabaseEngine) -> &'static str {
     match engine {
         DatabaseEngine::Postgres => "postgres",
@@ -637,18 +690,18 @@ const fn engine_name(engine: DatabaseEngine) -> &'static str {
 mod tests {
     use std::net::SocketAddr;
 
-    use super::{DatabaseEngine, RemoteTunnelError, connection_details};
+    use super::{DatabaseEngine, RemoteTunnelError, Target, TargetKind, connection_details};
 
     #[test]
     fn formats_remote_status_without_metadata() {
         let error = RemoteTunnelError::status(
             "tunnel service rejected the connection",
-            tonic::Status::unavailable("database unavailable"),
+            tonic::Status::unavailable("tunnel target unavailable"),
         );
 
         assert_eq!(
             error.to_string(),
-            "tunnel service rejected the connection: database unavailable (Unavailable)"
+            "tunnel service rejected the connection: tunnel target unavailable (Unavailable)"
         );
         assert!(!error.ends_tunnel);
     }
@@ -658,19 +711,64 @@ mod tests {
         for status in [
             tonic::Status::unauthenticated("invalid tunnel credentials"),
             tonic::Status::deadline_exceeded("tunnel session expired"),
-            tonic::Status::failed_precondition("database credentials unavailable"),
+            tonic::Status::failed_precondition("resource credentials unavailable"),
         ] {
             assert!(RemoteTunnelError::status("connection failed", status).ends_tunnel);
         }
     }
 
     #[test]
+    fn decodes_database_and_app_targets() {
+        assert_eq!(
+            Target::decode(TargetKind::Database as i32, DatabaseEngine::Postgres as i32).unwrap(),
+            Target::Database(DatabaseEngine::Postgres)
+        );
+        assert_eq!(
+            Target::decode(TargetKind::App as i32, DatabaseEngine::Unspecified as i32).unwrap(),
+            Target::App
+        );
+    }
+
+    #[test]
+    fn rejects_a_database_target_without_an_engine() {
+        let error = Target::decode(
+            TargetKind::Database as i32,
+            DatabaseEngine::Unspecified as i32,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown database engine"));
+    }
+
+    #[test]
+    fn rejects_an_unknown_target_kind() {
+        let error = Target::decode(TargetKind::Unspecified as i32, 0).unwrap_err();
+
+        assert!(error.to_string().contains("unknown target kind"));
+    }
+
+    #[test]
+    fn app_targets_have_no_credentials() {
+        assert!(!Target::App.has_credentials());
+        assert_eq!(Target::App.kind_name(), "app");
+        assert_eq!(Target::App.engine_name(), None);
+        assert!(Target::Database(DatabaseEngine::Postgres).has_credentials());
+        assert_eq!(
+            Target::Database(DatabaseEngine::Postgres).engine_name(),
+            Some("postgres")
+        );
+    }
+
+    #[test]
     fn builds_postgres_banner_details() {
         let address = "127.0.0.1:15432".parse::<SocketAddr>().unwrap();
-        let details = connection_details(address, DatabaseEngine::Postgres, Some("p@ ss"));
+        let details = connection_details(
+            address,
+            Target::Database(DatabaseEngine::Postgres),
+            Some("p@ ss"),
+        );
 
         assert_eq!(details.display_name, "PostgreSQL");
-        assert_eq!(details.remote_port, 5432);
         assert_eq!(details.username, Some("brainpod"));
         assert_eq!(details.database, Some("brainpod"));
         assert_eq!(
@@ -683,9 +781,28 @@ mod tests {
     #[test]
     fn omits_dsn_without_preflight_credentials() {
         let address = "127.0.0.1:16379".parse::<SocketAddr>().unwrap();
-        let details = connection_details(address, DatabaseEngine::Valkey, None);
+        let details = connection_details(address, Target::Database(DatabaseEngine::Valkey), None);
 
-        assert_eq!(details.remote_port, 6379);
         assert!(details.dsn.is_none());
+    }
+
+    #[test]
+    fn builds_app_banner_details_without_credentials() {
+        let address = "127.0.0.1:8080".parse::<SocketAddr>().unwrap();
+        let details = connection_details(address, Target::App, None);
+
+        assert_eq!(details.display_name, "App");
+        assert_eq!(details.username, None);
+        assert_eq!(details.database, None);
+        assert_eq!(details.dsn, None);
+        assert_eq!(details.client_command, "curl http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn brackets_ipv6_hosts_in_the_app_client_command() {
+        let address = "[::1]:8080".parse::<SocketAddr>().unwrap();
+        let details = connection_details(address, Target::App, None);
+
+        assert_eq!(details.client_command, "curl http://[::1]:8080/");
     }
 }

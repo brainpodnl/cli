@@ -35,7 +35,7 @@ pub enum Command {
     Image(ImageArgs),
     /// Inspect pod revisions
     Revision(RevisionArgs),
-    /// Create a local TCP tunnel to a deployed database
+    /// Create a local TCP tunnel to a deployed database or app
     Tunnel(TunnelArgs),
     /// Create and manage pod resources
     Resource(ResourceArgs),
@@ -63,10 +63,13 @@ pub struct LoginArgs {
 
 #[derive(Debug, Args)]
 pub struct TunnelArgs {
-    /// Database resource name, URN, or stable UUID
+    /// Resource name, URN, or stable UUID: a database, or an app that declares ports
     pub resource: String,
-    /// Local IP address and port; defaults to loopback and the database engine's standard port
+    /// Local IP address and port; defaults to loopback and the target's remote port
     pub listen_address: Option<std::net::SocketAddr>,
+    /// Remote port to reach; required when an app declares more than one port
+    #[arg(long)]
+    pub port: Option<u16>,
     /// Skip database credential preflight and password output
     #[arg(long)]
     pub skip_preflight: bool,
