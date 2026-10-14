@@ -24,6 +24,11 @@
       overlays = [ (import rust-overlay) ];
       eachSystem = nixpkgs.lib.genAttrs supportedSystems;
 
+      # The release workflow rewrites ./VERSION from the release tag before
+      # `nix build`. It is deliberately outside the crane source filter below,
+      # so stamping a release does not invalidate cargoArtifacts.
+      version = nixpkgs.lib.head (nixpkgs.lib.splitString "\n" (builtins.readFile ./VERSION));
+
       rustTargetFor =
         pkgs:
         if pkgs.stdenv.hostPlatform.isWindows then
@@ -108,7 +113,8 @@
             craneLib.buildPackage (
               craneArgs
               // {
-                inherit cargoArtifacts;
+                inherit cargoArtifacts version;
+                BRAINPOD_VERSION = version;
                 meta.mainProgram = if pkgs.stdenv.hostPlatform.isWindows then "brainpod.exe" else "brainpod";
               }
               // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

@@ -45,6 +45,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version from release tag
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG:-}" ]; then
+            echo "::error::release tag_name is empty, refusing to build an unversioned release"
+            exit 1
+          fi
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::release tag '$TAG' is not a semver version, refusing to ship a wrong version"
+            exit 1
+          fi
+          printf '%s\n' "$version" > VERSION
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -58,6 +76,22 @@ jobs:
 
       - name: Build
         run: nix build ".#packages.${{ matrix.system }}.${{ matrix.package }}"
+
+      - name: Verify reported version
+        if: matrix.package == 'default'
+        env:
+          EXPECTED: brainpod ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! reported="$(./result/bin/brainpod --version 2>&1)"; then
+            echo "::error::could not run the ${{ matrix.system }} binary on ${{ matrix.runner }}: $reported"
+            exit 1
+          fi
+          if [ "$reported" != "$EXPECTED" ]; then
+            echo "::error::binary reports '$reported' but the release tag expects '$EXPECTED'"
+            exit 1
+          fi
+          echo "$reported"
 
       - name: Package Unix binary
         if: matrix.package == 'default'

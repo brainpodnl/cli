@@ -28,7 +28,7 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
 
     Ok(json!({
         "schemaVersion": 1,
-        "cliVersion": root.get_version().unwrap_or(env!("CARGO_PKG_VERSION")),
+        "cliVersion": root.get_version().unwrap_or(env!("BRAINPOD_VERSION")),
         "command": describe_command(command, &resolved_path),
         "globalArguments": global_arguments,
         "outputContract": {
