@@ -19,7 +19,7 @@ jobs:
         include:
           - system: x86_64-linux
             package: default
-            runner: ubuntu-latest
+            runner: [self-hosted, nix]
             artifact: brainpod-amd64-linux
             archive: brainpod-amd64-linux.tar.gz
           - system: x86_64-darwin
@@ -39,7 +39,7 @@ jobs:
             archive: brainpod-arm64-macos.tar.gz
           - system: x86_64-linux
             package: windows
-            runner: ubuntu-latest
+            runner: [self-hosted, nix]
             artifact: brainpod-amd64-windows
             archive: brainpod-amd64-windows.zip
 
@@ -47,10 +47,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: cachix/install-nix-action@v31
+        if: matrix.system != 'x86_64-linux'
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Restore and save Nix store
+        if: matrix.system != 'x86_64-linux'
         uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-v1-${{ matrix.system }}-${{ matrix.package }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
@@ -73,7 +75,7 @@ jobs:
           mkdir package
           cp -L result/bin/brainpod.exe package/brainpod.exe
           cd package
-          zip "../${{ matrix.archive }}" brainpod.exe
+          nix shell --inputs-from "$GITHUB_WORKSPACE" nixpkgs#zip --command zip "../${{ matrix.archive }}" brainpod.exe
 
       - name: Publish artifact
         uses: actions/upload-artifact@v4
