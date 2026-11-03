@@ -16,6 +16,7 @@ flate2 = "1.1.2"
 getrandom = "0.3.4"
 prost = "0.13.5"
 prost-types = "0.13.5"
+quick-xml = { version = "0.38.4", features = ["serialize"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["charset", "http2", "json", "query", "rustls-no-provider", "stream", "system-proxy"] }
 rustls = { version = "0.23.40", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.228", features = ["derive"] }

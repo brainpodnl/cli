@@ -33,6 +33,8 @@ pub enum Command {
     Blueprint(BlueprintArgs),
     /// Manage container images
     Image(ImageArgs),
+    /// Transfer and list objects through the Pod-scoped S3 gateway
+    S3(crate::s3::S3Args),
     /// Inspect pod revisions
     Revision(RevisionArgs),
     /// Create a local TCP tunnel to a deployed database
@@ -95,6 +97,7 @@ enum ConfigKey {
     Endpoint,
     ControlPlaneEndpoint,
     RegistryEndpoint,
+    S3Endpoint,
     ApiToken,
     Pod,
     Architecture,
@@ -497,7 +500,11 @@ pub fn needs_api_token(command: &Command) -> bool {
 pub fn needs_client(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_) | Command::Agent(_) | Command::Login(_) | Command::Config(_)
+        Command::S3(_)
+            | Command::Describe(_)
+            | Command::Agent(_)
+            | Command::Login(_)
+            | Command::Config(_)
     )
 }
 
@@ -509,6 +516,7 @@ pub struct CommandContext<'a> {
     pub pod: Option<&'a str>,
     pub api_token: Option<&'a str>,
     pub registry_endpoint: &'a str,
+    pub s3_endpoint: &'a str,
     pub config: &'a mut Config,
     pub config_path: &'a Path,
     pub show_progress: bool,
@@ -524,6 +532,7 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
         pod,
         api_token,
         registry_endpoint,
+        s3_endpoint,
         config,
         config_path,
         show_progress,
@@ -550,6 +559,15 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
             View::Login,
         )),
         Command::Config(args) => handle_config(args, config, config_path),
+        Command::S3(args) => {
+            crate::s3::handle(
+                args,
+                s3_endpoint,
+                pod_required(pod)?,
+                api_token.ok_or_else(|| anyhow!("API token is required"))?,
+            )
+            .await
+        }
         Command::Whoami => Ok(CommandOutput::new(
             client_required(client)?.get(&["v1", "me"], &[]).await?,
             View::Whoami,
@@ -652,6 +670,7 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 "endpoint": config.endpoint,
                 "controlPlaneEndpoint": config.control_plane_endpoint,
                 "registryEndpoint": config.registry_endpoint,
+                "s3Endpoint": config.s3_endpoint,
                 "apiTokenConfigured": config.api_token.is_some(),
                 "pod": config.pod,
                 "architecture": config.architecture,
@@ -674,6 +693,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 ConfigKey::ControlPlaneEndpoint => {
                     config.control_plane_endpoint = Some(value);
                     "controlPlaneEndpoint"
+                }
+                ConfigKey::S3Endpoint => {
+                    config.s3_endpoint = Some(value);
+                    "s3Endpoint"
                 }
                 ConfigKey::RegistryEndpoint => {
                     config.registry_endpoint = Some(value);
@@ -707,6 +730,10 @@ fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<C
                 ConfigKey::ControlPlaneEndpoint => {
                     config.control_plane_endpoint = None;
                     "controlPlaneEndpoint"
+                }
+                ConfigKey::S3Endpoint => {
+                    config.s3_endpoint = None;
+                    "s3Endpoint"
                 }
                 ConfigKey::RegistryEndpoint => {
                     config.registry_endpoint = None;

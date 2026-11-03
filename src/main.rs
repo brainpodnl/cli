@@ -15,13 +15,14 @@ mod describe;
 mod image;
 mod openapi;
 mod output;
+mod s3;
 mod tunnel;
 
 use client::{ApiError, Client};
 use cmd::Command;
 use config::{
     Config, DEFAULT_CONTROL_PLANE_ENDPOINT, DEFAULT_DASHBOARD_ENDPOINT, DEFAULT_ENDPOINT,
-    DEFAULT_REGISTRY_ENDPOINT,
+    DEFAULT_REGISTRY_ENDPOINT, DEFAULT_S3_ENDPOINT,
 };
 
 const UPGRADE_URL: &str = "https://console.brainpod.io/onboarding?upgrade=1";
@@ -30,7 +31,7 @@ const UPGRADE_URL: &str = "https://console.brainpod.io/onboarding?upgrade=1";
 #[command(
     name = "brainpod",
     version,
-    about = "Manage Brainpod deployments, images, resources, and database tunnels",
+    about = "Manage Brainpod deployments, images, resources, object storage, and database tunnels",
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
 pub(crate) struct Opts {
@@ -53,6 +54,10 @@ pub(crate) struct Opts {
     /// Brainpod registry endpoint (overrides environment and config)
     #[arg(long, global = true)]
     registry_endpoint: Option<String>,
+
+    /// S3 gateway base origin; the selected Pod is prepended to its hostname
+    #[arg(long, global = true)]
+    s3_endpoint: Option<String>,
 
     /// Default pod for pod-scoped commands
     #[arg(long, global = true)]
@@ -152,6 +157,11 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
         .or_else(|| environment("BRAINPOD_REGISTRY_ENDPOINT"))
         .or_else(|| config.registry_endpoint.clone())
         .unwrap_or_else(|| DEFAULT_REGISTRY_ENDPOINT.to_owned());
+    let s3_endpoint = opts
+        .s3_endpoint
+        .or_else(|| environment("BRAINPOD_S3_ENDPOINT"))
+        .or_else(|| config.s3_endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_S3_ENDPOINT.to_owned());
     let pod = opts
         .pod
         .or_else(|| environment("BRAINPOD_POD"))
@@ -189,6 +199,7 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
             pod: pod.as_deref(),
             api_token: api_token.as_deref(),
             registry_endpoint: &registry_endpoint,
+            s3_endpoint: &s3_endpoint,
             config: &mut config,
             config_path: &config_path,
             show_progress,

@@ -5,7 +5,7 @@
 
 # Brainpod CLI
 
-A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, database tunnels, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login, database tunnels, and event watches use NDJSON.
+A non-interactive CLI for managing Brainpod pods, images, blueprints, revisions, resources, deployments, object storage, database tunnels, and events. Its default output is deterministic line-oriented text suitable for LLMs and shell tools. Add `--json` to receive machine-readable JSON; login, database tunnels, and event watches use NDJSON.
 
 The CLI builds application images locally from an existing Dockerfile or with Railpack, then pushes them directly to the selected pod's private Brainpod registry namespace. Image builds probe the API's cluster architectures, prefer amd64 and then arm64, and store the selected default architecture in the configuration. Use `--platform linux/arm64` for a one-off override.
 
@@ -373,3 +373,57 @@ Create and deploy:
 brainpod resource create --file resources.json --json
 brainpod deploy --summary "Configure application resources" --json
 ```
+
+## S3 gateway
+
+Use the normal Brainpod API token and selected Pod (`--pod`, `BRAINPOD_POD`, or configured default). The key needs explicit `s3:list`, `s3:read`, and/or `s3:write` policies for that Pod; write includes replacement and deletion. Existing keys are not expanded automatically. Buckets must already be provisioned through the resource workflow.
+
+```sh
+brainpod --pod my-pod s3 ls
+brainpod --pod my-pod s3 ls s3://uploads/images/
+brainpod --pod my-pod s3 cp ./photo.jpg s3://uploads/images/photo.jpg
+brainpod --pod my-pod s3 upload ./photo.jpg s3://uploads/photo.jpg
+brainpod --pod my-pod s3 cp s3://uploads/photo.jpg ./downloaded.jpg
+brainpod --pod my-pod s3 cp s3://uploads/photo.jpg s3://archive/photo.jpg
+brainpod --pod my-pod s3 mv s3://uploads/photo.jpg s3://uploads/renamed.jpg
+brainpod --pod my-pod s3 rm s3://uploads/renamed.jpg
+```
+
+Remote paths are `s3://<logical-bucket>/<literal-key>` within the selected Pod, not provider bucket names or URLs. Keys are literal UTF-8: quote shell metacharacters, and do not pre-percent-encode spaces, plus signs, or percent signs. Repeated and trailing slashes are preserved; dot-segment object keys are rejected to prevent URL normalization. Listings show one level of objects/prefixes and automatically fetch every page. `--json` returns an `items` array or a transfer/deletion result.
+
+Transfers require explicit file/key destinations (no implicit basename or directory expansion). Local destinations must not already exist; downloads are saved atomically after success. Remote destinations replace existing keys. All `cp`/`mv` transfers, including downloads and gateway-to-gateway copies, and file-based `upload` are limited to **25 MiB** and buffered in bounded memory. Explicit streaming upload/download modes are described below. Gateway copies download then upload, not native CopyObject. `mv` deletes its source only after a successful copy; a deletion failure reports that both copies may remain. Moves are not atomic: avoid concurrent changes to the source. `rm` deletes one exact key, including a trailing-slash marker, never prefix contents.
+
+The default gateway origin is `https://s3.brainpod.io`; the CLI prepends the selected Pod name to its hostname. Override the base origin with `--s3-endpoint`, `BRAINPOD_S3_ENDPOINT`, or `brainpod config set s3-endpoint https://s3.example.test` (in that precedence order). For local development, use `http://s3.brainpod.localhost` with working wildcard DNS. HTTP is unencrypted and should only be used locally. The API endpoint does not change the S3 origin.
+
+Downloads explicitly accept the gateway's 307 redirect and use a separate unauthenticated HTTPS request to the short-lived provider URL. Brainpod Bearer credentials are never sent to the provider; further redirects are rejected. Presigned URLs are not printed. There is no AWS SigV4 client authentication, public HEAD, recursive/sync transfer or deletion, bucket administration, ranged reads, or metadata preservation for `cp`/`mv`. Multipart is reserved for explicit stdin streaming uploads. Transfer errors return a nonzero exit status; interrupted uploads can have an uncertain remote outcome, so inspect the key before retrying.
+
+### Streaming transfers
+
+`upload -` uses sequential **8 MiB** multipart parts (up to 10,000 parts, about 78 GiB), rather than buffering the entire object. It requires a multipart-capable endpoint and `s3:write`.
+
+EOF alone cannot prove that an upstream producer succeeded, so stdin uploads require `--require-success-file PATH`. After EOF, completion is allowed only when that regular file contains exactly `commit` followed by one newline. Use a fresh private directory for each attempt and write the marker only after the entire producer pipeline succeeds. Keep the producer subshell's stdout open until after writing the marker, so EOF cannot race its creation.
+
+```bash
+set -euo pipefail
+run_dir=$(mktemp -d)
+trap 'rm -rf "$run_dir"' EXIT
+(
+  set -euo pipefail
+  cat ./large-object.bin
+  printf 'commit\n' > "$run_dir/success"
+) | brainpod s3 upload - s3://uploads/large-object.bin \
+      --require-success-file "$run_dir/success" \
+      --metadata project=example
+```
+
+Generic object metadata is accepted on multipart initiation using repeated `--metadata KEY=VALUE`. Keys must be nonempty valid HTTP header names; values must be nonempty printable ASCII. Metadata names and values together may total at most 2048 bytes, and duplicate keys are rejected case-insensitively. Endpoint-specific metadata policies are enforced by the server.
+
+Missing or invalid markers, input errors, rejected parts, malformed completion responses (including HTTP 200 `<Error>`), SIGINT, and SIGTERM fail the upload and attempt to abort it. Completion/network failures can have an uncertain outcome; inspect the exact key before retrying. Abrupt process termination or failed aborts can leave incomplete uploads requiring endpoint cleanup.
+
+Stream an object to stdout without the small-copy limit:
+
+```sh
+brainpod s3 download s3://uploads/large-object.bin - > ./large-object.bin
+```
+
+`download` currently requires destination `-`. Stdout contains only raw object bytes, even with `--json`; diagnostics stay on stderr. Provider requests use unauthenticated HTTPS with redirects disabled. An interrupted transfer can emit a partial object, so check the complete pipeline's exit status; early consumer closure follows normal Unix broken-pipe behavior. Network inactivity is bounded, but streaming downloads have no whole-object timeout or size cap. Input/output use bounded worker handoffs so cancellation does not wait for an unresponsive pipe reader/writer.

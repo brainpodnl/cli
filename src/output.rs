@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use crate::client::{EventStreamMessage, EventWatch};
 
 pub enum CommandOutput {
+    Silent,
     Buffered { value: Value, view: View },
     EventWatch(Box<EventWatch>),
 }
@@ -22,6 +23,7 @@ impl CommandOutput {
 
 #[derive(Clone, Copy)]
 pub enum View {
+    S3,
     Describe,
     ResourceSchema,
     AgentStart,
@@ -60,6 +62,7 @@ pub enum View {
 
 pub async fn write(output: CommandOutput, json: bool) -> Result<()> {
     match output {
+        CommandOutput::Silent => Ok(()),
         CommandOutput::Buffered { value, view } => write_buffered(&value, view, json),
         CommandOutput::EventWatch(watch) => write_event_watch(*watch, json).await,
     }
@@ -159,6 +162,7 @@ fn stream_error(data: &str) -> anyhow::Error {
 
 fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
+        View::S3 => crate::s3::render(value),
         View::Describe => render_describe(value),
         View::ResourceSchema => render_resource_schema(value),
         View::AgentStart => crate::agent::render_start(value),
@@ -514,6 +518,7 @@ fn render_config_show(value: &Value) -> Vec<String> {
             field(value, "controlPlaneEndpoint")
         ),
         format!("Registry endpoint: {}", field(value, "registryEndpoint")),
+        format!("S3 endpoint: {}", field(value, "s3Endpoint")),
         format!(
             "API token configured: {}",
             yes_no(value_at(value, "apiTokenConfigured"))
