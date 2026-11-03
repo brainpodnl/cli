@@ -1,14 +1,14 @@
 use std::future::Future;
 
-use reqwest::header::{CONTENT_TYPE, ETAG, HeaderMap, HeaderName, HeaderValue};
-use serde::Serialize;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 use super::*;
 
 const PART_SIZE: usize = 8 * 1024 * 1024;
 const MAX_PARTS: usize = 10_000;
-const MAX_COMPLETION: usize = 2 * 1024 * 1024;
+pub(super) const MAX_COMPLETION: usize = 2 * 1024 * 1024;
 pub(super) fn cancellation() -> Result<impl Future<Output = ()>> {
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -54,53 +54,6 @@ fn metadata_headers(metadata: &[String]) -> Result<HeaderMap> {
     Ok(headers)
 }
 
-fn parse_xml<T: serde::de::DeserializeOwned>(xml: &[u8], expected: &str) -> Result<T> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
-    reader.config_mut().trim_text(true);
-    let mut depth = 0usize;
-    let mut root = false;
-    loop {
-        match reader
-            .read_event()
-            .context("invalid multipart response XML")?
-        {
-            quick_xml::events::Event::Decl(_) | quick_xml::events::Event::Comment(_) => {}
-            quick_xml::events::Event::Start(tag) => {
-                if depth == 0 {
-                    if root || tag.local_name().as_ref() != expected.as_bytes() {
-                        bail!("unexpected multipart response XML root (expected {expected})");
-                    }
-                    root = true;
-                }
-                depth += 1;
-                if depth > 16 {
-                    bail!("multipart response XML is too deeply nested");
-                }
-            }
-            quick_xml::events::Event::Empty(tag) => {
-                if depth == 0 {
-                    if root || tag.local_name().as_ref() != expected.as_bytes() {
-                        bail!("unexpected multipart response XML root (expected {expected})");
-                    }
-                    root = true;
-                }
-            }
-            quick_xml::events::Event::End(_) => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| anyhow!("invalid multipart XML nesting"))?;
-            }
-            quick_xml::events::Event::Text(text)
-                if depth > 0 || text.iter().all(u8::is_ascii_whitespace) => {}
-            quick_xml::events::Event::CData(_) | quick_xml::events::Event::GeneralRef(_)
-                if depth > 0 => {}
-            quick_xml::events::Event::Eof if root && depth == 0 => break,
-            _ => bail!("invalid or incomplete multipart response XML"),
-        }
-    }
-    quick_xml::de::from_reader(xml).context("invalid multipart response XML fields")
-}
-
 fn validate_etag(etag: &str) -> Result<()> {
     if !(3..=256).contains(&etag.len())
         || !etag.starts_with('"')
@@ -114,46 +67,7 @@ fn validate_etag(etag: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Initiated {
-    bucket: String,
-    key: String,
-    upload_id: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename = "CompleteMultipartUpload")]
-struct Completion {
-    #[serde(rename = "Part")]
-    parts: Vec<Part>,
-}
-
-#[derive(Serialize)]
-struct Part {
-    #[serde(rename = "PartNumber")]
-    number: usize,
-    #[serde(rename = "ETag")]
-    etag: String,
-}
-
-#[derive(Deserialize)]
-struct Completed {
-    #[serde(rename = "Bucket")]
-    bucket: String,
-    #[serde(rename = "Key")]
-    key: String,
-    #[serde(rename = "ETag")]
-    etag: String,
-}
-
 impl Gateway<'_> {
-    fn multipart_url(&self, remote: &Remote, upload_id: &str) -> Result<Url> {
-        let mut url = self.url(Some(remote))?;
-        url.query_pairs_mut().append_pair("uploadId", upload_id);
-        Ok(url)
-    }
-
     pub(super) async fn upload_stream<R: AsyncRead + Unpin, C: Future<Output = ()>>(
         &self,
         mut input: R,
@@ -176,14 +90,16 @@ impl Gateway<'_> {
             Err(error) => {
                 if let Some(upload_id) = upload_id {
                     let abort = async {
-                        let response = self
-                            .request(
-                                Method::DELETE,
-                                self.multipart_url(remote, &upload_id)?,
-                                None,
-                            )
-                            .await?;
-                        expect(response, StatusCode::NO_CONTENT).await?;
+                        self.sdk
+                            .abort_multipart_upload()
+                            .bucket(&remote.bucket)
+                            .key(sdk::key(&remote.key))
+                            .upload_id(&upload_id)
+                            .customize()
+                            .interceptor(sdk::LiteralKey::new(&remote.key))
+                            .send()
+                            .await
+                            .map_err(sdk::error)?;
                         Ok::<_, anyhow::Error>(())
                     };
                     if !matches!(
@@ -215,31 +131,37 @@ impl Gateway<'_> {
         upload_id: &mut Option<String>,
         completing: &mut bool,
     ) -> Result<Value> {
-        let mut url = self.url(Some(remote))?;
-        url.set_query(Some("uploads"));
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(self.token)
-            .headers(metadata)
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .body(Vec::new())
-            .timeout(Duration::from_secs(120))
+        let metadata = metadata
+            .iter()
+            .map(|(name, value)| {
+                Ok((
+                    name.as_str()["x-amz-meta-".len()..].to_owned(),
+                    value.to_str()?.to_owned(),
+                ))
+            })
+            .collect::<Result<std::collections::HashMap<_, _>>>()?;
+        let initiated = self
+            .sdk
+            .create_multipart_upload()
+            .bucket(&remote.bucket)
+            .key(sdk::key(&remote.key))
+            .set_metadata(Some(metadata))
+            .content_type("application/octet-stream")
+            .customize()
+            .interceptor(sdk::LiteralKey::new(&remote.key))
             .send()
             .await
-            .map_err(|_| anyhow!("multipart initiation request failed"))?;
-        let xml = bounded_body(expect(response, StatusCode::OK).await?, MAX_XML).await?;
-        let initiated: Initiated = parse_xml(&xml, "InitiateMultipartUploadResult")?;
-        if initiated.upload_id.is_empty() || initiated.upload_id.len() > 8192 {
-            bail!("gateway returned an invalid multipart upload ID");
-        }
-        *upload_id = Some(initiated.upload_id);
-        if initiated.bucket != remote.bucket || initiated.key != remote.key {
+            .map_err(sdk::error)?;
+        let id = initiated
+            .upload_id()
+            .filter(|id| !id.is_empty() && id.len() <= 8192)
+            .ok_or_else(|| anyhow!("gateway returned an invalid multipart upload ID"))?;
+        *upload_id = Some(id.to_owned());
+        if initiated.bucket() != Some(remote.bucket.as_str())
+            || initiated.key() != Some(remote.key.as_str())
+        {
             bail!("gateway initiated a different object");
         }
-        let id = upload_id
-            .as_deref()
-            .ok_or_else(|| anyhow!("multipart upload has no ID"))?;
         let mut parts = Vec::new();
         let mut size = 0u64;
         loop {
@@ -263,20 +185,29 @@ impl Gateway<'_> {
             }
             bytes.truncate(filled);
             let number = parts.len() + 1;
-            let mut url = self.multipart_url(remote, id)?;
-            url.query_pairs_mut()
-                .append_pair("partNumber", &number.to_string());
-            let response = self.request(Method::PUT, url, Some(bytes)).await?;
-            let response = expect(response, StatusCode::OK).await?;
+            let response = self
+                .sdk
+                .upload_part()
+                .bucket(&remote.bucket)
+                .key(sdk::key(&remote.key))
+                .upload_id(id)
+                .part_number(number as i32)
+                .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
+                .customize()
+                .interceptor(sdk::LiteralKey::new(&remote.key))
+                .send()
+                .await
+                .map_err(sdk::error)?;
             let etag = response
-                .headers()
-                .get(ETAG)
-                .ok_or_else(|| anyhow!("uploaded part response has no ETag"))?
-                .to_str()?
-                .to_owned();
-            validate_etag(&etag)?;
-            bounded_body(response, MAX_XML).await?;
-            parts.push(Part { number, etag });
+                .e_tag()
+                .ok_or_else(|| anyhow!("uploaded part response has no ETag"))?;
+            validate_etag(etag)?;
+            parts.push(
+                CompletedPart::builder()
+                    .part_number(number as i32)
+                    .e_tag(etag)
+                    .build(),
+            );
             size += filled as u64;
             if filled < PART_SIZE {
                 break;
@@ -299,26 +230,33 @@ impl Gateway<'_> {
         if marker != b"commit\n" {
             bail!("invalid producer success file; aborting without completion");
         }
-        let body = quick_xml::se::to_string(&Completion { parts })
-            .context("failed to encode multipart completion")?;
-        check_size(body.len(), MAX_COMPLETION)?;
         *completing = true;
-        let response = self
-            .http
-            .post(self.multipart_url(remote, id)?)
-            .bearer_auth(self.token)
-            .header(CONTENT_TYPE, "application/xml")
-            .body(body)
-            .timeout(Duration::from_secs(120))
+        let completed = self
+            .sdk
+            .complete_multipart_upload()
+            .bucket(&remote.bucket)
+            .key(sdk::key(&remote.key))
+            .upload_id(id)
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(parts))
+                    .build(),
+            )
+            .customize()
+            .interceptor(sdk::LiteralKey::new(&remote.key))
             .send()
             .await
-            .map_err(|_| anyhow!("multipart completion request failed"))?;
-        let xml = bounded_body(expect(response, StatusCode::OK).await?, MAX_COMPLETION).await?;
-        let completed: Completed = parse_xml(&xml, "CompleteMultipartUploadResult")?;
-        if completed.bucket != remote.bucket || completed.key != remote.key {
+            .map_err(sdk::error)?;
+        if completed.bucket() != Some(remote.bucket.as_str())
+            || completed.key() != Some(remote.key.as_str())
+        {
             bail!("gateway completed a different object");
         }
-        validate_etag(&completed.etag)?;
+        validate_etag(
+            completed
+                .e_tag()
+                .ok_or_else(|| anyhow!("completion response has no ETag"))?,
+        )?;
         Ok(
             json!({"operation": "upload", "destination": format!("s3://{}/{}", remote.bucket, remote.key), "size": size}),
         )
@@ -482,19 +420,20 @@ mod tests {
 
     #[test]
     fn completion_manifest_supports_10000_ordered_parts() {
-        let completion = Completion {
-            parts: (1..=MAX_PARTS)
-                .map(|number| Part {
-                    number,
-                    etag: "\"opaque&etag\"".into(),
-                })
-                .collect(),
-        };
-        let xml = quick_xml::se::to_string(&completion).unwrap();
-        assert!(xml.len() < MAX_COMPLETION);
-        assert!(xml.contains("opaque&amp;etag"));
-        assert_eq!(xml.matches("<PartNumber>").count(), MAX_PARTS);
-        assert!(xml.contains("<PartNumber>10000</PartNumber>"));
+        let completion = CompletedMultipartUpload::builder()
+            .set_parts(Some(
+                (1..=MAX_PARTS)
+                    .map(|number| {
+                        CompletedPart::builder()
+                            .part_number(number as i32)
+                            .e_tag("\"opaque&etag\"")
+                            .build()
+                    })
+                    .collect(),
+            ))
+            .build();
+        assert_eq!(completion.parts().len(), MAX_PARTS);
+        assert_eq!(completion.parts()[MAX_PARTS - 1].part_number(), Some(10000));
     }
 
     #[tokio::test]

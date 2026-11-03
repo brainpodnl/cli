@@ -395,7 +395,9 @@ Transfers require explicit file/key destinations (no implicit basename or direct
 
 The default gateway origin is `https://s3.brainpod.io`; the CLI prepends the selected Pod name to its hostname. Override the base origin with `--s3-endpoint`, `BRAINPOD_S3_ENDPOINT`, or `brainpod config set s3-endpoint https://s3.example.test` (in that precedence order). For local development, use `http://s3.brainpod.localhost` with working wildcard DNS. HTTP is unencrypted and should only be used locally. The API endpoint does not change the S3 origin.
 
-Downloads explicitly accept the gateway's 307 redirect and use a separate unauthenticated HTTPS request to the short-lived provider URL. Brainpod Bearer credentials are never sent to the provider; further redirects are rejected. Presigned URLs are not printed. There is no AWS SigV4 client authentication, public HEAD, recursive/sync transfer or deletion, bucket administration, ranged reads, or metadata preservation for `cp`/`mv`. Multipart is reserved for explicit stdin streaming uploads. Transfer errors return a nonzero exit status; interrupted uploads can have an uncertain remote outcome, so inspect the key before retrying.
+Bucket/object listings, PUT/delete, and multipart initiation, parts, completion, and abort use typed `aws-sdk-s3` operations and SDK XML serialization/deserialization. A gateway transport keeps logical buckets path-style beneath the Pod hostname, uses unsigned SDK auth with Bearer authentication added only at the gateway, removes the SDK's `x-id` query parameter and nonsemantic `x-amz-user-agent` telemetry header, disables optional checksums, and requires buffered, non-`aws-chunked` request bodies. Requests are not automatically retried. Response byte limits remain in place; XML parsing and service-error detection are delegated to the SDK.
+
+Downloads explicitly accept the gateway's 307 redirect and use a separate unauthenticated HTTPS request to the short-lived provider URL. Both download requests remain implemented with `reqwest`, not SDK GetObject, to enforce this redirect contract. Brainpod Bearer credentials are never sent to the provider; further redirects are rejected. Presigned URLs are not printed. There is no AWS SigV4 client authentication, public HEAD, recursive/sync transfer or deletion, bucket administration, ranged reads, or metadata preservation for `cp`/`mv`. Multipart is reserved for explicit stdin streaming uploads. Transfer errors return a nonzero exit status; interrupted uploads can have an uncertain remote outcome, so inspect the key before retrying.
 
 ### Streaming transfers
 
@@ -418,7 +420,7 @@ trap 'rm -rf "$run_dir"' EXIT
 
 Generic object metadata is accepted on multipart initiation using repeated `--metadata KEY=VALUE`. Keys must be nonempty valid HTTP header names; values must be nonempty printable ASCII. Metadata names and values together may total at most 2048 bytes, and duplicate keys are rejected case-insensitively. Endpoint-specific metadata policies are enforced by the server.
 
-Missing or invalid markers, input errors, rejected parts, malformed completion responses (including HTTP 200 `<Error>`), SIGINT, and SIGTERM fail the upload and attempt to abort it. Completion/network failures can have an uncertain outcome; inspect the exact key before retrying. Abrupt process termination or failed aborts can leave incomplete uploads requiring endpoint cleanup.
+Missing or invalid markers, input errors, rejected parts, completion errors reported by the SDK (including HTTP 200 `<Error>`), SIGINT, and SIGTERM fail the upload and attempt to abort it. Completion/network failures can have an uncertain outcome; inspect the exact key before retrying. Abrupt process termination or failed aborts can leave incomplete uploads requiring endpoint cleanup.
 
 Stream an object to stdout without the small-copy limit:
 

@@ -9,8 +9,17 @@ type MockResponse = (u16, Vec<(&'static str, String)>, String);
 
 type Requests = Arc<Mutex<Vec<(String, String, Vec<u8>)>>>;
 
-async fn mock(
+pub(super) async fn mock(
     responses: Vec<MockResponse>,
+) -> (Gateway<'static>, Requests, tokio::task::JoinHandle<()>) {
+    mock_with_headers(responses, Arc::default()).await
+}
+
+type RequestHeaders = Arc<Mutex<Vec<reqwest::header::HeaderMap>>>;
+
+pub(super) async fn mock_with_headers(
+    responses: Vec<MockResponse>,
+    headers: RequestHeaders,
 ) -> (Gateway<'static>, Requests, tokio::task::JoinHandle<()>) {
     let requests: Requests = Arc::default();
     let responses = Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
@@ -19,9 +28,60 @@ async fn mock(
             let responses = responses.clone();
             move |State(requests): State<Requests>, request: Request<Body>| {
                 let responses = responses.clone();
+                let headers = headers.clone();
                 async move {
                     assert_eq!(request.headers()["authorization"], "Bearer test-key");
+                    for (name, value) in request.headers() {
+                        assert!(!name.as_str().starts_with("x-amz-checksum-"));
+                        assert!(
+                            ![
+                                "x-amz-sdk-checksum-algorithm",
+                                "x-amz-trailer",
+                                "transfer-encoding",
+                                "x-amz-content-sha256",
+                                "x-amz-security-token",
+                                "x-amz-date"
+                            ]
+                            .contains(&name.as_str())
+                        );
+                        assert!(
+                            !value
+                                .as_bytes()
+                                .windows(11)
+                                .any(|part| part == b"aws-chunked")
+                        );
+                    }
+                    assert!(
+                        !request
+                            .uri()
+                            .query()
+                            .unwrap_or_default()
+                            .split('&')
+                            .any(|pair| pair.starts_with("x-id="))
+                    );
+                    headers.lock().unwrap().push(request.headers().clone());
                     let method = request.method().to_string();
+                    let initiation = method == "POST"
+                        && request
+                            .uri()
+                            .query()
+                            .is_some_and(|query| query.split('&').any(|pair| pair == "uploads"));
+                    if method != "GET"
+                        && request.headers().keys().any(|name| {
+                            name.as_str().starts_with("x-amz-")
+                                && !["x-amz-date", "x-amz-content-sha256"].contains(&name.as_str())
+                                && !(initiation && name.as_str().starts_with("x-amz-meta-"))
+                        })
+                    {
+                        let mut names = request
+                            .headers()
+                            .keys()
+                            .map(|name| name.as_str())
+                            .collect::<Vec<_>>();
+                        names.sort_unstable();
+                        eprintln!("strict gateway rejected request header names: {names:?}");
+                        return Response::builder().status(501).body(Body::empty()).unwrap();
+                    }
                     let uri = request.uri().to_string();
                     let length = request
                         .headers()
@@ -55,6 +115,17 @@ async fn mock(
         axum::serve(listener, router).await.unwrap();
     });
     let gateway = Gateway {
+        sdk: sdk::client(
+            crate::http_client_builder()
+                .unwrap()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            &origin,
+            "test-key",
+        )
+        .unwrap(),
         origin,
         token: "test-key",
         http: crate::http_client_builder()
@@ -106,7 +177,7 @@ fn preserves_literal_keys_and_rejects_normalization() {
         .unwrap();
     let url = gateway.url(Some(&remote)).unwrap();
     assert_eq!(url.host_str(), Some("my-pod.s3.example.test"));
-    assert_eq!(url.path(), "/files/a//%E9%9B%AA%20+%252F%3F%23/end/");
+    assert_eq!(url.path(), "/files/a//%E9%9B%AA%20%2B%252F%3F%23/end/");
     assert!(url.query().is_none());
     for path in ["s3://files/a/../b", "s3://files/./a", "s3://files/"] {
         assert!(Remote::parse(path).unwrap().unwrap().object().is_err());
@@ -211,7 +282,11 @@ async fn upload_and_move_only_remove_local_source_after_success() {
         let (gateway, requests, task) = mock(vec![(
             status,
             vec![],
-            "<Error><Code>AccessDenied</Code></Error>".into(),
+            if status == 200 {
+                String::new()
+            } else {
+                "<Error><Code>AccessDenied</Code></Error>".into()
+            },
         )])
         .await;
         let result = gateway
@@ -495,11 +570,11 @@ fn configuration_and_machine_description_include_s3() {
     assert_eq!(description["command"]["effect"], "read");
 }
 
-fn initiated() -> MockResponse {
+pub(super) fn initiated() -> MockResponse {
     (200, vec![], "<InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>files</Bucket><Key>object.bin</Key><UploadId>opaque+/=&amp;%2F</UploadId></InitiateMultipartUploadResult>".into())
 }
 
-fn part_response(number: usize) -> MockResponse {
+pub(super) fn part_response(number: usize) -> MockResponse {
     (
         200,
         vec![("etag", format!("\"part-{number}\""))],
@@ -507,11 +582,11 @@ fn part_response(number: usize) -> MockResponse {
     )
 }
 
-fn completed() -> MockResponse {
+pub(super) fn completed() -> MockResponse {
     (200, vec![], "<CompleteMultipartUploadResult><Bucket>files</Bucket><Key>object.bin</Key><ETag>\"complete\"</ETag></CompleteMultipartUploadResult>".into())
 }
 
-fn streaming_remote() -> Remote {
+pub(super) fn streaming_remote() -> Remote {
     Remote::parse("s3://files/object.bin").unwrap().unwrap()
 }
 
@@ -701,8 +776,7 @@ async fn multipart_aborts_failed_parts_and_error_or_malformed_completions() {
         "<Error><Code>InternalError</Code></Error>",
         "<CompleteMultipartUploadResult><Bucket>files</Bucket><Key>object.bin</Key></CompleteMultipartUploadResult>",
         "<CompleteMultipartUploadResult><Bucket>other</Bucket><Key>object.bin</Key><ETag>\"x\"</ETag></CompleteMultipartUploadResult>",
-        "<CompleteMultipartUploadResult><Bucket>files</Bucket><Key>object.bin</Key><ETag>\"x\"</ETag></CompleteMultipartUploadResult><Error/>",
-        "<CompleteMultipartUploadResult><Bucket>files</Bucket><Key>object.bin</Key><ETag>\"x\"</ETag>",
+        "not XML",
     ] {
         let (gateway, requests, task) = mock(vec![
             initiated(),

@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use reqwest::{Method, StatusCode, Url};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::output::{CommandOutput, View};
@@ -86,6 +85,7 @@ impl Remote {
 
 struct Gateway<'a> {
     http: reqwest::Client,
+    sdk: aws_sdk_s3::Client,
     origin: Url,
     token: &'a str,
 }
@@ -111,12 +111,15 @@ impl<'a> Gateway<'a> {
             .host_str()
             .ok_or_else(|| anyhow!("S3 endpoint has no hostname"))?;
         origin.set_host(Some(&format!("{pod}.{host}")))?;
+        let http = crate::http_client_builder()?
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(60))
+            .build()?;
+        let sdk = sdk::client(http.clone(), &origin, token)?;
         Ok(Self {
-            http: crate::http_client_builder()?
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(Duration::from_secs(30))
-                .read_timeout(Duration::from_secs(60))
-                .build()?,
+            http,
+            sdk,
             origin,
             token,
         })
@@ -125,48 +128,31 @@ impl<'a> Gateway<'a> {
     fn url(&self, remote: Option<&Remote>) -> Result<Url> {
         let mut url = self.origin.clone();
         if let Some(remote) = remote {
-            let mut segments = url
-                .path_segments_mut()
-                .map_err(|_| anyhow!("invalid gateway URL"))?;
-            segments.clear().push(&remote.bucket);
+            let mut path = format!("/{}", remote.bucket);
             if !remote.key.is_empty() {
                 remote.object()?;
-                for segment in remote.key.split('/') {
-                    segments.push(segment);
-                }
+                path.push('/');
+                path.push_str(&aws_smithy_http::label::fmt_string(
+                    &remote.key,
+                    aws_smithy_http::label::EncodingStrategy::Greedy,
+                ));
             }
+            url.set_path(&path);
         }
         Ok(url)
     }
 
-    async fn request(
-        &self,
-        method: Method,
-        url: Url,
-        body: Option<Vec<u8>>,
-    ) -> Result<reqwest::Response> {
-        let mut request = self
-            .http
-            .request(method, url)
-            .bearer_auth(self.token)
-            .timeout(Duration::from_secs(120));
-        if let Some(body) = body {
-            request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                .body(body);
-        }
-        request
-            .send()
-            .await
-            .map_err(|_| anyhow!("S3 gateway request failed"))
-    }
-
     async fn delete(&self, remote: &Remote) -> Result<()> {
         remote.object()?;
-        let response = self
-            .request(Method::DELETE, self.url(Some(remote))?, None)
-            .await?;
-        expect(response, StatusCode::NO_CONTENT).await?;
+        self.sdk
+            .delete_object()
+            .bucket(&remote.bucket)
+            .key(sdk::key(&remote.key))
+            .customize()
+            .interceptor(sdk::LiteralKey::new(&remote.key))
+            .send()
+            .await
+            .map_err(sdk::error)?;
         Ok(())
     }
 
@@ -181,8 +167,13 @@ impl<'a> Gateway<'a> {
     ) -> Result<reqwest::Response> {
         remote.object()?;
         let response = self
-            .request(Method::GET, self.url(Some(remote))?, None)
-            .await?;
+            .http
+            .get(self.url(Some(remote))?)
+            .bearer_auth(self.token)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|_| anyhow!("S3 gateway request failed"))?;
         let response = expect(response, StatusCode::TEMPORARY_REDIRECT).await?;
         let location = response
             .headers()
@@ -241,10 +232,17 @@ impl<'a> Gateway<'a> {
         let size = bytes.len();
         match dst {
             Some(dst) => {
-                let response = self
-                    .request(Method::PUT, self.url(Some(&dst))?, Some(bytes))
-                    .await?;
-                expect(response, StatusCode::OK).await?;
+                self.sdk
+                    .put_object()
+                    .bucket(&dst.bucket)
+                    .key(sdk::key(&dst.key))
+                    .content_type("application/octet-stream")
+                    .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
+                    .customize()
+                    .interceptor(sdk::LiteralKey::new(&dst.key))
+                    .send()
+                    .await
+                    .map_err(sdk::error)?;
             }
             None => {
                 let path = Path::new(destination);
@@ -283,57 +281,73 @@ impl<'a> Gateway<'a> {
         let mut token: Option<String> = None;
         let mut seen = HashSet::new();
         loop {
-            let bucket = remote.as_ref().map(|r| Remote {
-                bucket: r.bucket.clone(),
-                key: String::new(),
-            });
-            let mut url = self.url(bucket.as_ref())?;
-            {
-                let mut query = url.query_pairs_mut();
-                if let Some(remote) = &remote {
-                    query.extend_pairs([
-                        ("list-type", "2"),
-                        ("encoding-type", "url"),
-                        ("delimiter", "/"),
-                        ("max-keys", "1000"),
-                        ("prefix", remote.key.as_str()),
-                    ]);
+            token = if let Some(remote) = &remote {
+                let page = self
+                    .sdk
+                    .list_objects_v2()
+                    .bucket(&remote.bucket)
+                    .prefix(&remote.key)
+                    .delimiter("/")
+                    .encoding_type(aws_sdk_s3::types::EncodingType::Url)
+                    .max_keys(1000)
+                    .set_continuation_token(token)
+                    .send()
+                    .await
+                    .map_err(sdk::error)?;
+                let encoded = match page.encoding_type().map(|encoding| encoding.as_str()) {
+                    Some("url") => true,
+                    None => false,
+                    _ => bail!("unsupported gateway listing encoding"),
+                };
+                for object in page.contents() {
+                    let key = object
+                        .key()
+                        .ok_or_else(|| anyhow!("listing object has no key"))?;
+                    let size = object
+                        .size()
+                        .filter(|size| *size >= 0)
+                        .ok_or_else(|| anyhow!("listing object has no valid size"))?;
+                    let modified = object
+                        .last_modified()
+                        .map(|date| date.fmt(aws_smithy_types::date_time::Format::DateTime))
+                        .transpose()?;
+                    items.push(json!({"kind": "object", "key": decode_field(key, encoded)?, "size": size, "lastModified": modified}));
                 }
-                if let Some(token) = &token {
-                    query.append_pair("continuation-token", token);
+                for prefix in page.common_prefixes() {
+                    let prefix = prefix
+                        .prefix()
+                        .ok_or_else(|| anyhow!("listing prefix has no key"))?;
+                    items.push(json!({"kind": "prefix", "key": decode_field(prefix, encoded)?}));
                 }
-            }
-            let response = self.request(Method::GET, url, None).await?;
-            let xml = bounded_body(expect(response, StatusCode::OK).await?, MAX_XML).await?;
-            let page = parse_listing(&xml, remote.is_some())?;
-            if remote.is_some() {
-                let encoded = page.encoding_type.as_deref() == Some("url");
-                for object in page.contents {
-                    items.push(json!({"kind": "object", "key": decode_field(&object.key, encoded)?, "size": object.size, "lastModified": object.last_modified}));
-                }
-                for prefix in page.common_prefixes {
-                    items.push(
-                        json!({"kind": "prefix", "key": decode_field(&prefix.prefix, encoded)?}),
-                    );
-                }
-            } else {
-                for bucket in page.buckets.bucket {
-                    items.push(json!({"kind": "bucket", "name": bucket.name}));
-                }
-            }
-            token = if remote.is_some() {
-                if page.is_truncated {
-                    page.next_continuation_token
+                let next = if page.is_truncated() == Some(true) {
+                    page.next_continuation_token()
+                        .filter(|token| !token.is_empty())
+                        .map(str::to_owned)
                 } else {
                     None
+                };
+                if page.is_truncated() == Some(true) && next.is_none() {
+                    bail!("truncated gateway listing has no continuation token");
                 }
+                next
             } else {
-                page.continuation_token.or(page.next_continuation_token)
-            }
-            .filter(|t| !t.is_empty());
-            if page.is_truncated && token.is_none() {
-                bail!("truncated gateway listing has no continuation token");
-            }
+                let page = self
+                    .sdk
+                    .list_buckets()
+                    .set_continuation_token(token)
+                    .send()
+                    .await
+                    .map_err(sdk::error)?;
+                for bucket in page.buckets() {
+                    let name = bucket
+                        .name()
+                        .ok_or_else(|| anyhow!("listing bucket has no name"))?;
+                    items.push(json!({"kind": "bucket", "name": name}));
+                }
+                page.continuation_token()
+                    .filter(|token| !token.is_empty())
+                    .map(str::to_owned)
+            };
             let Some(next) = &token else {
                 break;
             };
@@ -343,36 +357,6 @@ impl<'a> Gateway<'a> {
         }
         Ok(json!({"items": items}))
     }
-}
-
-fn parse_listing(xml: &[u8], objects: bool) -> Result<Listing> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
-    reader.config_mut().trim_text(true);
-    let expected = if objects {
-        "ListBucketResult"
-    } else {
-        "ListAllMyBucketsResult"
-    };
-    loop {
-        match reader.read_event().context("invalid gateway listing XML")? {
-            quick_xml::events::Event::Decl(_) | quick_xml::events::Event::Comment(_) => continue,
-            quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag)
-                if tag.local_name().as_ref() == expected.as_bytes() =>
-            {
-                break;
-            }
-            _ => bail!("unexpected gateway listing XML root"),
-        }
-    }
-    let page: Listing = quick_xml::de::from_reader(xml).context("invalid gateway listing XML")?;
-    if page
-        .encoding_type
-        .as_deref()
-        .is_some_and(|encoding| encoding != "url")
-    {
-        bail!("unsupported gateway listing encoding");
-    }
-    Ok(page)
 }
 
 fn provider_url(location: &str) -> Result<Url> {
@@ -419,16 +403,7 @@ async fn expect(response: reqwest::Response, status: StatusCode) -> Result<reqwe
         return Ok(response);
     }
     let actual = response.status();
-    let code = bounded_body(response, MAX_XML)
-        .await
-        .ok()
-        .and_then(|xml| quick_xml::de::from_reader::<_, S3Error>(xml.as_slice()).ok())
-        .map(|e| e.code);
-    bail!(
-        "S3 request returned HTTP {}{}",
-        actual.as_u16(),
-        code.map(|c| format!(" ({c})")).unwrap_or_default()
-    )
+    bail!("S3 request returned HTTP {}", actual.as_u16())
 }
 
 fn decode_field(value: &str, encoded: bool) -> Result<String> {
@@ -455,49 +430,6 @@ fn decode_field(value: &str, encoded: bool) -> Result<String> {
         index += 1;
     }
     String::from_utf8(decoded).context("listing field is not UTF-8")
-}
-
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Listing {
-    #[serde(default)]
-    buckets: Buckets,
-    #[serde(default)]
-    contents: Vec<Object>,
-    #[serde(default)]
-    common_prefixes: Vec<Prefix>,
-    encoding_type: Option<String>,
-    #[serde(default)]
-    is_truncated: bool,
-    next_continuation_token: Option<String>,
-    continuation_token: Option<String>,
-}
-#[derive(Default, Deserialize)]
-struct Buckets {
-    #[serde(rename = "Bucket", default)]
-    bucket: Vec<Bucket>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Bucket {
-    name: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Object {
-    key: String,
-    size: u64,
-    last_modified: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Prefix {
-    prefix: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct S3Error {
-    code: String,
 }
 
 pub async fn handle(args: S3Args, endpoint: &str, pod: &str, token: &str) -> Result<CommandOutput> {
@@ -593,6 +525,10 @@ pub fn render(value: &Value) -> Vec<String> {
 }
 
 mod multipart;
+mod sdk;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sdk_tests;
