@@ -38,6 +38,7 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
             "tunnelJson": "Tunnels emit listening, optional credentials, and closed events as NDJSON.",
             "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
+            "s3Download": "s3 download <source> - writes raw bytes only, even with --json; errors remain on stderr.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
@@ -251,6 +252,7 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         ["blueprint", _] | ["whoami"] | ["cluster"] | ["cluster", _] | ["pod"] | ["pod", _] => {
             (Some(true), Some(false))
         }
+        ["s3"] | ["s3", _] => (Some(true), Some(true)),
         ["image"]
         | ["image", _]
         | ["revision"]
@@ -288,6 +290,18 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         | ["resource", "list"]
         | ["resource", "get"]
         | ["resource", "variables"] => ("read", "Reads remote state without changing it."),
+        ["s3", "ls"] => (
+            "read",
+            "Lists gateway buckets or one level of object prefixes.",
+        ),
+        ["s3", "download"] => (
+            "read-stream",
+            "Streams provider object bytes to stdout without a text or JSON summary.",
+        ),
+        ["s3", _] => (
+            "local-and-remote-write",
+            "Transfers one bounded object or deletes one exact key; moves delete only after a successful copy.",
+        ),
         ["events"] => (
             "read-or-stream",
             "Reads or continuously streams remote events.",
