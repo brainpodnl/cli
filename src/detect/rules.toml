@@ -1,0 +1,335 @@
+[[rules]]
+id = "composer"
+language = "php"
+kind = "project"
+priority = 10
+any = ["file:composer.json"]
+
+[[rules]]
+id = "php-source"
+language = "php"
+kind = "source"
+priority = 0
+any = ["source:php"]
+
+[[rules]]
+id = "go-module"
+language = "go"
+kind = "project"
+priority = 10
+any = ["file:go.mod"]
+
+[[rules]]
+id = "go-source"
+language = "go"
+kind = "source"
+priority = 0
+any = ["source:go"]
+
+[[rules]]
+id = "cargo"
+language = "rust"
+kind = "project"
+priority = 10
+any = ["package:cargo"]
+
+[[rules]]
+id = "rust-source"
+language = "rust"
+kind = "source"
+priority = 0
+any = ["source:rs"]
+
+[[rules]]
+id = "bundler"
+language = "ruby"
+kind = "project"
+priority = 10
+any = ["file:Gemfile"]
+
+[[rules]]
+id = "ruby-source"
+language = "ruby"
+kind = "source"
+priority = 0
+any = ["source:rb"]
+
+[[rules]]
+id = "python"
+language = "python"
+kind = "project"
+priority = 10
+any = ["file:pyproject.toml"]
+
+[[rules]]
+id = "python-source"
+language = "python"
+kind = "source"
+priority = 0
+any = ["source:py"]
+
+[[rules]]
+id = "node"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["file:package.json"]
+
+[[rules]]
+id = "javascript-source"
+language = "javascript"
+kind = "source"
+priority = 0
+any = ["source:js", "source:mjs", "source:cjs", "source:jsx"]
+
+[[rules]]
+id = "typescript"
+language = "typescript"
+kind = "project"
+priority = 10
+any = ["file:tsconfig.json", "dep:npm:typescript"]
+
+[[rules]]
+id = "typescript-source"
+language = "typescript"
+kind = "source"
+priority = 0
+any = ["source:ts", "source:mts", "source:cts", "source:tsx"]
+
+[[rules]]
+id = "python-requirements"
+language = "python"
+kind = "project"
+priority = 10
+any = ["file:requirements.txt", "file:Pipfile", "file:setup.py", "file:setup.cfg"]
+
+[[rules]]
+id = "go-workspace"
+language = "go"
+kind = "workspace"
+priority = 20
+any = ["workspace:go"]
+
+[[rules]]
+id = "cargo-workspace"
+language = "rust"
+kind = "workspace"
+priority = 20
+any = ["workspace:cargo"]
+
+[[rules]]
+id = "node-workspace"
+language = "javascript"
+kind = "workspace"
+priority = 20
+any = ["workspace:node"]
+
+[[rules]]
+id = "python-workspace"
+language = "python"
+kind = "workspace"
+priority = 20
+any = ["workspace:python"]
+
+[[rules]]
+id = "laravel"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:laravel/framework"]
+
+[[rules]]
+id = "symfony"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:symfony/framework-bundle", "dep:composer:symfony/symfony"]
+
+[[rules]]
+id = "cakephp"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:cakephp/cakephp"]
+
+[[rules]]
+id = "codeigniter"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:codeigniter4/framework", "dep:composer:codeigniter/framework"]
+
+[[rules]]
+id = "slim"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:slim/slim"]
+
+[[rules]]
+id = "axum"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:axum"]
+
+[[rules]]
+id = "rocket"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:rocket"]
+
+[[rules]]
+id = "actix-web"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:actix-web"]
+
+[[rules]]
+id = "rails"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:rails"]
+
+[[rules]]
+id = "sinatra"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:sinatra"]
+
+[[rules]]
+id = "hanami"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:hanami"]
+
+[[rules]]
+id = "django"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:django"]
+
+[[rules]]
+id = "fastapi"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:fastapi"]
+
+[[rules]]
+id = "flask"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:flask"]
+
+[[rules]]
+id = "starlette"
+language = "python"
+kind = "framework"
+priority = 50
+any = ["dep:pypi:starlette"]
+
+[[rules]]
+id = "celery"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:celery"]
+
+[[rules]]
+id = "gin"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/gin-gonic/gin"]
+
+[[rules]]
+id = "echo"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/labstack/echo/v4"]
+
+[[rules]]
+id = "fiber"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/gofiber/fiber/v2"]
+
+[[rules]]
+id = "nextjs"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:next"]
+
+[[rules]]
+id = "nuxtjs"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:nuxt", "dep:npm:nuxt3"]
+
+[[rules]]
+id = "astro"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:astro"]
+
+[[rules]]
+id = "sveltekit"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@sveltejs/kit"]
+
+[[rules]]
+id = "remix"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@remix-run/react"]
+
+[[rules]]
+id = "angular"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@angular/core"]
+
+[[rules]]
+id = "express"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:express"]
+
+[[rules]]
+id = "react"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:react"]
+
+[[rules]]
+id = "vue"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:vue"]
+
+[[rules]]
+id = "vite"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:vite"]

@@ -17,6 +17,8 @@ use crate::output::{CommandOutput, View};
 pub enum Command {
     /// Describe CLI commands and their machine-readable contract
     Describe(DescribeArgs),
+    /// Detect local projects, frameworks, languages, and version constraints
+    Detect(crate::detect::DetectArgs),
     /// Drive the session console the user watches while a workflow runs
     Agent(crate::agent::AgentArgs),
     /// Authenticate through the Brainpod dashboard
@@ -493,7 +495,11 @@ fn is_event_resource_urn(value: &str) -> bool {
 pub fn needs_api_token(command: &Command) -> bool {
     !matches!(
         command,
-        Command::Describe(_) | Command::Agent(_) | Command::Login(_) | Command::Config(_)
+        Command::Describe(_)
+            | Command::Detect(_)
+            | Command::Agent(_)
+            | Command::Login(_)
+            | Command::Config(_)
     )
 }
 
@@ -502,6 +508,7 @@ pub fn needs_client(command: &Command) -> bool {
         command,
         Command::S3(_)
             | Command::Describe(_)
+            | Command::Detect(_)
             | Command::Agent(_)
             | Command::Login(_)
             | Command::Config(_)
@@ -543,6 +550,7 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
             crate::describe::generate(crate::Opts::command(), &args.command)?,
             View::Describe,
         )),
+        Command::Detect(args) => crate::detect::handle(args),
         Command::Agent(args) => crate::agent::handle(args, pod, dashboard_endpoint, json).await,
         Command::Login(args) => Ok(CommandOutput::new(
             crate::auth::login(

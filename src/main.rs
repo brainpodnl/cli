@@ -12,6 +12,7 @@ mod client;
 mod cmd;
 mod config;
 mod describe;
+mod detect;
 mod image;
 mod openapi;
 mod output;
@@ -128,6 +129,10 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
             describe::generate(Opts::command(), &args.command)?,
             output::View::Describe,
         ));
+    }
+
+    if let Command::Detect(args) = opts.command {
+        return detect::handle(args);
     }
 
     let config_path = Config::path()?;

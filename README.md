@@ -168,6 +168,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 ## Commands
 
 ```text
+brainpod detect [<path>] [--rules <rules.toml>]
 brainpod describe [<command>...]
 brainpod describe resource [<kind>]
 brainpod login
@@ -262,6 +263,44 @@ Each chat gets its own console, so two agents working in one checkout do not ove
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 
 `revision wait` polls revision details until every resource reports `healthy: true`. `deploy --wait` deploys first, then waits on the returned revision in the same way. Both use a 90-second timeout by default; pass `--timeout <seconds>` to override it. Interactive waits report each unhealthy-to-healthy transition on stderr. Progress is suppressed when stderr is redirected or `--json` is used. Failed or canceled revisions stop the wait immediately, and timeouts report the resources that are still unhealthy.
+
+## Project detection
+
+Inspect a directory without credentials, network access, subprocesses, or executing project code:
+
+```sh
+brainpod detect .
+brainpod detect ./services --json
+brainpod detect . --rules ./detection.toml --json
+```
+
+The result contains sorted project paths, manifest names, languages and version declarations, priority-ranked detections with evidence, workspace members, diagnostics, and scan statistics. Framework versions are attached to dependency evidence. JavaScript versions describe Node.js; TypeScript versions describe the compiler. Requirements and pins retain their source and kind: these are declarations, not resolved or installed versions. Missing versions remain unknown.
+
+Built-in coverage includes Laravel, Symfony, CakePHP, CodeIgniter, Composer; Go modules/workspaces and Gin/Echo/Fiber; Cargo workspaces, axum, Rocket, Actix; Bundler, Rails, Sinatra, Hanami; Python requirements, PEP 621, Poetry, Pipenv, uv workspaces, Django, FastAPI, Flask, Starlette, Celery; npm workspaces, Next.js, Nuxt, Astro, SvelteKit, Remix, Angular, Express, React, Vue, Vite; and standalone source files in all seven languages. Rust workspace dependency aliases and inherited `rust-version` are understood. Ancestor runtime pin/toolchain files are included with provenance.
+
+Rules live in [`src/detect/rules.toml`](src/detect/rules.toml), independently of manifest parsers. Additional rules use unique IDs:
+
+```toml
+[[rules]]
+id = "company-next"
+language = "javascript"
+kind = "framework"
+priority = 200
+all = ["dep:npm:next", "file:company.config.*"]
+none = ["file:legacy.config"]
+```
+
+`all` requires every pattern, `any` requires at least one when supplied, and `none` rejects any match. Higher priorities sort first; ties sort by ID. Matches coexist rather than hiding other frameworks or languages. Patterns support `file:<basename glob>` (`*`, `?`), `source:<extension>`, `dep:<ecosystem>:<exact package>`, `workspace:<go|cargo|node|python>`, and `package:cargo`. Workspace paths additionally support `**`. Ecosystems are `composer`, `go`, `cargo`, `gem`, `pypi`, and `npm`.
+
+The scanner walks once, caches indexed rules, and never reads source bodies or lockfiles. Each manifest/version file is capped at 1 MiB. Symlinks are not followed; traversal stops at depth 128 with a diagnostic. Dependency/build directories such as `.git`, `.jj`, `node_modules`, `vendor`, `target`, `.venv`, `.next`, `dist`, and `build` are pruned. It does not evaluate `.gitignore`. Source-only directories roll up to a same-language project ancestor when available; sibling services keep their own manifest boundaries.
+
+Detection uses declared dependencies, not arbitrary substring matches or inferred framework usage from source. Composer/Cargo development dependencies are excluded; npm development dependencies are included because tools such as Astro commonly live there. Dynamic Ruby declarations and unsupported requirements options produce diagnostics instead of executing code. Invalid manifests are diagnosed without stopping discovery of other projects.
+
+Run the generated large-tree performance fixture with:
+
+```sh
+cargo test --release detect::tests::benchmark_polyglot_scan -- --ignored --nocapture
+```
 
 ## Image discovery
 
