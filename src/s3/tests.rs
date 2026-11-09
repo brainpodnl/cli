@@ -447,7 +447,8 @@ fn trust_provider(gateway: &mut Gateway<'_>) {
         .no_proxy()
         .tls_certs_only([certificate])
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(5))
+        .read_timeout(Duration::from_secs(5))
         .build()
         .unwrap();
 }
