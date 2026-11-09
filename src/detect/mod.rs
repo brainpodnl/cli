@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
@@ -86,7 +88,16 @@ pub struct Detection {
     pub language: String,
     pub kind: Kind,
     pub priority: i32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<FrameworkRole>,
     pub evidence: Vec<Evidence>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrameworkRole {
+    Uses,
+    Provides,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,10 +126,12 @@ pub struct Stats {
 #[derive(Default)]
 struct Node {
     path: PathBuf,
+    parent: Option<usize>,
     files: BTreeSet<String>,
     contents: BTreeMap<String, String>,
     sources: BTreeMap<String, String>,
     dependencies: BTreeMap<String, Dependency>,
+    identities: BTreeMap<String, Dependency>,
     packages: BTreeSet<String>,
     versions: BTreeMap<String, Vec<Version>>,
     names: BTreeSet<String>,
@@ -128,13 +141,22 @@ struct Node {
 struct Dependency {
     version: Option<String>,
     source: String,
+    resolved: Option<Version>,
 }
 
+#[derive(Clone)]
 struct Workspace {
     ecosystem: String,
     source: String,
     members: Vec<String>,
     exclude: Vec<String>,
+}
+
+impl Workspace {
+    fn contains(&self, path: &str) -> bool {
+        self.members.iter().any(|p| rules::path_glob(p, path))
+            && !self.exclude.iter().any(|p| rules::path_glob(p, path))
+    }
 }
 
 impl Node {
@@ -144,6 +166,18 @@ impl Node {
             Dependency {
                 version: version.map(str::to_owned),
                 source: relative_file(&self.path, file),
+                resolved: None,
+            },
+        );
+    }
+
+    fn identity(&mut self, ecosystem: &str, name: &str, version: Option<&str>, file: &str) {
+        self.identities.insert(
+            format!("{ecosystem}:{name}"),
+            Dependency {
+                version: version.map(str::to_owned),
+                source: relative_file(&self.path, file),
+                resolved: None,
             },
         );
     }
@@ -176,6 +210,171 @@ pub fn handle(args: DetectArgs) -> Result<crate::output::CommandOutput> {
     ))
 }
 
+#[derive(Default)]
+struct Inventory {
+    nodes: Vec<Node>,
+    diagnostics: Vec<Diagnostic>,
+    stats: Stats,
+}
+
+impl Inventory {
+    fn read_directory(
+        &mut self,
+        root: &Path,
+        path: &Path,
+        depth: usize,
+        rules: &Rules,
+    ) -> Result<Vec<(PathBuf, usize)>> {
+        let mut node = Node::default();
+        self.stats.directories += 1;
+        let entries = fs::read_dir(root.join(path))
+            .with_context(|| format!("could not scan {}", root.join(path).display()))?;
+        let mut children = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if ty.is_dir() {
+                if IGNORED.contains(&name.as_str()) {
+                    self.stats.skipped_directories += 1;
+                } else if depth == MAX_DEPTH {
+                    self.diagnostics.push(Diagnostic {
+                        path: relative_file(path, &name),
+                        message: "directory depth limit reached".to_owned(),
+                    });
+                } else {
+                    children.push((path.join(&name), depth + 1));
+                }
+            } else if ty.is_file() {
+                self.stats.files += 1;
+                if let Some(ext) = Path::new(&name).extension().and_then(|e| e.to_str())
+                    && rules.needs_source(ext)
+                {
+                    node.sources
+                        .entry(ext.to_owned())
+                        .and_modify(|existing| {
+                            if name < *existing {
+                                *existing = name.clone();
+                            }
+                        })
+                        .or_insert_with(|| name.clone());
+                }
+                if parsers::readable(&name) {
+                    let file = File::open(entry.path())?;
+                    let mut bytes = Vec::new();
+                    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+                    self.stats.files_read += 1;
+                    self.stats.bytes_read += bytes.len();
+                    let content = if bytes.len() > MAX_FILE_BYTES as usize {
+                        Err("manifest exceeds 1 MiB read limit".to_owned())
+                    } else {
+                        String::from_utf8(bytes).map_err(|_| "manifest is not UTF-8".to_owned())
+                    };
+                    match content {
+                        Ok(content) => {
+                            node.contents.insert(name.clone(), content);
+                        }
+                        Err(message) => self.diagnostics.push(Diagnostic {
+                            path: relative_file(path, &name),
+                            message,
+                        }),
+                    }
+                }
+                if parsers::readable(&name) || rules.needs_filename(&name) {
+                    node.files.insert(name);
+                }
+            }
+        }
+        if !node.files.is_empty() || !node.sources.is_empty() {
+            node.path = path.to_path_buf();
+            self.nodes.push(node);
+        }
+        Ok(children)
+    }
+
+    fn walk(
+        &mut self,
+        root: &Path,
+        rules: &Rules,
+        mut pending: Vec<(PathBuf, usize)>,
+    ) -> Result<()> {
+        while let Some((path, depth)) = pending.pop() {
+            pending.extend(self.read_directory(root, &path, depth, rules)?);
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.nodes.extend(other.nodes);
+        self.diagnostics.extend(other.diagnostics);
+        self.stats.directories += other.stats.directories;
+        self.stats.files += other.stats.files;
+        self.stats.files_read += other.stats.files_read;
+        self.stats.bytes_read += other.stats.bytes_read;
+        self.stats.skipped_directories += other.stats.skipped_directories;
+    }
+}
+
+fn inventory(root: &Path, rules: &Rules, workers: usize) -> Result<Inventory> {
+    let mut inventory = Inventory::default();
+    let mut pending = vec![(PathBuf::new(), 0)];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for (path, depth) in pending {
+            next.extend(inventory.read_directory(root, &path, depth, rules)?);
+        }
+        pending = next;
+        if pending.is_empty() {
+            break;
+        }
+    }
+    if workers > 1 && pending.len() >= 64 {
+        let next = AtomicUsize::new(0);
+        let results = thread::scope(|scope| {
+            let handles = (0..workers)
+                .map(|_| {
+                    scope.spawn(|| -> Result<Inventory> {
+                        let mut inventory = Inventory::default();
+                        while let Some(task) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
+                            inventory.walk(root, rules, vec![task.clone()])?;
+                        }
+                        Ok(inventory)
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("directory scan worker panicked"))?
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+        for result in results {
+            inventory.merge(result);
+        }
+    } else {
+        inventory.walk(root, rules, pending)?;
+    }
+    inventory.nodes.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut ancestors = Vec::<usize>::new();
+    for index in 0..inventory.nodes.len() {
+        while ancestors.last().is_some_and(|&parent| {
+            !inventory.nodes[index]
+                .path
+                .starts_with(&inventory.nodes[parent].path)
+        }) {
+            ancestors.pop();
+        }
+        inventory.nodes[index].parent = ancestors.last().copied();
+        ancestors.push(index);
+    }
+    Ok(inventory)
+}
+
 pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
     let custom = extra_rules
         .map(|extra| Rules::new(Some(extra)))
@@ -196,92 +395,32 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         diagnostics: Vec::new(),
         stats: Stats::default(),
     };
-    let mut nodes = Vec::new();
-    let mut pending = vec![(PathBuf::new(), 0)];
-    while let Some((path, depth)) = pending.pop() {
-        let mut node = Node {
-            path: path.clone(),
-            ..Node::default()
-        };
-        report.stats.directories += 1;
-        let entries = fs::read_dir(root.join(&path))
-            .with_context(|| format!("could not scan {}", root.join(&path).display()))?;
-        let mut children = Vec::new();
-        for entry in entries {
-            let entry = entry?;
-            let ty = entry.file_type()?;
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            if ty.is_dir() {
-                if IGNORED.contains(&name.as_str()) {
-                    report.stats.skipped_directories += 1;
-                } else if depth == MAX_DEPTH {
-                    report.diagnostics.push(Diagnostic {
-                        path: relative_file(&path, &name),
-                        message: "directory depth limit reached".to_owned(),
-                    });
-                } else {
-                    children.push((path.join(&name), depth + 1));
-                }
-            } else if ty.is_file() {
-                report.stats.files += 1;
-                if let Some(ext) = Path::new(&name).extension().and_then(|e| e.to_str()) {
-                    node.sources
-                        .entry(ext.to_owned())
-                        .and_modify(|existing| {
-                            if name < *existing {
-                                *existing = name.clone();
-                            }
-                        })
-                        .or_insert_with(|| name.clone());
-                }
-                if parsers::readable(&name) {
-                    let file = File::open(entry.path())?;
-                    let mut bytes = Vec::new();
-                    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
-                    report.stats.files_read += 1;
-                    report.stats.bytes_read += bytes.len();
-                    let content = if bytes.len() > MAX_FILE_BYTES as usize {
-                        Err("manifest exceeds 1 MiB read limit".to_owned())
-                    } else {
-                        String::from_utf8(bytes).map_err(|_| "manifest is not UTF-8".to_owned())
-                    };
-                    match content {
-                        Ok(content) => {
-                            node.contents.insert(name.clone(), content);
-                        }
-                        Err(message) => report.diagnostics.push(Diagnostic {
-                            path: relative_file(&path, &name),
-                            message,
-                        }),
-                    }
-                }
-                if parsers::readable(&name) || rules.needs_filename(&name) {
-                    node.files.insert(name);
-                }
-            }
-        }
-        children.sort();
-        pending.extend(children.into_iter().rev());
-        nodes.push(node);
-    }
+    let workers = thread::available_parallelism().map_or(1, |n| n.get().min(4));
+    let Inventory {
+        mut nodes,
+        diagnostics,
+        stats,
+    } = inventory(&root, rules, workers)?;
+    report.diagnostics = diagnostics;
+    report.stats = stats;
     parsers::parse(&mut nodes, &mut report.diagnostics);
 
-    let mut projects = BTreeMap::<PathBuf, Project>::new();
+    let mut projects = Vec::<(usize, Project)>::new();
+    let mut project_indices = vec![None; nodes.len()];
     let mut source_detections = Vec::new();
-    for node in &nodes {
+    for (index, node) in nodes.iter().enumerate() {
         let mut detections = Vec::new();
         for detection in rules.evaluate(node) {
             if detection.kind == Kind::Source {
-                source_detections.push((&node.path, detection));
+                source_detections.push((index, detection));
             } else {
                 detections.push(detection);
             }
         }
         if !detections.is_empty() {
-            projects.insert(
-                node.path.clone(),
+            project_indices[index] = Some(projects.len());
+            projects.push((
+                index,
                 Project {
                     path: display_path(&node.path),
                     names: node.names.iter().cloned().collect(),
@@ -289,29 +428,39 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
                     detections,
                     workspace_members: Vec::new(),
                 },
-            );
+            ));
         }
     }
-    for (path, detection) in source_detections {
-        let owner = path
-            .ancestors()
-            .find(|p| {
-                projects.get(*p).is_some_and(|project| {
-                    project.detections.iter().any(|d| {
-                        d.kind != Kind::Workspace
-                            && family(&d.language) == family(&detection.language)
-                    })
+    for (index, detection) in source_detections {
+        let mut ancestor = Some(index);
+        let mut owner = None;
+        while let Some(i) = ancestor {
+            if let Some(project_index) = project_indices[i]
+                && projects[project_index].1.detections.iter().any(|d| {
+                    d.kind != Kind::Workspace && family(&d.language) == family(&detection.language)
                 })
-            })
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.clone());
-        let project = projects.entry(owner.clone()).or_insert_with(|| Project {
-            path: display_path(&owner),
-            names: Vec::new(),
-            languages: Vec::new(),
-            detections: Vec::new(),
-            workspace_members: Vec::new(),
+            {
+                owner = Some(project_index);
+                break;
+            }
+            ancestor = nodes[i].parent;
+        }
+        let owner = owner.or(project_indices[index]).unwrap_or_else(|| {
+            let project_index = projects.len();
+            project_indices[index] = Some(project_index);
+            projects.push((
+                index,
+                Project {
+                    path: display_path(&nodes[index].path),
+                    names: Vec::new(),
+                    languages: Vec::new(),
+                    detections: Vec::new(),
+                    workspace_members: Vec::new(),
+                },
+            ));
+            project_index
         });
+        let project = &mut projects[owner].1;
         if !project
             .detections
             .iter()
@@ -320,7 +469,7 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
             project.detections.push(detection);
         }
     }
-    for (path, project) in &mut projects {
+    for (index, project) in &mut projects {
         let languages = project
             .detections
             .iter()
@@ -328,20 +477,17 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
             .collect::<BTreeSet<_>>();
         for language in languages {
             let mut versions = Vec::new();
-            for ancestor in path.ancestors() {
-                if let Ok(i) = nodes.binary_search_by(|n| n.path.as_path().cmp(ancestor)) {
-                    let node = &nodes[i];
-                    if let Some(found) = node.versions.get(&language) {
-                        versions.extend(
-                            found
-                                .iter()
-                                .filter(|v| {
-                                    ancestor == path || v.kind == "pin" || v.kind == "toolchain"
-                                })
-                                .cloned(),
-                        );
-                    }
+            let mut ancestor = Some(*index);
+            while let Some(i) = ancestor {
+                if let Some(found) = nodes[i].versions.get(&language) {
+                    versions.extend(
+                        found
+                            .iter()
+                            .filter(|v| i == *index || v.kind == "pin" || v.kind == "toolchain")
+                            .cloned(),
+                    );
                 }
+                ancestor = nodes[i].parent;
             }
             let mut seen = BTreeSet::new();
             versions.retain(|v| seen.insert(v.clone()));
@@ -354,56 +500,52 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
             .detections
             .sort_by(|a, b| b.priority.cmp(&a.priority).then(a.id.cmp(&b.id)));
     }
-    let paths = projects.keys().cloned().collect::<Vec<_>>();
-    for node in &nodes {
-        let Some(project) = projects.get_mut(&node.path) else {
+    let mut candidates = BTreeMap::<&str, Vec<usize>>::new();
+    for (index, node) in nodes.iter().enumerate() {
+        if project_indices[index].is_none() {
             continue;
-        };
+        }
+        for (ecosystem, file) in [
+            ("cargo", "Cargo.toml"),
+            ("go", "go.mod"),
+            ("node", "package.json"),
+            ("python", "pyproject.toml"),
+        ] {
+            if node.files.contains(file) {
+                candidates.entry(ecosystem).or_default().push(index);
+            }
+        }
+    }
+    for (index, project) in &mut projects {
+        let node = &nodes[*index];
         for workspace in &node.workspaces {
-            for member in &paths {
-                if member == &node.path {
+            for &member in candidates
+                .get(workspace.ecosystem.as_str())
+                .into_iter()
+                .flatten()
+            {
+                if member == *index {
                     continue;
                 }
-                let Ok(relative) = member.strip_prefix(&node.path) else {
+                let Ok(relative) = nodes[member].path.strip_prefix(&node.path) else {
                     continue;
                 };
-                let relative = display_path(relative);
-                let is_member = workspace
-                    .members
-                    .iter()
-                    .any(|p| rules::path_glob(p, &relative));
-                let excluded = workspace
-                    .exclude
-                    .iter()
-                    .any(|p| rules::path_glob(p, &relative));
-                let same_language = projects_language(&nodes, member, &workspace.ecosystem);
-                if is_member && !excluded && same_language {
-                    project.workspace_members.push(display_path(member));
+                if workspace.contains(&display_path(relative)) {
+                    project
+                        .workspace_members
+                        .push(display_path(&nodes[member].path));
                 }
             }
         }
         project.workspace_members.sort();
         project.workspace_members.dedup();
     }
-    report.projects = projects.into_values().collect();
+    projects.sort_by(|a, b| nodes[a.0].path.cmp(&nodes[b.0].path));
+    report.projects = projects.into_iter().map(|(_, project)| project).collect();
     report
         .diagnostics
         .sort_by(|a, b| a.path.cmp(&b.path).then(a.message.cmp(&b.message)));
     Ok(report)
-}
-
-fn projects_language(nodes: &[Node], path: &Path, ecosystem: &str) -> bool {
-    let file = match ecosystem {
-        "cargo" => "Cargo.toml",
-        "go" => "go.mod",
-        "node" => "package.json",
-        "python" => "pyproject.toml",
-        _ => return false,
-    };
-    nodes
-        .binary_search_by(|n| n.path.as_path().cmp(path))
-        .ok()
-        .is_some_and(|i| nodes[i].files.contains(file))
 }
 
 fn family(language: &str) -> &str {

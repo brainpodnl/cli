@@ -81,8 +81,10 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
             serde_json::to_writer(&mut stdout, value)?;
             writeln!(stdout)?;
         } else {
-            serde_json::to_writer_pretty(&mut stdout, value)?;
-            writeln!(stdout)?;
+            let mut buffered = io::BufWriter::new(&mut stdout);
+            serde_json::to_writer_pretty(&mut buffered, value)?;
+            writeln!(buffered)?;
+            buffered.flush()?;
         }
         return Ok(());
     }

@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{Diagnostic, Node, Workspace, relative_file};
@@ -10,6 +11,7 @@ pub fn readable(name: &str) -> bool {
         name,
         "composer.json"
             | "package.json"
+            | "pnpm-workspace.yaml"
             | "Cargo.toml"
             | "go.mod"
             | "go.work"
@@ -25,13 +27,45 @@ pub fn readable(name: &str) -> bool {
             | ".tool-versions"
             | "rust-toolchain"
             | "rust-toolchain.toml"
-    ) || (name.starts_with("requirements") && name.ends_with(".txt"))
+    ) || name.ends_with(".gemspec")
+        || (name.starts_with("requirements") && name.ends_with(".txt"))
 }
 
 pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
-    let mut documents = BTreeMap::new();
+    let mut documents = Documents::new();
+    let mut pnpm = HashMap::<PathBuf, Option<Pnpm>>::new();
     for node in nodes.iter() {
+        if node.files.contains("pnpm-workspace.yaml") {
+            pnpm.insert(node.path.clone(), None);
+        }
         for (file, content) in &node.contents {
+            if file == "pnpm-workspace.yaml" {
+                match serde_saphyr::from_str::<PnpmDocument>(content) {
+                    Ok(manifest) => {
+                        let (members, exclude) = workspace_patterns(
+                            manifest.packages.unwrap_or_else(|| vec!["**".to_owned()]),
+                        );
+                        pnpm.insert(
+                            node.path.clone(),
+                            Some(Pnpm {
+                                workspace: Workspace {
+                                    ecosystem: "node".to_owned(),
+                                    source: relative_file(&node.path, file),
+                                    members,
+                                    exclude,
+                                },
+                                catalog: manifest.catalog.unwrap_or_default(),
+                                catalogs: manifest.catalogs.unwrap_or_default(),
+                            }),
+                        );
+                    }
+                    Err(error) => diagnostics.push(Diagnostic {
+                        path: relative_file(&node.path, file),
+                        message: error.to_string(),
+                    }),
+                }
+                continue;
+            }
             let parsed = match file.as_str() {
                 "composer.json" | "package.json" => {
                     Some(serde_json::from_str::<Value>(content).map_err(|e| e.to_string()))
@@ -44,7 +78,10 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             if let Some(parsed) = parsed {
                 match parsed {
                     Ok(doc) if doc.is_object() => {
-                        documents.insert((node.path.clone(), file.clone()), doc);
+                        documents
+                            .entry(node.path.clone())
+                            .or_default()
+                            .insert(file.clone(), doc);
                     }
                     Ok(_) => diagnostics.push(Diagnostic {
                         path: relative_file(&node.path, file),
@@ -59,16 +96,10 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
         }
     }
     for node in nodes {
-        for file in [
-            "composer.json",
-            "package.json",
-            "Cargo.toml",
-            "pyproject.toml",
-            "Pipfile",
-        ] {
-            let Some(doc) = documents.get(&(node.path.clone(), file.to_owned())) else {
-                continue;
-            };
+        if let Some(Some(manifest)) = pnpm.get(&node.path) {
+            node.workspaces.push(manifest.workspace.clone());
+        }
+        for (file, doc) in documents.get(&node.path).into_iter().flatten() {
             if let Some(name) = doc
                 .get("name")
                 .or_else(|| doc.pointer("/package/name"))
@@ -77,7 +108,7 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             {
                 node.names.insert(name.to_owned());
             }
-            match file {
+            match file.as_str() {
                 "composer.json" => composer(node, doc),
                 "package.json" => javascript(node, doc),
                 "Cargo.toml" => cargo(node, doc, &documents),
@@ -100,6 +131,7 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             match file.as_str() {
                 "go.mod" | "go.work" => go(node, file, text),
                 "Gemfile" => ruby(node, text, diagnostics),
+                f if f.ends_with(".gemspec") => gemspec(node, file, text),
                 ".go-version" => pin(node, "go", file, text),
                 ".php-version" => pin(node, "php", file, text),
                 ".ruby-version" => pin(node, "ruby", file, text),
@@ -108,7 +140,8 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                 "rust-toolchain" => pin(node, "rust", file, text),
                 "rust-toolchain.toml" => {
                     if let Some(v) = documents
-                        .get(&(node.path.clone(), file.clone()))
+                        .get(&node.path)
+                        .and_then(|docs| docs.get(file))
                         .and_then(|d| d.pointer("/toolchain/channel"))
                         .and_then(Value::as_str)
                     {
@@ -149,6 +182,92 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                 _ => (),
             }
         }
+        resolve_catalogs(node, &pnpm, diagnostics);
+    }
+}
+
+#[derive(Deserialize)]
+struct PnpmDocument {
+    packages: Option<Vec<String>>,
+    catalog: Option<BTreeMap<String, String>>,
+    catalogs: Option<BTreeMap<String, BTreeMap<String, String>>>,
+}
+
+struct Pnpm {
+    workspace: Workspace,
+    catalog: BTreeMap<String, String>,
+    catalogs: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+fn workspace_patterns(patterns: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let (mut members, mut exclude) = (Vec::new(), Vec::new());
+    for pattern in patterns {
+        if let Some(pattern) = pattern.strip_prefix('!') {
+            exclude.push(pattern.to_owned());
+        } else {
+            members.push(pattern);
+        }
+    }
+    (members, exclude)
+}
+
+fn resolve_catalogs(
+    node: &mut Node,
+    manifests: &HashMap<PathBuf, Option<Pnpm>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let workspace = node
+        .path
+        .ancestors()
+        .find_map(|path| manifests.get(path).map(|manifest| (path, manifest)))
+        .and_then(|(path, manifest)| manifest.as_ref().map(|manifest| (path, manifest)))
+        .filter(|(path, manifest)| {
+            *path == node.path
+                || node.path.strip_prefix(path).ok().is_some_and(|relative| {
+                    manifest.workspace.contains(&super::display_path(relative))
+                })
+        })
+        .map(|(_, manifest)| manifest);
+    for (key, dependency) in &mut node.dependencies {
+        let Some(package) = key.strip_prefix("npm:") else {
+            continue;
+        };
+        let Some(reference) = dependency
+            .version
+            .as_deref()
+            .and_then(|v| v.strip_prefix("catalog:"))
+        else {
+            continue;
+        };
+        let value = workspace.and_then(|manifest| {
+            let catalog = if reference.is_empty() || reference == "default" {
+                Some(&manifest.catalog)
+            } else {
+                manifest.catalogs.get(reference)
+            };
+            catalog
+                .and_then(|catalog| catalog.get(package))
+                .filter(|v| !v.starts_with("catalog:"))
+                .map(|value| super::Version {
+                    value: value.clone(),
+                    source: manifest.workspace.source.clone(),
+                    kind: "requirement".to_owned(),
+                })
+        });
+        if let Some(resolved) = value {
+            if package == "typescript" {
+                node.versions
+                    .entry("typescript".to_owned())
+                    .or_default()
+                    .push(resolved.clone());
+            }
+            dependency.resolved = Some(resolved);
+        } else {
+            diagnostics.push(Diagnostic {
+                path: dependency.source.clone(),
+                message: format!("could not resolve catalog:{reference} for {package}"),
+            });
+        }
     }
 }
 
@@ -169,6 +288,14 @@ fn dependencies(node: &mut Node, object: Option<&Value>, ecosystem: &str, file: 
 }
 
 fn composer(node: &mut Node, doc: &Value) {
+    if let Some(name) = doc.get("name").and_then(Value::as_str) {
+        node.identity(
+            "composer",
+            name,
+            doc.get("version").and_then(Value::as_str),
+            "composer.json",
+        );
+    }
     dependencies(node, doc.get("require"), "composer", "composer.json");
     if let Some(v) = doc.pointer("/require/php").and_then(Value::as_str) {
         node.version("php", v, "composer.json", "requirement");
@@ -179,6 +306,14 @@ fn composer(node: &mut Node, doc: &Value) {
 }
 
 fn javascript(node: &mut Node, doc: &Value) {
+    if let Some(name) = doc.get("name").and_then(Value::as_str) {
+        node.identity(
+            "npm",
+            name,
+            doc.get("version").and_then(Value::as_str),
+            "package.json",
+        );
+    }
     dependencies(node, doc.get("devDependencies"), "npm", "package.json");
     dependencies(node, doc.get("dependencies"), "npm", "package.json");
     if let Some(v) = doc.pointer("/engines/node").and_then(Value::as_str) {
@@ -188,24 +323,34 @@ fn javascript(node: &mut Node, doc: &Value) {
         node.version("javascript", v, "package.json", "pin");
     }
     if let Some(v) = doc
-        .pointer("/devDependencies/typescript")
-        .or_else(|| doc.pointer("/dependencies/typescript"))
+        .pointer("/dependencies/typescript")
+        .or_else(|| doc.pointer("/devDependencies/typescript"))
         .and_then(Value::as_str)
     {
-        node.version("typescript", v, "package.json", "requirement");
+        node.version(
+            "typescript",
+            v,
+            "package.json",
+            if v.starts_with("catalog:") {
+                "reference"
+            } else {
+                "requirement"
+            },
+        );
     }
     if let Some(workspaces) = doc.get("workspaces") {
-        let members = strings(workspaces.get("packages").unwrap_or(workspaces));
+        let (members, exclude) =
+            workspace_patterns(strings(workspaces.get("packages").unwrap_or(workspaces)));
         node.workspaces.push(Workspace {
             ecosystem: "node".to_owned(),
             source: relative_file(&node.path, "package.json"),
             members,
-            exclude: Vec::new(),
+            exclude,
         });
     }
 }
 
-type Documents = BTreeMap<(PathBuf, String), Value>;
+type Documents = HashMap<PathBuf, BTreeMap<String, Value>>;
 
 fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
     let file = "Cargo.toml";
@@ -216,18 +361,44 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
         if let Some(explicit) = doc.pointer("/package/workspace").and_then(Value::as_str) {
             normalize_path(&node.path.join(explicit)).and_then(|path| {
                 documents
-                    .get(&(path.clone(), file.to_owned()))
+                    .get(&path)
+                    .and_then(|docs| docs.get(file))
                     .filter(|d| d.get("workspace").is_some())
                     .map(|d| (path, d))
             })
         } else {
             node.path.ancestors().find_map(|path| {
                 documents
-                    .get(&(path.to_path_buf(), file.to_owned()))
+                    .get(path)
+                    .and_then(|docs| docs.get(file))
                     .filter(|d| d.get("workspace").is_some())
                     .map(|d| (path.to_path_buf(), d))
             })
         };
+    if let Some(name) = doc.pointer("/package/name").and_then(Value::as_str) {
+        node.identity(
+            "cargo",
+            name,
+            doc.pointer("/package/version").and_then(Value::as_str),
+            file,
+        );
+        if doc
+            .pointer("/package/version/workspace")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && let Some((path, workspace)) = &workspace
+            && let Some(version) = workspace
+                .pointer("/workspace/package/version")
+                .and_then(Value::as_str)
+            && let Some(identity) = node.identities.get_mut(&format!("cargo:{name}"))
+        {
+            identity.resolved = Some(super::Version {
+                value: version.to_owned(),
+                source: relative_file(path, file),
+                kind: "package".to_owned(),
+            });
+        }
+    }
     if let Some(version) = doc.pointer("/package/rust-version") {
         if let Some(v) = version.as_str() {
             node.version("rust", v, file, "requirement");
@@ -282,7 +453,11 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
                     .map(str::to_owned);
                 node.dependencies.insert(
                     format!("cargo:{name}"),
-                    super::Dependency { version, source },
+                    super::Dependency {
+                        version,
+                        source,
+                        resolved: None,
+                    },
                 );
             }
         }
@@ -299,6 +474,18 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
 
 fn python(node: &mut Node, doc: &Value) {
     let file = "pyproject.toml";
+    if let Some(name) = doc
+        .pointer("/project/name")
+        .or_else(|| doc.pointer("/tool/poetry/name"))
+        .and_then(Value::as_str)
+    {
+        let version = doc
+            .pointer("/project/version")
+            .or_else(|| doc.pointer("/tool/poetry/version"))
+            .and_then(Value::as_str);
+        node.identity("pypi", &normalize_python(name), version, file);
+        node.names.insert(name.to_owned());
+    }
     if let Some(v) = doc
         .pointer("/project/requires-python")
         .and_then(Value::as_str)
@@ -445,6 +632,7 @@ fn go(node: &mut Node, file: &str, text: &str) {
             "module" => {
                 if let Some(name) = values.first() {
                     node.names.insert(name.trim_matches('"').to_owned());
+                    node.identity("go", name.trim_matches('"'), None, file);
                 }
             }
             "require" => {
@@ -529,6 +717,39 @@ fn ruby(node: &mut Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
                 "Gemfile",
             );
         }
+    }
+}
+
+fn gemspec(node: &mut Node, file: &str, text: &str) {
+    let mut name = None;
+    let mut version = None;
+    for line in text.lines() {
+        let Some((receiver, assignment)) = line.trim().split_once('.') else {
+            continue;
+        };
+        if receiver.is_empty()
+            || !receiver
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let Some((field, value)) = assignment.split_once('=') else {
+            continue;
+        };
+        let Some((value, _)) = quoted(value) else {
+            continue;
+        };
+        match field.trim() {
+            "name" => name = Some(value),
+            "version" => version = Some(value),
+            "required_ruby_version" => node.version("ruby", value, file, "requirement"),
+            _ => (),
+        }
+    }
+    if let Some(name) = name {
+        node.names.insert(name.to_owned());
+        node.identity("gem", name, version, file);
     }
 }
 

@@ -136,200 +136,207 @@ id = "laravel"
 language = "php"
 kind = "framework"
 priority = 100
-any = ["dep:composer:laravel/framework"]
+any = ["dep:composer:laravel/framework", "identity:composer:laravel/framework"]
 
 [[rules]]
 id = "symfony"
 language = "php"
 kind = "framework"
 priority = 100
-any = ["dep:composer:symfony/framework-bundle", "dep:composer:symfony/symfony"]
+any = ["dep:composer:symfony/framework-bundle", "dep:composer:symfony/symfony", "identity:composer:symfony/framework-bundle", "identity:composer:symfony/symfony"]
 
 [[rules]]
 id = "cakephp"
 language = "php"
 kind = "framework"
 priority = 100
-any = ["dep:composer:cakephp/cakephp"]
+any = ["dep:composer:cakephp/cakephp", "identity:composer:cakephp/cakephp"]
 
 [[rules]]
 id = "codeigniter"
 language = "php"
 kind = "framework"
 priority = 100
-any = ["dep:composer:codeigniter4/framework", "dep:composer:codeigniter/framework"]
+any = ["dep:composer:codeigniter4/framework", "dep:composer:codeigniter/framework", "identity:composer:codeigniter4/framework", "identity:composer:codeigniter/framework"]
 
 [[rules]]
 id = "slim"
 language = "php"
 kind = "framework"
 priority = 100
-any = ["dep:composer:slim/slim"]
+any = ["dep:composer:slim/slim", "identity:composer:slim/slim"]
 
 [[rules]]
 id = "axum"
 language = "rust"
 kind = "framework"
 priority = 100
-any = ["dep:cargo:axum"]
+any = ["dep:cargo:axum", "identity:cargo:axum"]
 
 [[rules]]
 id = "rocket"
 language = "rust"
 kind = "framework"
 priority = 100
-any = ["dep:cargo:rocket"]
+any = ["dep:cargo:rocket", "identity:cargo:rocket"]
 
 [[rules]]
 id = "actix-web"
 language = "rust"
 kind = "framework"
 priority = 100
-any = ["dep:cargo:actix-web"]
+any = ["dep:cargo:actix-web", "identity:cargo:actix-web"]
 
 [[rules]]
 id = "rails"
 language = "ruby"
 kind = "framework"
 priority = 100
-any = ["dep:gem:rails"]
+any = ["dep:gem:rails", "identity:gem:rails", { all = ["dep:gem:actionpack", "dep:gem:railties"] }]
 
 [[rules]]
 id = "sinatra"
 language = "ruby"
 kind = "framework"
 priority = 100
-any = ["dep:gem:sinatra"]
+any = ["dep:gem:sinatra", "identity:gem:sinatra"]
 
 [[rules]]
 id = "hanami"
 language = "ruby"
 kind = "framework"
 priority = 100
-any = ["dep:gem:hanami"]
+any = ["dep:gem:hanami", "identity:gem:hanami"]
 
 [[rules]]
 id = "django"
 language = "python"
 kind = "framework"
 priority = 100
-any = ["dep:pypi:django"]
+any = ["dep:pypi:django", "identity:pypi:django"]
 
 [[rules]]
 id = "fastapi"
 language = "python"
 kind = "framework"
 priority = 100
-any = ["dep:pypi:fastapi"]
+any = ["dep:pypi:fastapi", "identity:pypi:fastapi"]
 
 [[rules]]
 id = "flask"
 language = "python"
 kind = "framework"
 priority = 100
-any = ["dep:pypi:flask"]
+any = ["dep:pypi:flask", "identity:pypi:flask"]
 
 [[rules]]
 id = "starlette"
 language = "python"
 kind = "framework"
 priority = 50
-any = ["dep:pypi:starlette"]
+any = ["dep:pypi:starlette", "identity:pypi:starlette"]
 
 [[rules]]
 id = "celery"
 language = "python"
 kind = "framework"
 priority = 100
-any = ["dep:pypi:celery"]
+any = ["dep:pypi:celery", "identity:pypi:celery"]
 
 [[rules]]
 id = "gin"
 language = "go"
 kind = "framework"
 priority = 100
-any = ["dep:go:github.com/gin-gonic/gin"]
+any = ["dep:go:github.com/gin-gonic/gin", "identity:go:github.com/gin-gonic/gin"]
 
 [[rules]]
 id = "echo"
 language = "go"
 kind = "framework"
 priority = 100
-any = ["dep:go:github.com/labstack/echo/v4"]
+any = ["dep:go:github.com/labstack/echo/v4", "identity:go:github.com/labstack/echo/v4"]
 
 [[rules]]
 id = "fiber"
 language = "go"
 kind = "framework"
 priority = 100
-any = ["dep:go:github.com/gofiber/fiber/v2"]
+any = ["dep:go:github.com/gofiber/fiber/v2", "identity:go:github.com/gofiber/fiber/v2"]
 
 [[rules]]
 id = "nextjs"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:next"]
+any = ["dep:npm:next", "identity:npm:next"]
 
 [[rules]]
 id = "nuxtjs"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:nuxt", "dep:npm:nuxt3"]
+any = ["dep:npm:nuxt", "dep:npm:nuxt3", "identity:npm:nuxt", "identity:npm:nuxt3"]
 
 [[rules]]
 id = "astro"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:astro"]
+any = ["dep:npm:astro", "identity:npm:astro"]
 
 [[rules]]
 id = "sveltekit"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:@sveltejs/kit"]
+any = ["dep:npm:@sveltejs/kit", "identity:npm:@sveltejs/kit"]
 
 [[rules]]
 id = "remix"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:@remix-run/react"]
+any = ["dep:npm:@remix-run/react", "identity:npm:@remix-run/react"]
 
 [[rules]]
 id = "angular"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:@angular/core"]
+any = ["dep:npm:@angular/core", "identity:npm:@angular/core"]
 
 [[rules]]
 id = "express"
 language = "javascript"
 kind = "framework"
 priority = 100
-any = ["dep:npm:express"]
+any = ["dep:npm:express", "identity:npm:express"]
 
 [[rules]]
 id = "react"
 language = "javascript"
 kind = "framework"
 priority = 50
-any = ["dep:npm:react"]
+any = ["dep:npm:react", "identity:npm:react"]
 
 [[rules]]
 id = "vue"
 language = "javascript"
 kind = "framework"
 priority = 50
-any = ["dep:npm:vue"]
+any = ["dep:npm:vue", "identity:npm:vue"]
 
 [[rules]]
 id = "vite"
 language = "javascript"
 kind = "framework"
 priority = 50
-any = ["dep:npm:vite"]
+any = ["dep:npm:vite", "identity:npm:vite"]
+
+[[rules]]
+id = "rubygems"
+language = "ruby"
+kind = "project"
+priority = 10
+any = ["file:*.gemspec"]

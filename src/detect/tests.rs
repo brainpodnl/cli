@@ -410,7 +410,7 @@ fn avoids_false_framework_matches() {
         ),
         (
             "Cargo.toml",
-            "[package]\nname='axum'\n[dev-dependencies]\nrocket='0.5'\n[workspace.dependencies]\naxum='0.8'\n",
+            "[package]\nname='not-axum'\n[dev-dependencies]\nrocket='0.5'\n[workspace.dependencies]\naxum='0.8'\n",
         ),
         (
             "Gemfile",
@@ -682,5 +682,383 @@ fn benchmark_polyglot_scan() {
     eprintln!(
         "200 polyglot services, 20,200 files (20 warm filesystem runs): first {first:.3} ms, median {:.3} ms, p95 {:.3} ms; 200 manifest reads, zero source reads",
         samples[10], samples[18]
+    );
+}
+
+#[test]
+fn framework_definitions_are_not_confused_with_consumers() {
+    let cases = [
+        (
+            "react",
+            "package.json",
+            r#"{"name":"react","version":"19.3.0"}"#,
+        ),
+        (
+            "nextjs",
+            "package.json",
+            r#"{"name":"next","version":"16.5.0-canary.45"}"#,
+        ),
+        (
+            "vue",
+            "package.json",
+            r#"{"name":"vue","version":"2.7.16"}"#,
+        ),
+        (
+            "laravel",
+            "composer.json",
+            r#"{"name":"laravel/framework"}"#,
+        ),
+        ("symfony", "composer.json", r#"{"name":"symfony/symfony"}"#),
+        (
+            "axum",
+            "Cargo.toml",
+            "[package]\nname='axum'\nversion='0.8.0'\n",
+        ),
+        (
+            "gin",
+            "go.mod",
+            "module github.com/gin-gonic/gin\ngo 1.26.0\n",
+        ),
+        (
+            "django",
+            "pyproject.toml",
+            "[project]\nname='Django'\nversion='5.1'\n",
+        ),
+        (
+            "rails",
+            "rails.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = 'rails'\n  s.version = version\n  s.required_ruby_version = '>= 3.3.5'\nend\n",
+        ),
+    ];
+    for (id, file, content) in cases {
+        let dir = fixture(&[(file, content)]);
+        let report = scan(dir.path(), None).unwrap();
+        assert!(report.diagnostics.is_empty(), "{id}: {report:#?}");
+        let p = project(&report, ".");
+        let detection = p.detections.iter().find(|d| d.id == id).unwrap();
+        assert_eq!(detection.roles, [super::FrameworkRole::Provides], "{id}");
+        assert!(
+            detection
+                .evidence
+                .iter()
+                .all(|e| e.pattern.starts_with("identity:"))
+        );
+        if id == "django" {
+            assert_eq!(p.names, ["Django"]);
+        }
+        if id == "rails" {
+            assert!(version(p, "ruby", ">= 3.3.5", "rails.gemspec"));
+        }
+    }
+    let dir = fixture(&[(
+        "package.json",
+        r#"{"name":"react","version":"19","dependencies":{"react":"18"}}"#,
+    )]);
+    let report = scan(dir.path(), None).unwrap();
+    assert_eq!(
+        project(&report, ".")
+            .detections
+            .iter()
+            .find(|d| d.id == "react")
+            .unwrap()
+            .roles,
+        [super::FrameworkRole::Uses, super::FrameworkRole::Provides]
+    );
+}
+
+#[test]
+fn rails_component_detection_requires_both_web_components() {
+    for (text, expected) in [
+        ("gem 'activesupport', '~> 8.1'\n", false),
+        ("gem 'actionpack', '~> 8.1'\n", false),
+        ("gem 'railties', '~> 8.1'\n", false),
+        (
+            "gem 'actionpack', '~> 8.1'\ngem 'railties', '~> 8.1'\n",
+            true,
+        ),
+    ] {
+        let dir = fixture(&[("Gemfile", text)]);
+        let report = scan(dir.path(), None).unwrap();
+        let p = project(&report, ".");
+        assert_eq!(detects(p, "rails"), expected, "{text}");
+        if expected {
+            let detection = p.detections.iter().find(|d| d.id == "rails").unwrap();
+            assert_eq!(detection.roles, [super::FrameworkRole::Uses]);
+            assert_eq!(detection.evidence.len(), 2);
+        }
+    }
+}
+
+#[test]
+fn poetry_names_preserve_the_declared_spelling() {
+    let dir = fixture(&[(
+        "pyproject.toml",
+        "[tool.poetry]\nname='AutoGPT.Platform.Backend'\nversion='0.6.22'\n[tool.poetry.dependencies]\npython='>=3.11,<3.14'\nfastapi='^0.128.6'\n",
+    )]);
+    let report = scan(dir.path(), None).unwrap();
+    let p = project(&report, ".");
+    assert_eq!(p.names, ["AutoGPT.Platform.Backend"]);
+    assert!(detects(p, "fastapi"));
+    assert!(version(p, "python", ">=3.11,<3.14", "pyproject.toml"));
+}
+
+#[test]
+fn pnpm_catalogs_preserve_references_and_resolve_local_versions() {
+    let dir = fixture(&[
+        (
+            "pnpm-workspace.yaml",
+            "packages: ['apps/*', '!apps/excluded']\ncatalog: &default\n  next: '16.0.0'\n  typescript: 'npm:@typescript/typescript6@6.0.2'\ncatalogs:\n  tooling:\n    <<: *default\n    typescript: '7.0.2'\n",
+        ),
+        (
+            "apps/web/package.json",
+            r#"{"name":"web","dependencies":{"next":"catalog:"},"devDependencies":{"typescript":"catalog:tooling"}}"#,
+        ),
+        ("apps/excluded/package.json", "{}"),
+        ("apps/web/src/page.tsx", "source must not be read"),
+    ]);
+    let report = scan(dir.path(), None).unwrap();
+    assert!(report.diagnostics.is_empty(), "{report:#?}");
+    let root = project(&report, ".");
+    assert!(detects(root, "node-workspace"));
+    assert_eq!(root.workspace_members, ["apps/web"]);
+    let web = project(&report, "apps/web");
+    assert!(version(web, "typescript", "7.0.2", "pnpm-workspace.yaml"));
+    assert!(
+        web.languages
+            .iter()
+            .flat_map(|l| &l.versions)
+            .any(|v| v.kind == "reference" && v.value == "catalog:tooling")
+    );
+    let next = web.detections.iter().find(|d| d.id == "nextjs").unwrap();
+    assert_eq!(next.roles, [super::FrameworkRole::Uses]);
+    assert!(
+        next.evidence
+            .iter()
+            .any(|e| e.source == "apps/web/package.json" && e.value.as_deref() == Some("catalog:"))
+    );
+    assert!(
+        next.evidence
+            .iter()
+            .any(|e| e.source == "pnpm-workspace.yaml" && e.value.as_deref() == Some("16.0.0"))
+    );
+    assert_eq!(report.stats.files_read, 3);
+}
+
+#[test]
+fn nested_pnpm_catalogs_do_not_leak_across_workspace_boundaries() {
+    let dir = fixture(&[
+        (
+            "pnpm-workspace.yaml",
+            "packages: ['apps/**']\ncatalog:\n  typescript: '6.0.2'\n",
+        ),
+        (
+            "apps/nested/pnpm-workspace.yaml",
+            "packages: ['packages/*']\ncatalog:\n  typescript: '7.0.2'\n",
+        ),
+        (
+            "apps/nested/packages/web/package.json",
+            r#"{"devDependencies":{"typescript":"catalog:"}}"#,
+        ),
+        (
+            "apps/nested/excluded/package.json",
+            r#"{"devDependencies":{"typescript":"catalog:"}}"#,
+        ),
+    ]);
+    let report = scan(dir.path(), None).unwrap();
+    let nested = project(&report, "apps/nested/packages/web");
+    assert!(version(
+        nested,
+        "typescript",
+        "7.0.2",
+        "apps/nested/pnpm-workspace.yaml"
+    ));
+    assert!(!version(
+        nested,
+        "typescript",
+        "6.0.2",
+        "pnpm-workspace.yaml"
+    ));
+    let excluded = project(&report, "apps/nested/excluded");
+    assert!(
+        excluded
+            .languages
+            .iter()
+            .flat_map(|l| &l.versions)
+            .all(|v| v.kind == "reference")
+    );
+    assert_eq!(report.diagnostics.len(), 1);
+    assert_eq!(
+        report.diagnostics[0].path,
+        "apps/nested/excluded/package.json"
+    );
+}
+
+#[test]
+fn pnpm_defaults_and_missing_catalog_entries_are_explicit() {
+    let dir = fixture(&[
+        ("pnpm-workspace.yaml", "catalog:\n  typescript: '6.0.2'\n"),
+        (
+            "packages/web/package.json",
+            r#"{"devDependencies":{"typescript":"catalog:default"}}"#,
+        ),
+        (
+            "packages/missing/package.json",
+            r#"{"devDependencies":{"typescript":"catalog:missing"}}"#,
+        ),
+    ]);
+    let report = scan(dir.path(), None).unwrap();
+    assert_eq!(
+        project(&report, ".").workspace_members,
+        ["packages/missing", "packages/web"]
+    );
+    assert!(version(
+        project(&report, "packages/web"),
+        "typescript",
+        "6.0.2",
+        "pnpm-workspace.yaml"
+    ));
+    assert_eq!(report.diagnostics.len(), 1);
+    assert!(report.diagnostics[0].message.contains("catalog:missing"));
+    let broken = fixture(&[
+        ("pnpm-workspace.yaml", "packages: [broken"),
+        ("package.json", "{}"),
+    ]);
+    let report = scan(broken.path(), None).unwrap();
+    assert_eq!(report.diagnostics.len(), 1);
+    assert!(detects(project(&report, "."), "node"));
+}
+
+#[test]
+fn conjunction_patterns_require_complete_groups_and_validate_atoms() {
+    let dir = fixture(&[("a.config", ""), ("b.config", "")]);
+    let rules = "[[rules]]\nid='grouped'\nlanguage='javascript'\nkind='framework'\npriority=999\nany=[{all=['file:a.config','file:b.config']}]\nnone=[{all=['file:a.config','file:blocked']}]\n";
+    let report = scan(dir.path(), Some(rules)).unwrap();
+    assert!(detects(project(&report, "."), "grouped"));
+    assert!(
+        scan(
+            dir.path(),
+            Some(&rules.replace("file:b.config", "file:missing"))
+        )
+        .unwrap()
+        .projects
+        .is_empty()
+    );
+    for invalid in [
+        rules.replace("file:b.config", "invalid:atom"),
+        rules.replace("['file:a.config','file:b.config']", "[]"),
+    ] {
+        assert!(scan(dir.path(), Some(&invalid)).is_err());
+    }
+}
+
+#[test]
+fn parallel_inventory_matches_serial_inventory() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..128 {
+        let path = dir.path().join(format!("services/s{i}/src/deep"));
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("main.ts"), "not read").unwrap();
+        fs::write(path.join("irrelevant.md"), "not read").unwrap();
+        fs::write(dir.path().join(format!("services/s{i}/package.json")), "{}").unwrap();
+    }
+    let rules = super::Rules::builtin().unwrap();
+    let serial = super::inventory(dir.path(), rules, 1).unwrap();
+    let parallel = super::inventory(dir.path(), rules, 4).unwrap();
+    assert_eq!(serial.stats, parallel.stats);
+    assert_eq!(serial.nodes.len(), parallel.nodes.len());
+    for (a, b) in serial.nodes.iter().zip(&parallel.nodes) {
+        assert_eq!(
+            (&a.path, a.parent, &a.files, &a.sources, &a.contents),
+            (&b.path, b.parent, &b.files, &b.sources, &b.contents)
+        );
+    }
+    assert_eq!(serial.stats.files_read, 128);
+    let report = scan(dir.path(), None).unwrap();
+    assert_eq!(report.projects.len(), 128);
+    assert_eq!(scan(dir.path(), None).unwrap(), report);
+}
+
+#[test]
+fn trailing_globstars_match_zero_or_more_directories() {
+    for (pattern, path, expected) in [
+        ("packages/**", "packages", true),
+        ("packages/**/**", "packages", true),
+        ("packages/*", "packages", false),
+        ("packages/**", "packages/web/src", true),
+    ] {
+        assert_eq!(
+            super::rules::path_glob(pattern, path),
+            expected,
+            "{pattern}: {path}"
+        );
+    }
+}
+
+#[test]
+fn inherited_package_identity_versions_keep_workspace_provenance() {
+    let dir = fixture(&[
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers=['crates/*']\n[workspace.package]\nversion='0.8.1'\n",
+        ),
+        (
+            "crates/axum/Cargo.toml",
+            "[package]\nname='axum'\nversion.workspace=true\n",
+        ),
+    ]);
+    let report = scan(dir.path(), None).unwrap();
+    let axum = project(&report, "crates/axum")
+        .detections
+        .iter()
+        .find(|d| d.id == "axum")
+        .unwrap();
+    assert_eq!(axum.roles, [super::FrameworkRole::Provides]);
+    assert!(
+        axum.evidence
+            .iter()
+            .any(|e| e.source == "Cargo.toml" && e.value.as_deref() == Some("0.8.1"))
+    );
+    assert!(
+        axum.evidence
+            .iter()
+            .all(|e| e.source != "crates/axum/Cargo.toml" || e.value.is_none())
+    );
+}
+
+#[test]
+fn malformed_nested_pnpm_files_block_outer_catalog_resolution() {
+    let dir = fixture(&[
+        (
+            "pnpm-workspace.yaml",
+            "packages: ['apps/**']\ncatalog:\n  typescript: '6.0.2'\n",
+        ),
+        ("apps/nested/pnpm-workspace.yaml", "packages: [broken"),
+        (
+            "apps/nested/web/package.json",
+            r#"{"devDependencies":{"typescript":"catalog:"}}"#,
+        ),
+    ]);
+    let report = scan(dir.path(), None).unwrap();
+    assert_eq!(report.diagnostics.len(), 2);
+    let web = project(&report, "apps/nested/web");
+    assert!(
+        web.languages
+            .iter()
+            .flat_map(|l| &l.versions)
+            .all(|v| v.kind == "reference")
+    );
+}
+
+#[test]
+fn provider_file_guards_do_not_imply_framework_consumption() {
+    let dir = fixture(&[
+        ("package.json", r#"{"name":"react","version":"19"}"#),
+        ("provider.config", ""),
+    ]);
+    let rules = "[[rules]]\nid='guarded-provider'\nlanguage='javascript'\nkind='framework'\npriority=200\nall=['identity:npm:react','file:provider.config']\n";
+    let report = scan(dir.path(), Some(rules)).unwrap();
+    assert_eq!(
+        project(&report, ".").detections[0].roles,
+        [super::FrameworkRole::Provides]
     );
 }
