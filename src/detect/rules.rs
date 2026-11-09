@@ -116,9 +116,12 @@ impl Rules {
                                 !ecosystem.is_empty() && !name.is_empty()
                             })
                         }
-                        Some(("package", "cargo")) => true,
+                        Some(("package", "cargo" | "dotnet" | "maven" | "gradle")) => true,
                         Some(("workspace", value)) => {
-                            matches!(value, "cargo" | "node" | "go" | "python")
+                            matches!(
+                                value,
+                                "cargo" | "node" | "go" | "python" | "dotnet" | "maven" | "gradle"
+                            )
                         }
                         _ => false,
                     };
@@ -215,7 +218,7 @@ impl Rules {
                 candidates.extend(ids);
             }
         }
-        for package in &node.packages {
+        for package in node.packages.keys() {
             if let Some(ids) = self.packages.get(package) {
                 candidates.extend(ids);
             }
@@ -296,11 +299,13 @@ enum Matched<'a> {
     File(&'a str),
     Dependency(&'a super::Dependency),
     Workspace(&'a super::Workspace),
+    Package(&'a str),
 }
 
 impl Matched<'_> {
     fn evidence(self, node: &Node, pattern: &str, evidence: &mut Vec<Evidence>) {
         let (source, value) = match self {
+            Self::Package(source) => (source.to_owned(), None),
             Self::File(name) => (super::relative_file(&node.path, name), None),
             Self::Dependency(dep) => {
                 if let Some(resolved) = &dep.resolved {
@@ -339,7 +344,7 @@ fn matched<'a>(node: &'a Node, pattern: &str) -> Option<Matched<'a>> {
         "package" => node
             .packages
             .get(value)
-            .map(|_| Matched::File("Cargo.toml")),
+            .map(|source| Matched::Package(source)),
         "workspace" => node
             .workspaces
             .iter()

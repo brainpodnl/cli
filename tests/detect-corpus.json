@@ -1475,6 +1475,518 @@
           "member": "packages/excalidraw"
         }
       ]
+    },
+    {
+      "repository": "jellyfin/jellyfin",
+      "language": "C#",
+      "stars": 59164,
+      "languageRank": 3,
+      "webRank": 1,
+      "revision": "797999fc9bd49a9f0853916e2933e3ad06173503",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "Jellyfin.Server",
+          "language": "csharp"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "Jellyfin.Server",
+          "id": "dotnet"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "Jellyfin.Server",
+          "id": "aspnetcore",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "Jellyfin.Server",
+          "language": "csharp",
+          "value": "10.0.0",
+          "source": "global.json",
+          "versionKind": "sdk"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "Jellyfin.Server",
+          "language": "csharp",
+          "value": "net10.0",
+          "source": "Jellyfin.Server/Jellyfin.Server.csproj",
+          "versionKind": "target"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "dotnet-workspace",
+          "member": "Jellyfin.Server"
+        }
+      ]
+    },
+    {
+      "repository": "dotnet/aspnetcore",
+      "language": "C#",
+      "stars": 38507,
+      "languageRank": 8,
+      "webRank": 2,
+      "revision": "eeceb660128d3d00ea9b35effe4fad3fac3d42e3",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "src/Mvc/Mvc/src",
+          "language": "csharp"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "src/Mvc/Mvc/src",
+          "id": "dotnet"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/Mvc/Mvc/src",
+          "id": "aspnetcore",
+          "roles": [
+            "provides"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Mvc/Mvc/src",
+          "language": "csharp",
+          "value": "12.0.100-alpha.1.26555.106",
+          "source": "global.json",
+          "versionKind": "sdk"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "dotnet-workspace",
+          "member": "src/Mvc/Mvc/src"
+        }
+      ]
+    },
+    {
+      "repository": "jasontaylordev/CleanArchitecture",
+      "language": "C#",
+      "stars": 20711,
+      "languageRank": 29,
+      "webRank": 3,
+      "revision": "e1ab4cc4d5d7b4e25e57bd8b0514b766573b8c04",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "src/Web",
+          "language": "csharp"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "src/Web",
+          "id": "dotnet"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/Web",
+          "id": "aspnetcore",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Web",
+          "language": "csharp",
+          "value": "10.0.403",
+          "source": "global.json",
+          "versionKind": "sdk"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Web",
+          "language": "csharp",
+          "value": "net10.0",
+          "source": "Directory.Build.props",
+          "versionKind": "target"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "dotnet-workspace",
+          "member": "src/Web"
+        }
+      ]
+    },
+    {
+      "repository": "bitwarden/server",
+      "language": "C#",
+      "stars": 20610,
+      "languageRank": 30,
+      "webRank": 4,
+      "revision": "04a4d7548b07d18ab7327ddaae81a05fd893a820",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "src/Api",
+          "language": "csharp"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "src/Api",
+          "id": "dotnet"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/Api",
+          "id": "aspnetcore",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Api",
+          "language": "csharp",
+          "value": "10.0.103",
+          "source": "global.json",
+          "versionKind": "sdk"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Api",
+          "language": "csharp",
+          "value": "net10.0",
+          "source": "Directory.Build.props",
+          "versionKind": "target"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "dotnet-workspace",
+          "member": "src/Api"
+        }
+      ]
+    },
+    {
+      "repository": "ardalis/CleanArchitecture",
+      "language": "C#",
+      "stars": 18543,
+      "languageRank": 36,
+      "webRank": 5,
+      "revision": "da5491f1641f3d388e6cfc2c0ddd29f763746762",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "src/Clean.Architecture.Web",
+          "language": "csharp"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "src/Clean.Architecture.Web",
+          "id": "dotnet"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/Clean.Architecture.Web",
+          "id": "aspnetcore",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Clean.Architecture.Web",
+          "language": "csharp",
+          "value": "10.0.100",
+          "source": "global.json",
+          "versionKind": "sdk"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/Clean.Architecture.Web",
+          "language": "csharp",
+          "value": "net10.0",
+          "source": "Directory.Build.props",
+          "versionKind": "target"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "dotnet-workspace",
+          "member": "src/Clean.Architecture.Web"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/Clean.Architecture.Web",
+          "id": "fastendpoints"
+        }
+      ]
+    },
+    {
+      "repository": "macrozheng/mall",
+      "language": "Java",
+      "stars": 85023,
+      "languageRank": 3,
+      "webRank": 1,
+      "revision": "dcaa93b3150352e5044708d7211b5bed0af4509f",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "java"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "maven"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "spring-boot",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "java",
+          "value": "17",
+          "source": "pom.xml"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "maven-workspace",
+          "member": "mall-admin"
+        }
+      ]
+    },
+    {
+      "repository": "spring-projects/spring-boot",
+      "language": "Java",
+      "stars": 81788,
+      "languageRank": 4,
+      "webRank": 2,
+      "revision": "52dba7773c16cc5d145e59ad69de1b99e87896bb",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "core/spring-boot",
+          "language": "java"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "core/spring-boot",
+          "id": "gradle"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": "core/spring-boot",
+          "id": "spring-boot",
+          "roles": [
+            "provides"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "core/spring-boot",
+          "language": "java",
+          "value": "25.0.5.0+11-librca",
+          "source": ".sdkmanrc",
+          "versionKind": "pin"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "gradle-workspace",
+          "member": "core/spring-boot"
+        }
+      ]
+    },
+    {
+      "repository": "elastic/elasticsearch",
+      "language": "Java",
+      "stars": 78546,
+      "languageRank": 6,
+      "webRank": 3,
+      "revision": "97fdd221f5919be472b60d29241f673774c19c51",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "java"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "gradle"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "java",
+          "value": "21",
+          "source": "gradle/gradle-daemon-jvm.properties",
+          "versionKind": "build-toolchain"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "gradle-workspace",
+          "member": "server"
+        }
+      ]
+    },
+    {
+      "repository": "spring-projects/spring-framework",
+      "language": "Java",
+      "stars": 60307,
+      "languageRank": 11,
+      "webRank": 4,
+      "revision": "cc8008c301bc57b69c7c226254b720a2239741bf",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "spring-core",
+          "language": "java"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "spring-core",
+          "id": "gradle"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": "spring-core",
+          "id": "spring",
+          "roles": [
+            "provides"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "spring-core",
+          "language": "java",
+          "value": "25.0.5.0+11-librca",
+          "source": ".sdkmanrc",
+          "versionKind": "pin"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "gradle-workspace",
+          "member": "spring-core"
+        }
+      ]
+    },
+    {
+      "repository": "jeecgboot/JeecgBoot",
+      "language": "Java",
+      "stars": 48413,
+      "languageRank": 15,
+      "webRank": 5,
+      "revision": "49c29032e18df784f1a75123d90647bc8f74cedb",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "jeecg-boot/jeecg-module-system/jeecg-system-start",
+          "language": "java"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "jeecg-boot/jeecg-module-system/jeecg-system-start",
+          "id": "maven"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "jeecg-boot/jeecg-module-system/jeecg-system-start",
+          "id": "spring-boot",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "jeecg-boot/jeecg-module-system/jeecg-system-start",
+          "language": "java",
+          "value": "17",
+          "source": "jeecg-boot/pom.xml"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": "jeecg-boot",
+          "id": "maven-workspace",
+          "member": "jeecg-boot/jeecg-module-system"
+        }
+      ]
+    }
+  ],
+  "extensions": [
+    {
+      "selectedAt": "2026-11-09T22:54:00.932983+00:00",
+      "languages": [
+        "C#",
+        "Java"
+      ],
+      "repositoriesPerLanguage": 5,
+      "eligibility": "Same web-project criteria as existing corpus, including production web solution templates (as with create-react-app), excluding native/desktop-first apps, general runtimes, lists, and tutorial collections."
     }
   ]
 }

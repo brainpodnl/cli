@@ -27,11 +27,25 @@ pub fn readable(name: &str) -> bool {
             | ".tool-versions"
             | "rust-toolchain"
             | "rust-toolchain.toml"
-    ) || name.ends_with(".gemspec")
+            | "global.json"
+            | "pom.xml"
+            | "gradle.properties"
+            | "gradle-daemon-jvm.properties"
+            | ".java-version"
+            | ".sdkmanrc"
+    ) || name.ends_with(".csproj")
+        || name.ends_with(".sln")
+        || name.ends_with(".slnx")
+        || name.ends_with(".props")
+        || name.ends_with(".targets")
+        || name.ends_with(".gradle")
+        || name.ends_with(".gradle.kts")
+        || name.ends_with(".versions.toml")
+        || name.ends_with(".gemspec")
         || (name.starts_with("requirements") && name.ends_with(".txt"))
 }
 
-pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
+pub fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
     let mut documents = Documents::new();
     let mut pnpm = HashMap::<PathBuf, Option<Pnpm>>::new();
     for node in nodes.iter() {
@@ -95,6 +109,8 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             }
         }
     }
+    super::dotnet::parse(nodes, diagnostics);
+    super::java::parse(nodes, diagnostics);
     for node in nodes {
         if let Some(Some(manifest)) = pnpm.get(&node.path) {
             node.workspaces.push(manifest.workspace.clone());
@@ -132,6 +148,15 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                 "go.mod" | "go.work" => go(node, file, text),
                 "Gemfile" => ruby(node, text, diagnostics),
                 f if f.ends_with(".gemspec") => gemspec(node, file, text),
+                ".java-version" => pin(node, "java", file, text),
+                ".sdkmanrc" => {
+                    if let Some(value) =
+                        super::values::properties(text, &relative_file(&node.path, file))
+                            .get("java")
+                    {
+                        node.version("java", &value.value, file, "pin");
+                    }
+                }
                 ".go-version" => pin(node, "go", file, text),
                 ".php-version" => pin(node, "php", file, text),
                 ".ruby-version" => pin(node, "ruby", file, text),
@@ -154,6 +179,7 @@ pub fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                         let language = match words.next() {
                             Some("nodejs") => "javascript",
                             Some("golang") => "go",
+                            Some("java") => "java",
                             Some("python") => "python",
                             Some("ruby") => "ruby",
                             Some("rust") => "rust",
@@ -355,7 +381,8 @@ type Documents = HashMap<PathBuf, BTreeMap<String, Value>>;
 fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
     let file = "Cargo.toml";
     if doc.get("package").is_some_and(Value::is_object) {
-        node.packages.insert("cargo".to_owned());
+        node.packages
+            .insert("cargo".to_owned(), relative_file(&node.path, file));
     }
     let workspace =
         if let Some(explicit) = doc.pointer("/package/workspace").and_then(Value::as_str) {

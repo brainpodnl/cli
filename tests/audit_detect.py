@@ -96,7 +96,13 @@ def check(projects, expected):
         actual = [language["name"] for language in project["languages"]]
         return expected["language"] in actual, actual
     if kind == "detection":
-        return expected["id"] in ids, ids
+        found = next(
+            (d for d in project["detections"] if d["id"] == expected["id"]), None
+        )
+        roles = expected.get("roles", [])
+        return found is not None and set(roles).issubset(
+            found.get("roles", [])
+        ), project["detections"] if roles else ids
     if kind == "name":
         return expected["name"] in project["names"], project["names"]
     if kind == "workspace":
@@ -113,7 +119,12 @@ def check(projects, expected):
             for v in language["versions"]
         ]
         return any(
-            v["value"] == expected["value"] and v["source"] == expected["source"]
+            v["value"] == expected["value"]
+            and v["source"] == expected["source"]
+            and (
+                "versionKind" not in expected
+                or v.get("kind") == expected["versionKind"]
+            )
             for v in actual
         ), actual
     raise ValueError(f"unknown check kind: {kind}")

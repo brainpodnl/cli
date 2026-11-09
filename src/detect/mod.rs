@@ -9,10 +9,17 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde::Serialize;
 
+mod dotnet;
+mod gradle;
+mod java;
+#[cfg(test)]
+mod jvm_dotnet_tests;
 mod parsers;
 mod rules;
 #[cfg(test)]
 mod tests;
+mod values;
+mod xml;
 
 use rules::{Kind, Rules};
 
@@ -26,6 +33,8 @@ const IGNORED: &[&str] = &[
     "vendor",
     "target",
     ".venv",
+    ".gradle",
+    ".vs",
     "venv",
     "__pycache__",
     ".next",
@@ -132,7 +141,7 @@ struct Node {
     sources: BTreeMap<String, String>,
     dependencies: BTreeMap<String, Dependency>,
     identities: BTreeMap<String, Dependency>,
-    packages: BTreeSet<String>,
+    packages: BTreeMap<String, String>,
     versions: BTreeMap<String, Vec<Version>>,
     names: BTreeSet<String>,
     workspaces: Vec<Workspace>,
@@ -287,6 +296,20 @@ impl Inventory {
                 }
             }
         }
+        if node.files.iter().any(|file| file.ends_with(".csproj")) {
+            children.retain(|(path, _)| {
+                let output = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.eq_ignore_ascii_case("bin") || name.eq_ignore_ascii_case("obj")
+                    });
+                if output {
+                    self.stats.skipped_directories += 1;
+                }
+                !output
+            });
+        }
         if !node.files.is_empty() || !node.sources.is_empty() {
             node.path = path.to_path_buf();
             self.nodes.push(node);
@@ -359,20 +382,23 @@ fn inventory(root: &Path, rules: &Rules, workers: usize) -> Result<Inventory> {
     } else {
         inventory.walk(root, rules, pending)?;
     }
-    inventory.nodes.sort_by(|a, b| a.path.cmp(&b.path));
+    index_parents(&mut inventory.nodes);
+    Ok(inventory)
+}
+
+fn index_parents(nodes: &mut [Node]) {
+    nodes.sort_by(|a, b| a.path.cmp(&b.path));
     let mut ancestors = Vec::<usize>::new();
-    for index in 0..inventory.nodes.len() {
-        while ancestors.last().is_some_and(|&parent| {
-            !inventory.nodes[index]
-                .path
-                .starts_with(&inventory.nodes[parent].path)
-        }) {
+    for index in 0..nodes.len() {
+        while ancestors
+            .last()
+            .is_some_and(|&parent| !nodes[index].path.starts_with(&nodes[parent].path))
+        {
             ancestors.pop();
         }
-        inventory.nodes[index].parent = ancestors.last().copied();
+        nodes[index].parent = ancestors.last().copied();
         ancestors.push(index);
     }
-    Ok(inventory)
 }
 
 pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
@@ -403,7 +429,11 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
     } = inventory(&root, rules, workers)?;
     report.diagnostics = diagnostics;
     report.stats = stats;
+    let original_nodes = nodes.len();
     parsers::parse(&mut nodes, &mut report.diagnostics);
+    if nodes.len() != original_nodes {
+        index_parents(&mut nodes);
+    }
 
     let mut projects = Vec::<(usize, Project)>::new();
     let mut project_indices = vec![None; nodes.len()];
@@ -478,14 +508,23 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         for language in languages {
             let mut versions = Vec::new();
             let mut ancestor = Some(*index);
+            let mut sdk_scope_seen = false;
             while let Some(i) = ancestor {
                 if let Some(found) = nodes[i].versions.get(&language) {
                     versions.extend(
                         found
                             .iter()
-                            .filter(|v| i == *index || v.kind == "pin" || v.kind == "toolchain")
+                            .filter(|v| {
+                                if v.kind == "sdk" {
+                                    return !sdk_scope_seen;
+                                }
+                                i == *index || v.kind == "pin" || v.kind == "toolchain"
+                            })
                             .cloned(),
                     );
+                }
+                if nodes[i].files.contains("global.json") {
+                    sdk_scope_seen = true;
                 }
                 ancestor = nodes[i].parent;
             }
@@ -505,11 +544,17 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         if project_indices[index].is_none() {
             continue;
         }
+        for ecosystem in ["dotnet", "gradle"] {
+            if node.packages.contains_key(ecosystem) {
+                candidates.entry(ecosystem).or_default().push(index);
+            }
+        }
         for (ecosystem, file) in [
             ("cargo", "Cargo.toml"),
             ("go", "go.mod"),
             ("node", "package.json"),
             ("python", "pyproject.toml"),
+            ("maven", "pom.xml"),
         ] {
             if node.files.contains(file) {
                 candidates.entry(ecosystem).or_default().push(index);

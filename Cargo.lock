@@ -602,6 +602,7 @@ dependencies = [
  "tonic-build",
  "uuid",
  "webbrowser",
+ "xmlparser",
 ]
 
 [[package]]

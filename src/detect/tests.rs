@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use super::{Project, Report, scan};
 
-fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
+pub(super) fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -14,7 +14,7 @@ fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
-fn project<'a>(report: &'a Report, path: &str) -> &'a Project {
+pub(super) fn project<'a>(report: &'a Report, path: &str) -> &'a Project {
     report
         .projects
         .iter()
@@ -22,11 +22,11 @@ fn project<'a>(report: &'a Report, path: &str) -> &'a Project {
         .unwrap_or_else(|| panic!("missing {path}: {report:#?}"))
 }
 
-fn detects(project: &Project, id: &str) -> bool {
+pub(super) fn detects(project: &Project, id: &str) -> bool {
     project.detections.iter().any(|d| d.id == id)
 }
 
-fn version(project: &Project, language: &str, value: &str, source: &str) -> bool {
+pub(super) fn version(project: &Project, language: &str, value: &str, source: &str) -> bool {
     project.languages.iter().any(|l| {
         l.name == language
             && l.versions

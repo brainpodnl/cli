@@ -59,6 +59,30 @@ class DetectionAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             audit_detect.check({".": self.project}, {"kind": "unknown", "path": "."})
 
+    def test_role_and_version_kind_expectations_are_enforced(self):
+        self.project["detections"][0]["roles"] = ["uses"]
+        expected = {
+            "kind": "detection",
+            "path": ".",
+            "id": "node",
+            "roles": ["provides"],
+        }
+        self.assertFalse(audit_detect.check({".": self.project}, expected)[0])
+        expected["roles"] = ["uses"]
+        self.assertTrue(audit_detect.check({".": self.project}, expected)[0])
+        self.project["languages"][0]["versions"][0]["kind"] = "sdk"
+        expected = {
+            "kind": "version",
+            "path": ".",
+            "language": "javascript",
+            "value": ">=22",
+            "source": "package.json",
+            "versionKind": "language",
+        }
+        self.assertFalse(audit_detect.check({".": self.project}, expected)[0])
+        expected["versionKind"] = "sdk"
+        self.assertTrue(audit_detect.check({".": self.project}, expected)[0])
+
     def archive(self, path="repo/package.json", size=None):
         data = b"{}" if size is None else b"x" * size
         output = io.BytesIO()

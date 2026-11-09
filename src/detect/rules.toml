@@ -340,3 +340,115 @@ language = "ruby"
 kind = "project"
 priority = 10
 any = ["file:*.gemspec"]
+
+[[rules]]
+id = "dotnet"
+language = "csharp"
+kind = "project"
+priority = 10
+any = ["package:dotnet", "file:*.csproj"]
+
+[[rules]]
+id = "csharp-source"
+language = "csharp"
+kind = "source"
+priority = 0
+any = ["source:cs", "source:csx"]
+
+[[rules]]
+id = "dotnet-workspace"
+language = "csharp"
+kind = "workspace"
+priority = 20
+any = ["workspace:dotnet"]
+
+[[rules]]
+id = "aspnetcore"
+language = "csharp"
+kind = "framework"
+priority = 100
+any = ["dep:dotnet-sdk:microsoft.net.sdk.web", "dep:dotnet-sdk:microsoft.net.sdk.razor", "dep:dotnet-framework:microsoft.aspnetcore.app", "dep:nuget:microsoft.aspnetcore.app", "dep:nuget:microsoft.aspnetcore", "identity:nuget:microsoft.aspnetcore.app", "identity:nuget:microsoft.aspnetcore.app.ref", "identity:nuget:microsoft.aspnetcore.mvc"]
+
+[[rules]]
+id = "aspnet"
+language = "csharp"
+kind = "framework"
+priority = 100
+any = ["dep:nuget:microsoft.aspnet.mvc", "dep:nuget:microsoft.aspnet.webapi", "dep:dotnet-reference:system.web", "dep:dotnet-reference:system.web.mvc"]
+
+[[rules]]
+id = "aspire"
+language = "csharp"
+kind = "framework"
+priority = 110
+any = ["dep:dotnet-sdk:aspire.apphost.sdk", "dep:nuget:aspire.hosting.apphost"]
+
+[[rules]]
+id = "fastendpoints"
+language = "csharp"
+kind = "framework"
+priority = 110
+any = ["dep:nuget:fastendpoints", "identity:nuget:fastendpoints"]
+
+[[rules]]
+id = "maven"
+language = "java"
+kind = "project"
+priority = 10
+any = ["package:maven", "file:pom.xml"]
+
+[[rules]]
+id = "gradle"
+language = "java"
+kind = "project"
+priority = 10
+any = ["package:gradle", "file:build.gradle", "file:build.gradle.kts"]
+
+[[rules]]
+id = "java-source"
+language = "java"
+kind = "source"
+priority = 0
+any = ["source:java"]
+
+[[rules]]
+id = "maven-workspace"
+language = "java"
+kind = "workspace"
+priority = 20
+any = ["workspace:maven"]
+
+[[rules]]
+id = "gradle-workspace"
+language = "java"
+kind = "workspace"
+priority = 20
+any = ["workspace:gradle"]
+
+[[rules]]
+id = "spring-boot"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven-parent:org.springframework.boot:spring-boot-starter-parent", "dep:maven:org.springframework.boot:spring-boot", "dep:maven:org.springframework.boot:spring-boot-starter", "dep:maven:org.springframework.boot:spring-boot-starter-web", "dep:maven:org.springframework.boot:spring-boot-starter-webmvc", "dep:maven:org.springframework.boot:spring-boot-starter-webflux", "dep:maven-plugin:org.springframework.boot:spring-boot-maven-plugin", "dep:gradle-plugin:org.springframework.boot", "identity:maven:org.springframework.boot:spring-boot"]
+
+[[rules]]
+id = "spring"
+language = "java"
+kind = "framework"
+priority = 100
+any = ["dep:maven:org.springframework:spring-context", "dep:maven:org.springframework:spring-web", "dep:maven:org.springframework:spring-webmvc", "dep:maven:org.springframework:spring-webflux", "identity:maven:org.springframework:spring-core", "identity:maven:org.springframework:spring-context", "identity:maven:org.springframework:spring-web"]
+
+[[rules]]
+id = "quarkus"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven:io.quarkus:quarkus-core", "dep:maven:io.quarkus:quarkus-rest", "dep:maven-plugin:io.quarkus:quarkus-maven-plugin", "dep:gradle-plugin:io.quarkus", "identity:maven:io.quarkus:quarkus-core"]
+
+[[rules]]
+id = "micronaut"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven:io.micronaut:micronaut-runtime", "dep:gradle-plugin:io.micronaut.application", "identity:maven:io.micronaut:micronaut-runtime"]
