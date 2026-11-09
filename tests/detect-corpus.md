@@ -14,7 +14,7 @@ GitHub source archives were downloaded into a temporary cache. No application de
 
 ## Results
 
-All **35/35** scans succeed and produce identical output across five runs. **173/173 sampled assertions now pass**, up from 156/173. Every repository passes its sampled assertions; this is not a claim of exhaustive detection accuracy.
+All **35/35** scans succeed and produce identical output across five runs. **173/173 sampled assertions now pass**, up from 156/173. Each of the 35 ranked repositories passes its sampled assertions; this is not a claim of exhaustive detection accuracy.
 
 | Category | Baseline | Current |
 |---|---:|---:|
@@ -88,6 +88,29 @@ pnpm uses `serde-saphyr` with deserialization only: typed fields are populated d
 | Rust | [juspay/hyperswitch](https://github.com/juspay/hyperswitch) | 45,760 | 39 | [`5786b738c088`](https://github.com/juspay/hyperswitch/tree/5786b738c088b8452296ca19922fcdc0dc74e129) | 6/6 | 6/6 | 12.07 | 7.95 |
 | Rust | [parcel-bundler/parcel](https://github.com/parcel-bundler/parcel) | 44,012 | 42 | [`20c0f2ede4c1`](https://github.com/parcel-bundler/parcel/tree/20c0f2ede4c1044092d44288169cce589c5d5c14) | 3/3 | 3/3 | 18.92 | 11.77 |
 | Rust | [DioxusLabs/dioxus](https://github.com/DioxusLabs/dioxus) | 39,705 | 52 | [`17d9a5924e84`](https://github.com/DioxusLabs/dioxus/tree/17d9a5924e845e4f37deca3fada6c35d1d836af0) | 5/5 | 5/5 | 8.71 | 7.17 |
+
+## Additional validation: Brainpod starters
+
+Ran the release detector against all ten `case/*` branches of [`brainpodnl/starters`](https://github.com/brainpodnl/starters), pinning each commit below. The default branch is `case/bookstack`. This is a separate starter smoke test, not an expansion of the 173 ranked-corpus assertions above.
+
+Each branch was scanned five times without installing application dependencies or executing downloaded code. All ten scans succeeded and repeated byte-identically. Seven expected main stacks were recognized; Outline is partial because Koa has no rule, and eShop / Spring Petclinic are outside the supported language/manifest set. Auxiliary docs/assets must not be counted as detection of eShop’s main application.
+
+Timings are warm-filesystem, end-to-end CLI medians of runs 2–5. Empty or partial output is not treated as an accuracy pass merely because it is fast.
+
+| Branch | Revision | Result | Median ms |
+|---|---|---|---:|
+| `case/bookstack` | [`6265d5667dd6`](https://github.com/brainpodnl/starters/tree/6265d5667dd6904b7aa0d05a8c60795cf104011b) | Laravel, Composer, JavaScript/TypeScript. PHP `^8.2.0` and Laravel `^v12.26.4` declarations retained. | 4.07 |
+| `case/eshop` | [`f21d6233b851`](https://github.com/brainpodnl/starters/tree/f21d6233b851897371c25c5e7ffa67bb8552dba8) | **Unsupported primary stack:** .NET 10/C# not detected. Only the docs Gemfile and JavaScript assets appear. | 2.54 |
+| `case/fastapi-fullstack` | [`84c5a9e11a9e`](https://github.com/brainpodnl/starters/tree/84c5a9e11a9e58262599e3d772f5386924e02ca7) | FastAPI backend, React/Vite frontend, npm and uv workspaces. Python `3.14` pin plus `>=3.14,<4.0` constraint retained; all three workspace members found. | 2.44 |
+| `case/linkding` | [`24b5ad6cc9bd`](https://github.com/brainpodnl/starters/tree/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f) | Django backend (`python >=3.13`) and Astro documentation project detected. | 2.52 |
+| `case/maybe` | [`224f21354a91`](https://github.com/brainpodnl/starters/tree/224f21354a916dfbec29e9435db1045b3d61a94b) | Rails and Ruby `3.4.4` pin detected. Non-fatal `dynamic ruby declaration not evaluated` warning for `ruby file: ".ruby-version"`. | 3.09 |
+| `case/miniflux` | [`faecfa2fac61`](https://github.com/brainpodnl/starters/tree/faecfa2fac61a91f4f69550bb1afd506c4b51749) | Go module `miniflux.app/v2`, Go `1.26.0` requirement detected; auxiliary scripts/assets are separate source projects. | 2.47 |
+| `case/outline` | [`09f11188b87b`](https://github.com/brainpodnl/starters/tree/09f11188b87b0220fa318dfa6fdd0fa9772195dd) | **Partial:** Node/React/Vite, TypeScript, Node engine constraint and `.nvmrc` pin detected. Declared Koa `^3.0.3` backend is not labeled. | 4.06 |
+| `case/saas-starter` | [`6e33e58b1e55`](https://github.com/brainpodnl/starters/tree/6e33e58b1e553a41fe22e6b941a7229a002de361) | Next.js/React and TypeScript detected. No package name or Node version is invented when absent from supported manifest fields. | 2.05 |
+| `case/spring-petclinic` | [`500158f73241`](https://github.com/brainpodnl/starters/tree/500158f732419217507c7656904b8e6aa1bcc0d6) | **Unsupported primary stack:** Java 17 / Spring Boot `4.1.0` declared in Maven, but the detector returns no projects. | 2.16 |
+| `case/uptime-kuma` | [`df601c58d920`](https://github.com/brainpodnl/starters/tree/df601c58d9205562f34cfe5ef35264b341019d19) | Express/Vue/Vite and Node `>=20.4.0` constraint detected, alongside auxiliary example projects. | 2.60 |
+
+Koa needs an additional npm framework rule. C#/.NET and Java/Spring require new language and manifest support (`global.json` / MSBuild and Maven, respectively). The Maybe warning is redundant with the already detected Ruby pin. None of these observations was silently converted into a passing assertion or hidden by skipping a branch. The detector was unchanged during this validation.
 
 ## Reproduce
 
