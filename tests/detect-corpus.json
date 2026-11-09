@@ -1,0 +1,1480 @@
+{
+  "schemaVersion": 1,
+  "selectedAt": "2026-11-09T21:24:33.642341+00:00",
+  "ranking": "GitHub stars descending; non-fork, non-archived; primary language per GitHub",
+  "eligibility": "Web applications (including production learning platforms), HTTP servers/frameworks/libraries, browser UI libraries, and web-specific site/build tools. Exclude tutorial/list repositories, general runtimes, coding agents, desktop-only apps, ML engines without a primary web UI, and generic infrastructure/networking tools.",
+  "expectations": "Reviewed primary project paths and static manifests. Framework checks cover consumers; identity checks separately probe framework implementation packages. Catalog checks require a locally declared version rather than a catalog reference. Workspace checks use representative declared members. Not an exhaustive precision/recall oracle.",
+  "repositories": [
+    {
+      "repository": "infiniflow/ragflow",
+      "language": "Go",
+      "stars": 93887,
+      "languageRank": 8,
+      "webRank": 1,
+      "revision": "ed5a84fee9abc8091aea111d1195cf7768541ff1",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "go"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "go-module"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "ragflow"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "go",
+          "value": "1.27",
+          "source": "go.mod"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "gin"
+        }
+      ]
+    },
+    {
+      "repository": "gohugoio/hugo",
+      "language": "Go",
+      "stars": 90425,
+      "languageRank": 9,
+      "webRank": 2,
+      "revision": "d2010fcc9cd30c5b4e9274ded4485f4222326b53",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "go"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "go-module"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "github.com/gohugoio/hugo"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "go",
+          "value": "1.27.0",
+          "source": "go.mod"
+        }
+      ]
+    },
+    {
+      "repository": "gin-gonic/gin",
+      "language": "Go",
+      "stars": 89609,
+      "languageRank": 11,
+      "webRank": 3,
+      "revision": "0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "go"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "go-module"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "github.com/gin-gonic/gin"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "go",
+          "value": "1.26.0",
+          "source": "go.mod"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "gin"
+        }
+      ]
+    },
+    {
+      "repository": "netdata/netdata",
+      "language": "Go",
+      "stars": 81330,
+      "languageRank": 14,
+      "webRank": 4,
+      "revision": "0d54b4424ea6f40c344738b9d566e1a26d160da3",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "src/go",
+          "language": "go"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "src/go",
+          "id": "go-module"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "src/go",
+          "name": "github.com/netdata/netdata/go/plugins"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "src/go",
+          "language": "go",
+          "value": "1.27.0",
+          "source": "src/go/go.mod"
+        }
+      ]
+    },
+    {
+      "repository": "caddyserver/caddy",
+      "language": "Go",
+      "stars": 78927,
+      "languageRank": 15,
+      "webRank": 5,
+      "revision": "9ea3108377d2abec102866808133c40ac9582162",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "go"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "go-module"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "github.com/caddyserver/caddy/v2"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "go",
+          "value": "1.26.0",
+          "source": "go.mod"
+        }
+      ]
+    },
+    {
+      "repository": "react/react",
+      "language": "JavaScript",
+      "stars": 252455,
+      "languageRank": 2,
+      "webRank": 1,
+      "revision": "b05c0b75fd9778536152eead30814c9ca90c810a",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "packages/react",
+          "language": "javascript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/react",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/react",
+          "name": "react"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "packages/react",
+          "language": "javascript",
+          "value": ">=0.10.0",
+          "source": "packages/react/package.json"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": "packages/react",
+          "id": "react"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/react"
+        }
+      ]
+    },
+    {
+      "repository": "vercel/next.js",
+      "language": "JavaScript",
+      "stars": 143437,
+      "languageRank": 8,
+      "webRank": 2,
+      "revision": "5368e013e74e4e4ed5be51c051c989545c4450b9",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "packages/next",
+          "language": "javascript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/next",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/next",
+          "name": "next"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "packages/next",
+          "language": "javascript",
+          "value": ">=20.9.0",
+          "source": "packages/next/package.json"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "packages/next",
+          "language": "typescript",
+          "value": "6.0.2",
+          "source": "packages/next/package.json"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": "packages/next",
+          "id": "nextjs"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/next"
+        }
+      ]
+    },
+    {
+      "repository": "mrdoob/three.js",
+      "language": "JavaScript",
+      "stars": 117953,
+      "languageRank": 11,
+      "webRank": 3,
+      "revision": "3f7edc3d75e054bc755dad56c1c95c62f63a3561",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "javascript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "three"
+        }
+      ]
+    },
+    {
+      "repository": "axios/axios",
+      "language": "JavaScript",
+      "stars": 109295,
+      "languageRank": 14,
+      "webRank": 4,
+      "revision": "335e2f8464f58a3ab485486b8d6964fea3e3f30a",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "javascript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "axios"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "typescript",
+          "value": "^7.0.2",
+          "source": "package.json"
+        }
+      ]
+    },
+    {
+      "repository": "react/create-react-app",
+      "language": "JavaScript",
+      "stars": 103230,
+      "languageRank": 15,
+      "webRank": 5,
+      "revision": "6254386531d263688ccfa542d0e628fbc0de0b28",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "packages/react-scripts",
+          "language": "javascript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/react-scripts",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/react-scripts",
+          "name": "react-scripts"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "packages/react-scripts",
+          "language": "javascript",
+          "value": ">=14.0.0",
+          "source": "packages/react-scripts/package.json"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/react-scripts",
+          "id": "react"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/react-scripts"
+        }
+      ]
+    },
+    {
+      "repository": "coollabsio/coolify",
+      "language": "PHP",
+      "stars": 65849,
+      "languageRank": 2,
+      "webRank": 1,
+      "revision": "30335d80866ff3391d899cf4ccb599b696f47b7e",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "php"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "composer"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "coollabsio/coolify"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "php",
+          "value": "^8.4",
+          "source": "composer.json"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "laravel"
+        }
+      ]
+    },
+    {
+      "repository": "nextcloud/server",
+      "language": "PHP",
+      "stars": 37456,
+      "languageRank": 3,
+      "webRank": 2,
+      "revision": "d655757fb306aca893651958030b5dae69ed0f39",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "php"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "composer"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "php",
+          "value": "^8.3",
+          "source": "composer.json"
+        }
+      ]
+    },
+    {
+      "repository": "laravel/framework",
+      "language": "PHP",
+      "stars": 34995,
+      "languageRank": 4,
+      "webRank": 3,
+      "revision": "338e44065c0a5b18f1f290605b6253a1e69d8f56",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "php"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "composer"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "laravel/framework"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "php",
+          "value": "^8.3",
+          "source": "composer.json"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "laravel"
+        }
+      ]
+    },
+    {
+      "repository": "filamentphp/filament",
+      "language": "PHP",
+      "stars": 32462,
+      "languageRank": 5,
+      "webRank": 4,
+      "revision": "9d78093cfebdc96c077b1d8dbf94b41738f28992",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "php"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "composer"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "filament/filament"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "php",
+          "value": "^8.2",
+          "source": "composer.json"
+        }
+      ]
+    },
+    {
+      "repository": "symfony/symfony",
+      "language": "PHP",
+      "stars": 31523,
+      "languageRank": 6,
+      "webRank": 5,
+      "revision": "f07928484c9e96646964deb7b9570d7885492512",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "php"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "composer"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "symfony/symfony"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "php",
+          "value": ">=8.4.1",
+          "source": "composer.json"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "symfony"
+        }
+      ]
+    },
+    {
+      "repository": "Significant-Gravitas/AutoGPT",
+      "language": "Python",
+      "stars": 187972,
+      "languageRank": 11,
+      "webRank": 1,
+      "revision": "9cb76f9026d388c9bf2e098af2beae1cc864f055",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "autogpt_platform/backend",
+          "language": "python"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "autogpt_platform/backend",
+          "id": "python"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "autogpt_platform/backend",
+          "name": "autogpt-platform-backend"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "autogpt_platform/backend",
+          "language": "python",
+          "value": ">=3.11,<3.14",
+          "source": "autogpt_platform/backend/pyproject.toml"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "autogpt_platform/backend",
+          "id": "fastapi"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "autogpt_platform/frontend",
+          "id": "nextjs"
+        }
+      ]
+    },
+    {
+      "repository": "AUTOMATIC1111/stable-diffusion-webui",
+      "language": "Python",
+      "stars": 165269,
+      "languageRank": 14,
+      "webRank": 2,
+      "revision": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "python"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "python"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "fastapi"
+        }
+      ]
+    },
+    {
+      "repository": "langgenius/dify",
+      "language": "Python",
+      "stars": 160774,
+      "languageRank": 15,
+      "webRank": 3,
+      "revision": "fdb09a9e76dc8cbd052fabd72cfff4071328d9bc",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "api",
+          "language": "python"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "api",
+          "id": "python"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "api",
+          "name": "dify-api"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "api",
+          "language": "python",
+          "value": "~=3.13.0",
+          "source": "api/pyproject.toml"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "api",
+          "id": "flask"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "api",
+          "id": "celery"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "web",
+          "id": "nextjs"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "web"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": "api",
+          "id": "python-workspace",
+          "member": "api/providers/vdb/vdb-alibabacloud-mysql"
+        },
+        {
+          "category": "catalog",
+          "kind": "version",
+          "path": "web",
+          "language": "typescript",
+          "value": "npm:@typescript/typescript6@6.0.2",
+          "source": "pnpm-workspace.yaml"
+        }
+      ]
+    },
+    {
+      "repository": "langflow-ai/langflow",
+      "language": "Python",
+      "stars": 156479,
+      "languageRank": 16,
+      "webRank": 4,
+      "revision": "60999cc9a7350e44dde3ef641baae864e10861f0",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "python"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "python"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "langflow"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "python",
+          "value": ">=3.10,<3.15",
+          "source": "pyproject.toml"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/backend/base",
+          "id": "fastapi"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "src/backend/base",
+          "id": "starlette"
+        }
+      ]
+    },
+    {
+      "repository": "Comfy-Org/ComfyUI",
+      "language": "Python",
+      "stars": 145983,
+      "languageRank": 20,
+      "webRank": 5,
+      "revision": "540a82ee722bda1f32a1fbd97fcadadeb22d548b",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "python"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "python"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "ComfyUI"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "python",
+          "value": ">=3.10",
+          "source": "pyproject.toml"
+        }
+      ]
+    },
+    {
+      "repository": "rails/rails",
+      "language": "Ruby",
+      "stars": 59087,
+      "languageRank": 1,
+      "webRank": 1,
+      "revision": "3a0aff317bc037f43f168e3772028f1033f1e810",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "ruby"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "bundler"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "rails"
+        }
+      ]
+    },
+    {
+      "repository": "jekyll/jekyll",
+      "language": "Ruby",
+      "stars": 51756,
+      "languageRank": 2,
+      "webRank": 2,
+      "revision": "97c3bdc822df9d5bea4c269b29a28de5a5e29d70",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "ruby"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "bundler"
+        }
+      ]
+    },
+    {
+      "repository": "mastodon/mastodon",
+      "language": "Ruby",
+      "stars": 50502,
+      "languageRank": 3,
+      "webRank": 3,
+      "revision": "5a207bc8f5046e27cffc640a3c64f96504f6afcf",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "ruby"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "bundler"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "ruby",
+          "value": "4.0.9",
+          "source": ".ruby-version"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "rails"
+        }
+      ]
+    },
+    {
+      "repository": "huginn/huginn",
+      "language": "Ruby",
+      "stars": 50454,
+      "languageRank": 4,
+      "webRank": 4,
+      "revision": "639c050b2bf4e14ef9983012af99dfc1dc68b334",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "ruby"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "bundler"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "ruby",
+          "value": ">=3.4.0",
+          "source": "Gemfile"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "rails"
+        }
+      ]
+    },
+    {
+      "repository": "discourse/discourse",
+      "language": "Ruby",
+      "stars": 48066,
+      "languageRank": 6,
+      "webRank": 5,
+      "revision": "899c68d783e7808c50144752369a685220250d7c",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "ruby"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "bundler"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "ruby",
+          "value": "~> 4.0.0",
+          "source": "Gemfile"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "rails"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "frontend/discourse"
+        }
+      ]
+    },
+    {
+      "repository": "dani-garcia/vaultwarden",
+      "language": "Rust",
+      "stars": 70490,
+      "languageRank": 17,
+      "webRank": 1,
+      "revision": "17b159beff4b892f07f61f38ce2fe452e55251c1",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "rust"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "cargo"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "vaultwarden"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "rust",
+          "value": "1.97.1",
+          "source": "Cargo.toml"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "rocket"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "cargo-workspace",
+          "member": "macros"
+        }
+      ]
+    },
+    {
+      "repository": "meilisearch/meilisearch",
+      "language": "Rust",
+      "stars": 59822,
+      "languageRank": 29,
+      "webRank": 2,
+      "revision": "8c7bfcfa9bcff7083bcb5d184fa2a523a23884d8",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "crates/meilisearch",
+          "language": "rust"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "crates/meilisearch",
+          "id": "cargo"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "crates/meilisearch",
+          "name": "meilisearch"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "crates/meilisearch",
+          "id": "actix-web"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "cargo-workspace",
+          "member": "crates/meilisearch"
+        }
+      ]
+    },
+    {
+      "repository": "juspay/hyperswitch",
+      "language": "Rust",
+      "stars": 45760,
+      "languageRank": 39,
+      "webRank": 3,
+      "revision": "5786b738c088b8452296ca19922fcdc0dc74e129",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "crates/router",
+          "language": "rust"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "crates/router",
+          "id": "cargo"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "crates/router",
+          "name": "router"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "crates/router",
+          "language": "rust",
+          "value": "1.94.1",
+          "source": "Cargo.toml"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "crates/router",
+          "id": "actix-web"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "cargo-workspace",
+          "member": "crates/router"
+        }
+      ]
+    },
+    {
+      "repository": "parcel-bundler/parcel",
+      "language": "Rust",
+      "stars": 44012,
+      "languageRank": 42,
+      "webRank": 4,
+      "revision": "20c0f2ede4c1044092d44288169cce589c5d5c14",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "rust"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "cargo-workspace"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "cargo-workspace",
+          "member": "crates/browserslist-compat"
+        }
+      ]
+    },
+    {
+      "repository": "DioxusLabs/dioxus",
+      "language": "Rust",
+      "stars": 39705,
+      "languageRank": 52,
+      "webRank": 5,
+      "revision": "17d9a5924e845e4f37deca3fada6c35d1d836af0",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "rust"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "cargo"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "dioxus-examples"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "rust",
+          "value": "1.85.0",
+          "source": "Cargo.toml"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "cargo-workspace",
+          "member": "packages/dioxus"
+        }
+      ]
+    },
+    {
+      "repository": "freeCodeCamp/freeCodeCamp",
+      "language": "TypeScript",
+      "stars": 458826,
+      "languageRank": 1,
+      "webRank": 1,
+      "revision": "11442d66944785ac72a2a2b9c955fae8b9f33083",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "@freecodecamp/freecodecamp"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "javascript",
+          "value": ">=24",
+          "source": "package.json"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "typescript",
+          "value": "7.0.2",
+          "source": "package.json"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "api"
+        }
+      ]
+    },
+    {
+      "repository": "vuejs/vue",
+      "language": "TypeScript",
+      "stars": 212624,
+      "languageRank": 7,
+      "webRank": 2,
+      "revision": "9e88707940088cb1f4cd7dd210c9168a50dc347c",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "vue"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "typescript",
+          "value": "^4.8.4",
+          "source": "package.json"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "vue"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/compiler-sfc"
+        }
+      ]
+    },
+    {
+      "repository": "n8n-io/n8n",
+      "language": "TypeScript",
+      "stars": 209927,
+      "languageRank": 8,
+      "webRank": 3,
+      "revision": "93243edc00b288a840fbb562a5e9f64177f2337f",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "packages/cli",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/cli",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/cli",
+          "name": "n8n"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "packages/cli",
+          "language": "javascript",
+          "value": ">=24.0.0",
+          "source": "packages/cli/package.json"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/cli",
+          "id": "express"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/cli"
+        },
+        {
+          "category": "catalog",
+          "kind": "version",
+          "path": "packages/cli",
+          "language": "typescript",
+          "value": "npm:@typescript/typescript6@6.0.2",
+          "source": "pnpm-workspace.yaml"
+        }
+      ]
+    },
+    {
+      "repository": "firecrawl/firecrawl",
+      "language": "TypeScript",
+      "stars": 200129,
+      "languageRank": 9,
+      "webRank": 4,
+      "revision": "40c8ff95d719d2acbd8fd6273bd19b14a1c2bbb8",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "apps/api",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "apps/api",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "apps/api",
+          "name": "firecrawl-scraper-js"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": "apps/api",
+          "language": "typescript",
+          "value": "npm:@typescript/typescript6@6.0.2",
+          "source": "apps/api/package.json"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "apps/api",
+          "id": "express"
+        }
+      ]
+    },
+    {
+      "repository": "excalidraw/excalidraw",
+      "language": "TypeScript",
+      "stars": 135400,
+      "languageRank": 15,
+      "webRank": 5,
+      "revision": "701b901a0f1ba3d0b390d9cdf63d112e25abac4b",
+      "checks": [
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "excalidraw-monorepo"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "javascript",
+          "value": ">=18.0.0",
+          "source": "package.json"
+        },
+        {
+          "category": "version",
+          "kind": "version",
+          "path": ".",
+          "language": "typescript",
+          "value": "5.9.3",
+          "source": "package.json"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "excalidraw-app",
+          "id": "react"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "node-workspace",
+          "member": "packages/excalidraw"
+        }
+      ]
+    }
+  ]
+}

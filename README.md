@@ -302,6 +302,8 @@ Run the generated large-tree performance fixture with:
 cargo test --release detect::tests::benchmark_polyglot_scan -- --ignored --nocapture
 ```
 
+A [35-repository GitHub audit](tests/detect-corpus.md) records pinned real-world coverage, timings, known gaps, and an opt-in reproducible runner.
+
 ## Image discovery
 
 Image commands require a pod and API token with `registry:pull` permission. List returns active public images and images in the selected pod:
