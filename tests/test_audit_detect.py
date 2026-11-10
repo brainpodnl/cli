@@ -83,6 +83,107 @@ class DetectionAuditTests(unittest.TestCase):
         expected["versionKind"] = "sdk"
         self.assertTrue(audit_detect.check({".": self.project}, expected)[0])
 
+    def test_workspace_checks_can_distinguish_managers(self):
+        self.project["workspaceMembers"] = ["deno-member", "pnpm-member"]
+        self.project["detections"].append({"id": "deno-workspace"})
+        self.project["workspaces"] = [
+            {"ecosystem": "deno", "source": "deno.jsonc", "members": ["deno-member"]},
+            {
+                "ecosystem": "node",
+                "source": "pnpm-workspace.yaml",
+                "members": ["pnpm-member"],
+            },
+        ]
+        check = {
+            "kind": "workspace",
+            "path": ".",
+            "id": "deno-workspace",
+            "ecosystem": "deno",
+            "source": "deno.jsonc",
+            "member": "deno-member",
+        }
+        self.assertTrue(audit_detect.check({".": self.project}, check)[0])
+        for wrong in [
+            {"member": "pnpm-member"},
+            {"source": "package.json"},
+            {"ecosystem": "cargo"},
+        ]:
+            self.assertFalse(
+                audit_detect.check({".": self.project}, {**check, **wrong})[0]
+            )
+
+    def test_runtime_declarations_are_not_language_or_package_versions(self):
+        self.project["runtimes"] = [
+            {
+                "name": "deno",
+                "source": "deno.jsonc",
+                "versions": [
+                    {"value": "2.4.5", "source": ".tool-versions", "kind": "pin"}
+                ],
+            }
+        ]
+        presence = {
+            "kind": "runtime",
+            "path": ".",
+            "runtime": "deno",
+            "source": "deno.jsonc",
+        }
+        self.assertTrue(audit_detect.check({".": self.project}, presence)[0])
+        self.assertFalse(
+            audit_detect.check(
+                {".": self.project}, {**presence, "source": "package.json"}
+            )[0]
+        )
+        version = {
+            "kind": "runtime-version",
+            "path": ".",
+            "runtime": "deno",
+            "value": "2.4.5",
+            "source": ".tool-versions",
+            "versionKind": "pin",
+        }
+        self.assertTrue(audit_detect.check({".": self.project}, version)[0])
+        for wrong in [
+            {"runtime": "node"},
+            {"value": "9.9.9"},
+            {"source": "deno.jsonc"},
+            {"versionKind": "requirement"},
+        ]:
+            self.assertFalse(
+                audit_detect.check({".": self.project}, {**version, **wrong})[0]
+            )
+        self.assertFalse(
+            audit_detect.check({".": self.project}, {**presence, "versionCount": 0})[0]
+        )
+        self.assertTrue(
+            audit_detect.check({".": self.project}, {**presence, "versionCount": 1})[0]
+        )
+        self.assertFalse(
+            audit_detect.check({".": self.project}, {**presence, "absent": True})[0]
+        )
+        del self.project["runtimes"]
+        self.assertFalse(audit_detect.check({".": self.project}, presence)[0])
+        self.assertTrue(
+            audit_detect.check({".": self.project}, {**presence, "absent": True})[0]
+        )
+        self.assertTrue(
+            audit_detect.check(
+                {".": self.project},
+                {
+                    "path": ".",
+                    "kind": "detection",
+                    "id": "deno-workspace",
+                    "absent": True,
+                },
+            )[0]
+        )
+        self.assertFalse(
+            audit_detect.check(
+                {".": self.project},
+                {"path": ".", "kind": "detection", "id": "node", "absent": True},
+            )[0]
+        )
+
     def test_listing_needs_no_binary_cache_or_network(self):
         with (
             tempfile.TemporaryDirectory() as directory,

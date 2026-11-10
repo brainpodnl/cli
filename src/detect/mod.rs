@@ -10,9 +10,13 @@ use clap::Args;
 use serde::Serialize;
 
 mod catalog;
+mod deno;
+#[cfg(test)]
+mod deno_tests;
 mod dotnet;
 mod gradle;
 mod java;
+mod jsonc;
 #[cfg(test)]
 mod jvm_dotnet_tests;
 mod parsers;
@@ -51,8 +55,26 @@ pub struct Project {
     pub path: String,
     pub names: Vec<String>,
     pub languages: Vec<Language>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub runtimes: Vec<Runtime>,
     pub detections: Vec<Detection>,
     pub workspace_members: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<WorkspaceReport>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WorkspaceReport {
+    pub ecosystem: String,
+    pub source: String,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct Runtime {
+    pub name: String,
+    pub source: String,
+    pub versions: Vec<Version>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -120,14 +142,18 @@ struct Node {
     identities: BTreeMap<String, Dependency>,
     packages: BTreeMap<String, String>,
     versions: BTreeMap<String, Vec<Version>>,
+    runtimes: BTreeMap<String, String>,
+    runtime_versions: BTreeMap<String, Vec<Version>>,
     names: BTreeSet<String>,
     workspaces: Vec<Workspace>,
 }
 
+#[derive(Clone)]
 struct Dependency {
     version: Option<String>,
     source: String,
     resolved: Option<Version>,
+    declarations: Vec<Version>,
 }
 
 #[derive(Clone)]
@@ -147,14 +173,29 @@ impl Workspace {
 
 impl Node {
     fn dependency(&mut self, ecosystem: &str, name: &str, version: Option<&str>, file: &str) {
-        self.dependencies.insert(
+        self.merge_dependency(
             format!("{ecosystem}:{name}"),
             Dependency {
                 version: version.map(str::to_owned),
                 source: relative_file(&self.path, file),
                 resolved: None,
+                declarations: Vec::new(),
             },
         );
+    }
+
+    fn merge_dependency(&mut self, key: String, mut dependency: Dependency) {
+        if let Some(previous) = self.dependencies.remove(&key) {
+            dependency.declarations.extend(previous.declarations);
+            if let Some(value) = previous.version {
+                dependency.declarations.push(Version {
+                    value,
+                    source: previous.source,
+                    kind: "requirement".to_owned(),
+                });
+            }
+        }
+        self.dependencies.insert(key, dependency);
     }
 
     fn identity(&mut self, ecosystem: &str, name: &str, version: Option<&str>, file: &str) {
@@ -164,6 +205,7 @@ impl Node {
                 version: version.map(str::to_owned),
                 source: relative_file(&self.path, file),
                 resolved: None,
+                declarations: Vec::new(),
             },
         );
     }
@@ -404,7 +446,13 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
     report.diagnostics = diagnostics;
     report.stats = stats;
     let original_nodes = nodes.len();
-    parsers::parse(&mut nodes, &rules.catalog, &mut report.diagnostics);
+    parsers::parse(
+        &root,
+        &mut nodes,
+        &rules.catalog,
+        &mut report.stats,
+        &mut report.diagnostics,
+    );
     if nodes.len() != original_nodes {
         index_parents(&mut nodes);
     }
@@ -429,8 +477,10 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
                     path: display_path(&node.path),
                     names: node.names.iter().cloned().collect(),
                     languages: Vec::new(),
+                    runtimes: Vec::new(),
                     detections,
                     workspace_members: Vec::new(),
+                    workspaces: Vec::new(),
                 },
             ));
         }
@@ -460,8 +510,10 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
                     path: display_path(&nodes[index].path),
                     names: Vec::new(),
                     languages: Vec::new(),
+                    runtimes: Vec::new(),
                     detections: Vec::new(),
                     workspace_members: Vec::new(),
+                    workspaces: Vec::new(),
                 },
             ));
             project_index
@@ -508,6 +560,36 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
                 versions,
             });
         }
+        let mut runtime_sources = nodes[*index].runtimes.clone();
+        for (name, versions) in &nodes[*index].runtime_versions {
+            if let Some(version) = versions.first() {
+                runtime_sources
+                    .entry(name.clone())
+                    .or_insert_with(|| version.source.clone());
+            }
+        }
+        for (name, source) in runtime_sources {
+            let mut versions = Vec::new();
+            let mut ancestor = Some(*index);
+            while let Some(i) = ancestor {
+                if let Some(found) = nodes[i].runtime_versions.get(&name) {
+                    versions.extend(
+                        found
+                            .iter()
+                            .filter(|v| i == *index || rules.catalog.inherited(&v.kind))
+                            .cloned(),
+                    );
+                }
+                ancestor = nodes[i].parent;
+            }
+            versions.sort();
+            versions.dedup();
+            project.runtimes.push(Runtime {
+                name,
+                source,
+                versions,
+            });
+        }
         project
             .detections
             .sort_by(|a, b| b.priority.cmp(&a.priority).then(a.id.cmp(&b.id)));
@@ -524,6 +606,7 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
     for (index, project) in &mut projects {
         let node = &nodes[*index];
         for workspace in &node.workspaces {
+            let mut members = Vec::new();
             for &member in candidates
                 .get(workspace.ecosystem.as_str())
                 .into_iter()
@@ -536,12 +619,21 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
                     continue;
                 };
                 if workspace.contains(&display_path(relative)) {
-                    project
-                        .workspace_members
-                        .push(display_path(&nodes[member].path));
+                    members.push(display_path(&nodes[member].path));
                 }
             }
+            members.sort();
+            members.dedup();
+            project.workspace_members.extend(members.iter().cloned());
+            project.workspaces.push(WorkspaceReport {
+                ecosystem: workspace.ecosystem.clone(),
+                source: workspace.source.clone(),
+                members,
+            });
         }
+        project
+            .workspaces
+            .sort_by(|a, b| a.ecosystem.cmp(&b.ecosystem).then(a.source.cmp(&b.source)));
         project.workspace_members.sort();
         project.workspace_members.dedup();
     }
@@ -587,7 +679,19 @@ pub fn render(value: &serde_json::Value) -> Vec<String> {
                 languages.join(", "),
                 detections.join(", ")
             ));
-            for language in project["languages"].as_array().into_iter().flatten() {
+            for runtime in project["runtimes"].as_array().into_iter().flatten() {
+                lines.push(format!(
+                    "  runtime {} ({})",
+                    runtime["name"].as_str().unwrap_or(""),
+                    runtime["source"].as_str().unwrap_or("")
+                ));
+            }
+            for language in project["languages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .chain(project["runtimes"].as_array().into_iter().flatten())
+            {
                 for version in language["versions"].as_array().into_iter().flatten() {
                     lines.push(format!(
                         "  {} {} ({}, {})",

@@ -32,6 +32,10 @@ ecosystem = "node"
 files = ["package.json"]
 
 [[catalog.workspaces]]
+ecosystem = "deno"
+files = ["deno.json", "deno.jsonc", "package.json"]
+
+[[catalog.workspaces]]
 ecosystem = "python"
 files = ["pyproject.toml"]
 
@@ -184,7 +188,7 @@ paths = ["/name"]
 versions = ["/version"]
 [[catalog.manifests.dependencies]]
 ecosystem = "npm"
-paths = ["/devDependencies", "/dependencies"]
+paths = ["/peerDependencies", "/devDependencies", "/dependencies"]
 [[catalog.manifests.versions]]
 language = "javascript"
 kind = "requirement"
@@ -194,6 +198,10 @@ language = "javascript"
 kind = "pin"
 paths = ["/volta/node"]
 [[catalog.manifests.versions]]
+runtime = "deno"
+kind = "requirement"
+paths = ["/engines/deno"]
+[[catalog.manifests.versions]]
 language = "typescript"
 kind = "requirement"
 dependency = "npm:typescript"
@@ -202,6 +210,36 @@ reference_prefix = "catalog:"
 ecosystem = "node"
 present = "/workspaces"
 members = ["/workspaces/packages", "/workspaces"]
+
+[[catalog.manifests]]
+id = "deno"
+files = ["deno.json", "deno.jsonc"]
+prefer_first = true
+reader = "jsonc"
+package = "deno"
+runtime = "deno"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "jsr"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.versions]]
+language = "typescript"
+kind = "requirement"
+dependency = "npm:typescript"
+reference_prefix = "catalog:"
+[[catalog.manifests.workspaces]]
+ecosystem = "deno"
+present = "/workspace"
+members = ["/workspace/members", "/workspace"]
+
+[[catalog.manifests]]
+id = "deno-pin"
+files = [".deno-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+runtime = "deno"
+kind = "pin"
 
 [[catalog.manifests]]
 id = "cargo"
@@ -401,6 +439,11 @@ language = "php"
 kind = "pin"
 key = "php"
 
+[[catalog.manifests.versions]]
+runtime = "deno"
+kind = "pin"
+key = "deno"
+
 [[catalog.manifests]]
 id = "sdkman"
 files = [".sdkmanrc"]
@@ -543,6 +586,34 @@ language = "javascript"
 kind = "project"
 priority = 10
 any = ["file:package.json"]
+
+[[rules]]
+id = "deno"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["package:deno"]
+
+[[rules]]
+id = "deno-workspace"
+language = "javascript"
+kind = "workspace"
+priority = 20
+any = ["workspace:deno"]
+
+[[rules]]
+id = "fresh"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:jsr:@fresh/core", "identity:jsr:@fresh/core", "dep:deno:fresh"]
+
+[[rules]]
+id = "oak"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:jsr:@oak/oak", "identity:jsr:@oak/oak", "dep:deno:oak"]
 
 [[rules]]
 id = "javascript-source"
@@ -921,3 +992,10 @@ language = "java"
 kind = "framework"
 priority = 110
 any = ["dep:maven:io.micronaut:micronaut-runtime", "dep:gradle-plugin:io.micronaut.application", "identity:maven:io.micronaut:micronaut-runtime"]
+
+[[rules]]
+id = "hono"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:hono", "identity:npm:hono", "dep:jsr:@hono/hono", "identity:jsr:@hono/hono", "dep:deno:hono"]

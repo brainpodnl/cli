@@ -12,6 +12,7 @@ use super::{Node, Version, Workspace, relative_file};
 #[serde(rename_all = "kebab-case")]
 pub(super) enum Reader {
     Json,
+    Jsonc,
     Toml,
     Pnpm,
     Go,
@@ -148,6 +149,8 @@ impl PropertyVersion {
 pub(super) struct Manifest {
     id: String,
     files: Vec<String>,
+    #[serde(default)]
+    prefer_first: bool,
     pub reader: Reader,
     pub resolver: Option<Resolver>,
     pub package: Option<String>,
@@ -162,6 +165,7 @@ pub(super) struct Manifest {
     #[serde(default)]
     workspaces: Vec<WorkspaceField>,
     pub workspace: Option<String>,
+    pub runtime: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -222,7 +226,9 @@ struct Dependencies {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VersionField {
+    #[serde(default)]
     language: String,
+    runtime: Option<String>,
     kind: String,
     #[serde(default)]
     paths: Vec<String>,
@@ -329,11 +335,19 @@ impl Catalog {
                 }
             }
             for version in &manifest.versions {
-                if version.language.is_empty() || version.kind.is_empty() {
-                    bail!("manifest version fields need a language and kind");
+                if version.language.is_empty()
+                    == version
+                        .runtime
+                        .as_ref()
+                        .is_none_or(|runtime| runtime.is_empty())
+                    || version.kind.is_empty()
+                {
+                    bail!(
+                        "manifest version fields need exactly one language/runtime target and a kind"
+                    );
                 }
                 let valid_source = match manifest.reader {
-                    Reader::Json | Reader::Toml => {
+                    Reader::Json | Reader::Jsonc | Reader::Toml => {
                         !version.paths.is_empty() || version.dependency.is_some()
                     }
                     Reader::Pin => {
@@ -550,7 +564,21 @@ pub(super) fn workspace_patterns(patterns: Vec<String>) -> (Vec<String>, Vec<Str
 }
 
 impl Manifest {
+    pub fn preferred(&self, file: &str, files: &BTreeSet<String>) -> bool {
+        if self.prefer_first {
+            self.files
+                .iter()
+                .find(|name| files.contains(*name))
+                .is_none_or(|name| name == file)
+        } else {
+            true
+        }
+    }
     pub fn apply(&self, node: &mut Node, file: &str, document: &Value) {
+        if let Some(runtime) = &self.runtime {
+            node.runtimes
+                .insert(runtime.clone(), relative_file(&node.path, file));
+        }
         if let Some(name) = selected_scalar(document, &self.names) {
             node.names.insert(name.to_owned());
         }
@@ -640,7 +668,22 @@ impl Manifest {
             }
             if let Some(key) = &field.dependency {
                 if let Some(dependency) = node.dependencies.get(key) {
-                    let mut versions = Vec::new();
+                    let mut versions = dependency
+                        .declarations
+                        .iter()
+                        .map(|version| Version {
+                            kind: if field
+                                .reference_prefix
+                                .as_ref()
+                                .is_some_and(|prefix| version.value.starts_with(prefix))
+                            {
+                                "reference".to_owned()
+                            } else {
+                                field.kind.clone()
+                            },
+                            ..version.clone()
+                        })
+                        .collect::<Vec<_>>();
                     if let Some(raw) = &dependency.version {
                         let kind = if field
                             .reference_prefix
@@ -663,8 +706,9 @@ impl Manifest {
                             ..resolved.clone()
                         });
                     }
-                    node.versions
-                        .entry(field.language.clone())
+                    field
+                        .target(node)
+                        .entry(field.name().to_owned())
                         .or_default()
                         .extend(versions);
                 }
@@ -672,7 +716,7 @@ impl Manifest {
                 .and_then(|doc| selected_scalar(doc, &field.paths))
                 .or(text)
             {
-                node.version(&field.language, value, file, &field.kind);
+                field.emit(node, value, file);
             }
         }
     }
@@ -699,7 +743,7 @@ impl Manifest {
                         .iter()
                         .filter(|field| field.key.as_deref() == Some(key))
                     {
-                        node.version(&field.language, &value, file, &field.kind);
+                        field.emit(node, &value, file);
                     }
                 }
             }
@@ -707,11 +751,37 @@ impl Manifest {
                 let properties = values::properties(text, &relative_file(&node.path, file));
                 for field in &self.versions {
                     if let Some(value) = field.key.as_ref().and_then(|key| properties.get(key)) {
-                        node.version(&field.language, &value.value, file, &field.kind);
+                        field.emit(node, &value.value, file);
                     }
                 }
             }
             _ => (),
+        }
+    }
+}
+
+impl VersionField {
+    fn name(&self) -> &str {
+        self.runtime.as_deref().unwrap_or(&self.language)
+    }
+    fn target<'a>(&self, node: &'a mut Node) -> &'a mut BTreeMap<String, Vec<Version>> {
+        if self.runtime.is_some() {
+            &mut node.runtime_versions
+        } else {
+            &mut node.versions
+        }
+    }
+    fn emit(&self, node: &mut Node, value: &str, file: &str) {
+        if !value.trim().is_empty() {
+            let version = Version {
+                value: value.trim().to_owned(),
+                source: relative_file(&node.path, file),
+                kind: self.kind.clone(),
+            };
+            self.target(node)
+                .entry(self.name().to_owned())
+                .or_default()
+                .push(version);
         }
     }
 }

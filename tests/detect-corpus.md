@@ -1,6 +1,6 @@
 # GitHub project detection audit
 
-Selected 2026-11-09; C#/Java added later that day. Baseline: detector commit `244ab44ccf1a` (PR #20). Current: the follow-up fixes in this revision.
+Selected 2026-11-09; C#/Java added later that day; Deno added 2026-11-10. Baseline: detector commit `244ab44ccf1a` (PR #20). Current: the follow-up fixes in this revision.
 
 ## Method
 
@@ -152,6 +152,29 @@ Timings are warm-filesystem, end-to-end CLI medians of runs 2–5. Empty or part
 | `case/uptime-kuma` | [`df601c58d920`](https://github.com/brainpodnl/starters/tree/df601c58d9205562f34cfe5ef35264b341019d19) | Express/Vue/Vite and Node `>=20.4.0` constraint detected, alongside auxiliary example projects. | 2.60 |
 
 Koa needs an additional npm framework rule. C#/.NET and Java/Spring are now supported and verified by the follow-up run. The Maybe warning is redundant with the already detected Ruby pin. None of these observations was silently converted into a passing assertion or hidden by skipping a branch. The initial validation was read-only; the follow-up uses the new language support.
+
+## Deno extension (2026-11-10)
+
+The default corpus now includes **51 pinned repositories**: all original 45 plus five Deno web projects and one explicit mixed-workspace supplement. The runtime group is selected with GitHub query `topic:deno archived:false fork:false`, sorted descending by stars; it is not a tenth language or a primary-language ranking. `topicRank`, star counts, full SHAs, and independently reviewed assertions are frozen in `detect-corpus.json`.
+
+| Eligible rank | Topic rank | Repository | Stars |
+|---|---:|---|---:|
+| 1 | 1 | supabase/supabase | 114,734 |
+| 2 | 4 | honojs/hono | 32,889 |
+| 3 | 8 | freshframework/fresh | 13,789 |
+| 4 | 9 | InsForge/InsForge | 13,316 |
+| 5 | 15 | ryo-ma/github-profile-trophy | 6,684 |
+| Supplemental | 60 | honojs/middleware | 1,002 |
+
+Higher-ranked exclusions follow the existing web-first criteria: denoland/deno is a runtime; rust-course is educational; pretty-ts-errors is an editor extension; Kysely is a general SQL builder; SheetJS and several other optional-Deno libraries have no Deno config in the inspected trees. This is a qualified sample, not “the five most-starred repositories that happen to mention Deno.”
+
+Supabase and InsForge cover nested Deno functions inside npm/pnpm applications. Hono preserves framework-provider identity, its Deno adapter, and an explicit `.tool-versions` **2.4.5 pin**. Fresh covers a **nine-member glob workspace**, inherited imports, member overrides, and JSR package identity without confusing package version `2.3.3` with a runtime version. The supplemental middleware repository covers JSONC, npm-only members, hybrid packages, manager-specific workspace membership, distinct npm peer/development and JSR constraints, and its `.tool-versions` **2.3.7 pin**. github-profile-trophy is a Deno HTTP application with no static runtime version declaration; that absence remains explicit.
+
+All **295/295 assertions across 51 repositories** pass on the extended engine, with five deterministic runs each. This includes all original 227 assertions plus 68 new checks, including runtime/version provenance, manager-qualified membership, and negative workspace-boundary checks. All ten pinned Brainpod starter branches are rerun as well; their previously documented Koa label/Ruby warning limitations remain. Synthetic fixtures cover simultaneous config preference, comments/trailing commas, excluded/non-member packages, local import maps, missing/oversized/escaping/symlinked references, and runtime/package version separation. The scanner still executes no inspected application code or dependency installs.
+
+`runtimes` is additive JSON metadata (Deno is not a language). `workspaces` exposes `{ecosystem, source, members}` separately per manager; `workspaceMembers` is still their sorted union. A pnpm-only workspace member does not become a Deno member merely because both managers coexist at the root. Scoped import-map overrides and absolute/remote import-map file locations remain explicit unsupported diagnostics. Registry/URL module targets are metadata only and are never fetched.
+
+Official behavior references: [configuration](https://docs.deno.com/runtime/fundamentals/configuration/), [workspaces](https://docs.deno.com/runtime/fundamentals/workspaces/), and [config discovery implementation](https://github.com/denoland/deno_config/blob/main/src/deno_json/mod.rs) (`deno.json` precedes `deno.jsonc`). These document current behavior; pinned repository SHAs, not moving documentation or CI/Docker versions, define the assertion evidence.
 
 ## Reproduce
 

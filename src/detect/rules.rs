@@ -395,6 +395,13 @@ impl Matched<'_> {
             Self::Package(source) => (source.to_owned(), None),
             Self::File(name) => (super::relative_file(&node.path, name), None),
             Self::Dependency(dep) => {
+                for declaration in &dep.declarations {
+                    evidence.push(Evidence {
+                        source: declaration.source.clone(),
+                        pattern: pattern.to_owned(),
+                        value: Some(declaration.value.clone()),
+                    });
+                }
                 if let Some(resolved) = &dep.resolved {
                     evidence.push(Evidence {
                         source: resolved.source.clone(),

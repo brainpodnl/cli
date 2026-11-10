@@ -111,6 +111,7 @@ fn declaration(
         version: raw.filter(|v| v.source == source).map(|v| v.value.clone()),
         source: source.to_owned(),
         resolved: None,
+        declarations: Vec::new(),
     };
     if let Some(raw) = raw {
         let resolved = resolve(raw, properties, syntax).unwrap_or_else(|| raw.clone());

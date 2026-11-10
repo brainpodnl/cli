@@ -100,6 +100,8 @@ def check(projects, expected):
             (d for d in project["detections"] if d["id"] == expected["id"]), None
         )
         roles = expected.get("roles", [])
+        if expected.get("absent"):
+            return found is None, ids
         return found is not None and set(roles).issubset(
             found.get("roles", [])
         ), project["detections"] if roles else ids
@@ -107,10 +109,54 @@ def check(projects, expected):
         return expected["name"] in project["names"], project["names"]
     if kind == "workspace":
         actual = project["workspaceMembers"]
+        if "ecosystem" in expected:
+            actual = sorted(
+                {
+                    member
+                    for workspace in project.get("workspaces", [])
+                    if workspace["ecosystem"] == expected["ecosystem"]
+                    and (
+                        "source" not in expected
+                        or workspace["source"] == expected["source"]
+                    )
+                    for member in workspace["members"]
+                }
+            )
         return expected["id"] in ids and expected["member"] in actual, {
             "ids": ids,
             "members": actual,
         }
+    if kind in {"runtime", "runtime-version"}:
+        runtime = next(
+            (
+                runtime
+                for runtime in project.get("runtimes", [])
+                if runtime["name"] == expected["runtime"]
+            ),
+            None,
+        )
+        if kind == "runtime":
+            if expected.get("absent"):
+                return runtime is None, project.get("runtimes", [])
+            if (
+                "versionCount" in expected
+                and runtime is not None
+                and len(runtime["versions"]) != expected["versionCount"]
+            ):
+                return False, runtime
+            return runtime is not None and (
+                "source" not in expected or runtime["source"] == expected["source"]
+            ), project.get("runtimes", [])
+        actual = runtime["versions"] if runtime else []
+        return any(
+            v["value"] == expected["value"]
+            and v["source"] == expected["source"]
+            and (
+                "versionKind" not in expected
+                or v.get("kind") == expected["versionKind"]
+            )
+            for v in actual
+        ), actual
     if kind == "version":
         actual = [
             v

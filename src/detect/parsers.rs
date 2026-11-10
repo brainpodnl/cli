@@ -5,13 +5,19 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::catalog::{Catalog, Normalize, Reader, Resolver, workspace_patterns};
-use super::{Diagnostic, Node, Workspace, relative_file};
+use super::{Diagnostic, Node, Stats, Workspace, relative_file};
 
 pub(super) type Documents = HashMap<PathBuf, BTreeMap<String, Value>>;
 
-pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Diagnostic>) {
+pub fn parse(
+    root: &Path,
+    nodes: &mut Vec<Node>,
+    catalog: &Catalog,
+    stats: &mut Stats,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     let mut documents = Documents::new();
-    let mut pnpm = HashMap::<PathBuf, Option<Pnpm>>::new();
+    let mut pnpm = HashMap::<PathBuf, Option<Catalogs>>::new();
     for node in nodes.iter() {
         if node
             .files
@@ -25,6 +31,9 @@ pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Dia
             let Some(manifest) = manifests.first() else {
                 continue;
             };
+            if !manifest.preferred(file, &node.files) {
+                continue;
+            }
             if manifest.reader == Reader::Pnpm {
                 match serde_saphyr::from_str::<PnpmDocument>(content) {
                     Ok(manifest) => {
@@ -33,13 +42,14 @@ pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Dia
                         );
                         pnpm.insert(
                             node.path.clone(),
-                            Some(Pnpm {
-                                workspace: Workspace {
+                            Some(Catalogs {
+                                workspaces: vec![Workspace {
                                     ecosystem: "node".to_owned(),
                                     source: relative_file(&node.path, file),
                                     members,
                                     exclude,
-                                },
+                                }],
+                                source: relative_file(&node.path, file),
                                 catalog: manifest.catalog.unwrap_or_default(),
                                 catalogs: manifest.catalogs.unwrap_or_default(),
                             }),
@@ -56,6 +66,7 @@ pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Dia
                 Reader::Json => {
                     Some(serde_json::from_str::<Value>(content).map_err(|e| e.to_string()))
                 }
+                Reader::Jsonc => Some(super::jsonc::parse(content)),
                 Reader::Toml => Some(toml::from_str::<Value>(content).map_err(|e| e.to_string())),
                 _ => None,
             };
@@ -81,7 +92,7 @@ pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Dia
     }
     for node in nodes.iter_mut() {
         if let Some(Some(manifest)) = pnpm.get(&node.path) {
-            node.workspaces.push(manifest.workspace.clone());
+            node.workspaces.extend(manifest.workspaces.clone());
         }
         for (file, doc) in documents.get(&node.path).into_iter().flatten() {
             for manifest in catalog.matching(file) {
@@ -89,6 +100,7 @@ pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Dia
             }
         }
     }
+    super::deno::resolve(root, nodes, &documents, &mut pnpm, stats, diagnostics);
     super::dotnet::parse(nodes, catalog, &documents, diagnostics);
     super::java::parse(nodes, catalog, diagnostics);
     for node in nodes {
@@ -147,15 +159,16 @@ struct PnpmDocument {
     catalogs: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
-struct Pnpm {
-    workspace: Workspace,
-    catalog: BTreeMap<String, String>,
-    catalogs: BTreeMap<String, BTreeMap<String, String>>,
+pub(super) struct Catalogs {
+    pub workspaces: Vec<Workspace>,
+    pub source: String,
+    pub catalog: BTreeMap<String, String>,
+    pub catalogs: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 fn resolve_catalogs(
     node: &mut Node,
-    manifests: &HashMap<PathBuf, Option<Pnpm>>,
+    manifests: &HashMap<PathBuf, Option<Catalogs>>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let workspace = node
@@ -166,7 +179,10 @@ fn resolve_catalogs(
         .filter(|(path, manifest)| {
             *path == node.path
                 || node.path.strip_prefix(path).ok().is_some_and(|relative| {
-                    manifest.workspace.contains(&super::display_path(relative))
+                    manifest
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.contains(&super::display_path(relative)))
                 })
         })
         .map(|(_, manifest)| manifest);
@@ -192,7 +208,7 @@ fn resolve_catalogs(
                 .filter(|v| !v.starts_with("catalog:"))
                 .map(|value| super::Version {
                     value: value.clone(),
-                    source: manifest.workspace.source.clone(),
+                    source: manifest.source.clone(),
                     kind: "requirement".to_owned(),
                 })
         });
@@ -301,6 +317,7 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
                         version,
                         source,
                         resolved: None,
+                        declarations: Vec::new(),
                     },
                 );
             }

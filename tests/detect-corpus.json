@@ -1976,6 +1976,551 @@
           "member": "jeecg-boot/jeecg-module-system"
         }
       ]
+    },
+    {
+      "repository": "supabase/supabase",
+      "language": "Deno",
+      "stars": 114734,
+      "webRank": 1,
+      "revision": "797a43c7d023777af25ba4621bdf87e66362e7bb",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "docker/volumes/functions",
+          "id": "deno"
+        },
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "docker/volumes/functions",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "examples/edge-functions/supabase/functions/drizzle",
+          "id": "deno"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "supabase"
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "docker/volumes/functions",
+          "runtime": "deno",
+          "versionCount": 0
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "examples/edge-functions/supabase/functions/drizzle",
+          "runtime": "deno",
+          "versionCount": 0
+        },
+        {
+          "category": "boundary",
+          "kind": "runtime",
+          "path": ".",
+          "runtime": "deno",
+          "absent": true
+        },
+        {
+          "category": "boundary",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno-workspace",
+          "absent": true
+        }
+      ],
+      "topicRank": 1,
+      "selectionQuery": "topic:deno archived:false fork:false"
+    },
+    {
+      "repository": "honojs/hono",
+      "language": "Deno",
+      "stars": 32889,
+      "webRank": 2,
+      "revision": "61f7c59e50244ab4d2dd83c151928cf7ea448510",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": ".",
+          "id": "hono"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "adapters/deno",
+          "id": "deno"
+        },
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "adapters/deno",
+          "language": "typescript"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "adapters/deno",
+          "name": "@hono/deno"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "adapters/deno",
+          "id": "hono",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "runtime-tests/deno",
+          "id": "deno"
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": ".",
+          "runtime": "deno",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "adapters/deno",
+          "runtime": "deno",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "runtime-tests/deno",
+          "runtime": "deno",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime-version",
+          "kind": "runtime-version",
+          "path": ".",
+          "runtime": "deno",
+          "value": "2.4.5",
+          "source": ".tool-versions",
+          "versionKind": "pin"
+        }
+      ],
+      "topicRank": 4,
+      "selectionQuery": "topic:deno archived:false fork:false"
+    },
+    {
+      "repository": "freshframework/fresh",
+      "language": "Deno",
+      "stars": 13789,
+      "webRank": 3,
+      "revision": "86d6cdeb331a719cf8b1c85bf5e43c8ffa889b3b",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno-workspace"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "packages/fresh",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "packages/plugin-vite",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "www",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/fresh",
+          "id": "deno"
+        },
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "packages/fresh",
+          "language": "typescript"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/fresh",
+          "name": "@fresh/core"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "www",
+          "id": "deno"
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": ".",
+          "runtime": "deno",
+          "versionCount": 0
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "packages/fresh",
+          "runtime": "deno",
+          "versionCount": 0
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "www",
+          "runtime": "deno",
+          "versionCount": 0
+        },
+        {
+          "category": "identity",
+          "kind": "detection",
+          "path": "packages/fresh",
+          "id": "fresh",
+          "roles": [
+            "provides"
+          ]
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/examples",
+          "id": "deno"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/examples",
+          "id": "fresh",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "packages/examples",
+          "runtime": "deno",
+          "versionCount": 0
+        }
+      ],
+      "topicRank": 8,
+      "selectionQuery": "topic:deno archived:false fork:false"
+    },
+    {
+      "repository": "InsForge/InsForge",
+      "language": "Deno",
+      "stars": 13316,
+      "webRank": 4,
+      "revision": "375f4bd7449a46481bb7e57bf872def52b9f9f68",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "functions",
+          "id": "deno"
+        },
+        {
+          "category": "language",
+          "kind": "language",
+          "path": "functions",
+          "language": "typescript"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": ".",
+          "name": "insforge"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "backend",
+          "id": "express",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "frontend",
+          "id": "react",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "functions",
+          "runtime": "deno",
+          "versionCount": 0
+        }
+      ],
+      "topicRank": 9,
+      "selectionQuery": "topic:deno archived:false fork:false"
+    },
+    {
+      "repository": "ryo-ma/github-profile-trophy",
+      "language": "Deno",
+      "stars": 6684,
+      "webRank": 5,
+      "revision": "43736b50a82fca73c8df1c81abb40aa03519975c",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno"
+        },
+        {
+          "category": "language",
+          "kind": "language",
+          "path": ".",
+          "language": "typescript"
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": ".",
+          "runtime": "deno",
+          "versionCount": 0
+        }
+      ],
+      "topicRank": 15,
+      "selectionQuery": "topic:deno archived:false fork:false"
+    },
+    {
+      "repository": "honojs/middleware",
+      "language": "Deno",
+      "stars": 1002,
+      "webRank": null,
+      "revision": "d813df31d07dfe1959558a1a25935ec3eddb9d02",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "detection",
+          "path": ".",
+          "id": "deno-workspace"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "packages/hello",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "packages/eslint-config",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "workspace",
+          "kind": "workspace",
+          "path": ".",
+          "id": "deno-workspace",
+          "member": "packages/ssg-plugins-essential",
+          "ecosystem": "deno"
+        },
+        {
+          "category": "name",
+          "kind": "name",
+          "path": "packages/eslint-config",
+          "name": "@hono/eslint-config"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/eslint-config",
+          "id": "node"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/hello",
+          "id": "deno"
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/hello",
+          "id": "node"
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/hello",
+          "id": "hono",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/ssg-plugins-essential",
+          "id": "hono",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": "packages/graphql-server",
+          "id": "node"
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": ".",
+          "runtime": "deno",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "packages/hello",
+          "runtime": "deno",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "packages/eslint-config",
+          "runtime": "deno",
+          "source": "deno.jsonc",
+          "versionCount": 1
+        },
+        {
+          "category": "runtime",
+          "kind": "runtime",
+          "path": "packages/ssg-plugins-essential",
+          "runtime": "deno",
+          "source": "deno.jsonc",
+          "versionCount": 1
+        },
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": "packages/ssg-plugins-essential",
+          "id": "hono",
+          "roles": [
+            "uses"
+          ]
+        },
+        {
+          "category": "runtime-version",
+          "kind": "runtime-version",
+          "path": ".",
+          "runtime": "deno",
+          "value": "2.3.7",
+          "source": ".tool-versions",
+          "versionKind": "pin"
+        },
+        {
+          "category": "runtime-version",
+          "kind": "runtime-version",
+          "path": "packages/hello",
+          "runtime": "deno",
+          "value": "2.3.7",
+          "source": ".tool-versions",
+          "versionKind": "pin"
+        },
+        {
+          "category": "runtime-version",
+          "kind": "runtime-version",
+          "path": "packages/eslint-config",
+          "runtime": "deno",
+          "value": "2.3.7",
+          "source": ".tool-versions",
+          "versionKind": "pin"
+        },
+        {
+          "category": "runtime-version",
+          "kind": "runtime-version",
+          "path": "packages/ssg-plugins-essential",
+          "runtime": "deno",
+          "value": "2.3.7",
+          "source": ".tool-versions",
+          "versionKind": "pin"
+        }
+      ],
+      "topicRank": 60,
+      "selectionQuery": "topic:deno archived:false fork:false",
+      "supplemental": true
     }
   ],
   "extensions": [
@@ -1987,6 +2532,19 @@
       ],
       "repositoriesPerLanguage": 5,
       "eligibility": "Same web-project criteria as existing corpus, including production web solution templates (as with create-react-app), excluding native/desktop-first apps, general runtimes, lists, and tutorial collections."
+    },
+    {
+      "selectedAt": "2026-11-10T08:37:50.845853+00:00",
+      "ecosystems": [
+        "Deno"
+      ],
+      "repositoriesPerEcosystem": 5,
+      "query": "GitHub query topic:deno archived:false fork:false; sort=stars; order=desc. languageRank stores raw topic-query rank (historical field name), webRank stores eligible web rank. API first 100 results retained in research/github-search.json.",
+      "eligibility": "Same web-first scope as prior45: applications, HTTP frameworks/libraries, browser UI and web site/build tools; require actual Deno config. Exclude runtimes, lists/tutorials, generic SQL/security/translation/CLI libraries, and optional-Deno tools without Deno config.",
+      "supplemental": [
+        "honojs/middleware"
+      ],
+      "note": "Deno is a runtime ecosystem group, not a new language. Primary-language checks stay javascript/typescript."
     }
   ]
 }
