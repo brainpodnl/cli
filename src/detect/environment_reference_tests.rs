@@ -6,7 +6,7 @@ use super::{Report, render, scan, scan_options};
 
 fn with_env(files: &[(&str, &str)]) -> Report {
     let dir = fixture(files);
-    scan_options(dir.path(), None, true).unwrap()
+    scan_options(dir.path(), None, super::EnvScan::Source).unwrap()
 }
 
 fn references(report: &Report) -> Vec<&Declaration> {
@@ -264,8 +264,11 @@ fn code_references_are_opt_in_capped_bounded_deterministic_and_redacted() {
     let default = scan(dir.path(), None).unwrap();
     assert_eq!(default.stats.files_read, 1);
     assert!(default.diagnostics.is_empty());
-    let report = scan_options(dir.path(), None, true).unwrap();
-    assert_eq!(scan_options(dir.path(), None, true).unwrap(), report);
+    let report = scan_options(dir.path(), None, super::EnvScan::Source).unwrap();
+    assert_eq!(
+        scan_options(dir.path(), None, super::EnvScan::Source).unwrap(),
+        report
+    );
     assert_eq!(report.stats.files_read, 5);
     assert_eq!(default.projects, report.projects);
     let many = find(&report, "NEXT_PUBLIC_MANY").code.as_ref().unwrap();
@@ -294,8 +297,8 @@ fn code_references_are_opt_in_capped_bounded_deterministic_and_redacted() {
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("index.ts"), "NEXT_PUBLIC_SERVICE").unwrap();
     }
-    let serial = super::inventory(dir.path(), rules, 1, true).unwrap();
-    let parallel = super::inventory(dir.path(), rules, 4, true).unwrap();
+    let serial = super::inventory(dir.path(), rules, 1, super::EnvScan::Source).unwrap();
+    let parallel = super::inventory(dir.path(), rules, 4, super::EnvScan::Source).unwrap();
     assert_eq!(serial.stats, parallel.stats);
     for (a, b) in serial.nodes.iter().zip(&parallel.nodes) {
         assert_eq!(a.code_hits, b.code_hits);
@@ -313,7 +316,7 @@ prefixes = ["ACME_PUBLIC_"]
 scope = "build"
 docs = ["https://example.com/acme#env"]
 "#;
-    let report = scan_options(dir.path(), Some(extra), true).unwrap();
+    let report = scan_options(dir.path(), Some(extra), super::EnvScan::Source).unwrap();
     let mut found = names(&report);
     found.sort();
     assert_eq!(
@@ -331,7 +334,7 @@ docs = ["https://example.com/acme#env"]
         "[[catalog.environment]]\nformat = \"code-reference\"\nfiles = [\"*.ts\"]\n".to_owned(),
     ] {
         assert!(
-            scan_options(dir.path(), Some(&invalid), true).is_err(),
+            scan_options(dir.path(), Some(&invalid), super::EnvScan::Source).is_err(),
             "{invalid}"
         );
     }
@@ -387,4 +390,86 @@ fn every_cataloged_provider_matches_a_documented_name() {
             "{provider}"
         );
     }
+}
+
+#[test]
+fn with_env_alone_reads_no_source_files_and_emits_no_code_references() {
+    let dir = fixture(&[
+        ("package.json", r#"{"dependencies": {"next": "15.0.0"}}"#),
+        (".env.example", "NEXT_PUBLIC_DECLARED=DO_NOT_DISCLOSE"),
+        ("netlify.toml", "[build.environment]\nNODE_VERSION = '22'\n"),
+        (
+            "app/page.tsx",
+            "process.env.NEXT_PUBLIC_API_URL; VERCEL_URL",
+        ),
+        ("lib/util.py", "os.environ['REACT_APP_TITLE']"),
+        (
+            "src/huge.js",
+            &"x".repeat(super::MAX_FILE_BYTES as usize + 10),
+        ),
+    ]);
+    let declarations = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
+    assert_eq!(declarations.stats.files_read, 3);
+    assert!(declarations.diagnostics.is_empty(), "{declarations:#?}");
+    let environment = declarations.environment.as_ref().unwrap();
+    assert!(
+        environment
+            .iter()
+            .all(|d| d.format != Format::CodeReference)
+    );
+    assert_eq!(
+        environment
+            .iter()
+            .filter_map(|d| d.name.as_deref())
+            .collect::<Vec<_>>(),
+        ["NEXT_PUBLIC_DECLARED", "NODE_VERSION"]
+    );
+    let source = scan_options(dir.path(), None, super::EnvScan::Source).unwrap();
+    assert_eq!(source.stats.files_read, 6);
+    assert_eq!(source.projects, declarations.projects);
+    let mut found = names(&source);
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            ("NEXT_PUBLIC_API_URL", "nextjs"),
+            ("REACT_APP_TITLE", "create-react-app"),
+            ("VERCEL_URL", "vercel")
+        ]
+    );
+    assert_redacted(&source);
+}
+
+#[test]
+fn with_source_requires_with_env() {
+    use clap::Parser;
+    let parse = |args: &[&str]| {
+        crate::Opts::try_parse_from(args).map(|opts| match opts.command {
+            crate::cmd::Command::Detect(args) => (args.with_env, args.with_source),
+            _ => panic!("not detect"),
+        })
+    };
+    assert_eq!(parse(&["brainpod", "detect"]).unwrap(), (false, false));
+    assert_eq!(
+        parse(&["brainpod", "detect", "--with-env"]).unwrap(),
+        (true, false)
+    );
+    assert_eq!(
+        parse(&[
+            "brainpod",
+            "detect",
+            ".",
+            "--with-env",
+            "--with-source",
+            "--json"
+        ])
+        .unwrap(),
+        (true, true)
+    );
+    let error = parse(&["brainpod", "detect", "--with-source"]).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::MissingRequiredArgument
+    );
+    assert!(error.to_string().contains("--with-env"), "{error}");
 }

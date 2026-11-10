@@ -6,7 +6,7 @@ use super::{Report, render, scan, scan_options};
 
 fn with_env(files: &[(&str, &str)]) -> Report {
     let dir = fixture(files);
-    scan_options(dir.path(), None, true).unwrap()
+    scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap()
 }
 
 fn names(report: &Report) -> Vec<&str> {
@@ -53,9 +53,7 @@ fn dotenv_names_quotes_comments_multiline_duplicates_and_templates() {
         ]
     );
     assert!(report.diagnostics.is_empty(), "{report:#?}");
-    // Three dotenv files plus `source.ts`, which is searched only for catalog
-    // code-reference patterns; its arbitrary `process.env` read is not inferred.
-    assert_eq!(report.stats.files_read, 4);
+    assert_eq!(report.stats.files_read, 3);
     assert!(
         report
             .environment
@@ -384,8 +382,11 @@ fn deterministic_json_text_and_no_evaluation_or_values() {
         ),
     )
     .unwrap();
-    let report = scan_options(dir.path(), None, true).unwrap();
-    assert_eq!(scan_options(dir.path(), None, true).unwrap(), report);
+    let report = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
+    assert_eq!(
+        scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap(),
+        report
+    );
     let value = serde_json::to_value(&report).unwrap();
     let text = render(&value).join("\n");
     for output in [serde_json::to_string(&report).unwrap(), text] {
@@ -409,7 +410,7 @@ fn size_and_yaml_depth_alias_limits_are_bounded_and_redacted() {
         ".env",
         &format!("KEY={}", "s".repeat(super::MAX_FILE_BYTES as usize + 100)),
     )]);
-    let report = scan_options(dir.path(), None, true).unwrap();
+    let report = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
     assert!(report.environment.as_ref().unwrap().is_empty());
     assert_eq!(report.stats.bytes_read, super::MAX_FILE_BYTES as usize + 1);
     assert_eq!(report.diagnostics.len(), 1);
@@ -432,7 +433,7 @@ fn no_symlinks_no_referenced_file_reads_no_root_escape() {
     )]);
     symlink(outside.path().join("private.env"), dir.path().join(".env")).unwrap();
     symlink(outside.path(), dir.path().join("linked")).unwrap();
-    let report = scan_options(dir.path(), None, true).unwrap();
+    let report = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
     assert!(names(&report).is_empty());
     assert_eq!(report.stats.files_read, 1);
     assert!(
@@ -448,7 +449,7 @@ fn directory_depth_limit_applies_to_environment_metadata() {
     let deep = (0..130).fold(dir.path().to_path_buf(), |path, _| path.join("d"));
     fs::create_dir_all(&deep).unwrap();
     fs::write(deep.join(".env"), "TOO_DEEP=secret").unwrap();
-    let report = scan_options(dir.path(), None, true).unwrap();
+    let report = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
     assert_eq!(names(&report), ["ROOT"]);
     assert!(
         report
@@ -488,11 +489,11 @@ format = "dotenv"
 files = ["*.vars"]
 paths = ["config/**"]
 "#;
-    let report = scan_options(dir.path(), Some(extra), true).unwrap();
+    let report = scan_options(dir.path(), Some(extra), super::EnvScan::Declarations).unwrap();
     assert_eq!(names(&report), ["EXPLICIT"]);
     assert_eq!(report.stats.files_read, 1);
     assert_eq!(
-        scan_options(dir.path(), Some(extra), false)
+        scan_options(dir.path(), Some(extra), super::EnvScan::Off)
             .unwrap()
             .stats
             .files_read,
@@ -502,7 +503,7 @@ paths = ["config/**"]
         extra.replace("*.vars", "bad/*.vars"),
         extra.replace("config/**", "../**"),
     ] {
-        assert!(scan_options(dir.path(), Some(&invalid), true).is_err());
+        assert!(scan_options(dir.path(), Some(&invalid), super::EnvScan::Declarations).is_err());
     }
 }
 
@@ -544,7 +545,7 @@ fn docker_continuations_skip_comments_without_inferring_nested_instructions() {
 fn rejects_explicit_symlink_scan_root() {
     let dir = fixture(&[("project/.env", "KEY=secret")]);
     std::os::unix::fs::symlink(dir.path().join("project"), dir.path().join("link")).unwrap();
-    assert!(scan_options(&dir.path().join("link"), None, true).is_err());
+    assert!(scan_options(&dir.path().join("link"), None, super::EnvScan::Declarations).is_err());
 }
 
 #[test]
@@ -556,8 +557,8 @@ fn parallel_environment_inventory_is_identical_to_serial_and_retains_no_values()
         fs::write(path.join(".env"), "KEY=DO_NOT_DISCLOSE").unwrap();
     }
     let rules = super::Rules::builtin().unwrap();
-    let serial = super::inventory(dir.path(), rules, 1, true).unwrap();
-    let parallel = super::inventory(dir.path(), rules, 4, true).unwrap();
+    let serial = super::inventory(dir.path(), rules, 1, super::EnvScan::Declarations).unwrap();
+    let parallel = super::inventory(dir.path(), rules, 4, super::EnvScan::Declarations).unwrap();
     assert_eq!(serial.stats, parallel.stats);
     assert_eq!(serial.nodes.len(), parallel.nodes.len());
     for (a, b) in serial.nodes.iter().zip(&parallel.nodes) {

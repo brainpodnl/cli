@@ -48,6 +48,30 @@ pub struct DetectArgs {
     /// Discover environment declarations and references without exposing values
     #[arg(long)]
     pub with_env: bool,
+    /// Also search application source files for cataloged platform/framework variable names
+    #[arg(long, requires = "with_env")]
+    pub with_source: bool,
+}
+
+/// How much environment metadata a scan collects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnvScan {
+    /// No environment adapters and no additional reads.
+    Off,
+    /// Manifest, config and deployment files only.
+    Declarations,
+    /// Declarations plus the `catalog.code_references` source search.
+    Source,
+}
+
+impl EnvScan {
+    fn declarations(self) -> bool {
+        self != Self::Off
+    }
+
+    fn source(self) -> bool {
+        self == Self::Source
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -245,7 +269,12 @@ pub fn handle(args: DetectArgs) -> Result<crate::output::CommandOutput> {
         .map(fs::read_to_string)
         .transpose()
         .context("could not read detection rules")?;
-    let report = scan_options(&args.path, extra.as_deref(), args.with_env)?;
+    let env = match (args.with_env, args.with_source) {
+        (false, _) => EnvScan::Off,
+        (true, false) => EnvScan::Declarations,
+        (true, true) => EnvScan::Source,
+    };
+    let report = scan_options(&args.path, extra.as_deref(), env)?;
     Ok(crate::output::CommandOutput::new(
         serde_json::to_value(report)?,
         crate::output::View::Detect,
@@ -268,7 +297,7 @@ impl Inventory {
         path: &Path,
         depth: usize,
         rules: &Rules,
-        with_env: bool,
+        env: EnvScan,
     ) -> Result<Vec<(PathBuf, usize)>> {
         let mut node = Node::default();
         self.stats.directories += 1;
@@ -307,11 +336,12 @@ impl Inventory {
                         .or_insert_with(|| name.clone());
                 }
                 let readable = rules.catalog.readable(&name);
-                let format = with_env
+                let format = env
+                    .declarations()
                     .then(|| rules.catalog.environment.matching(path, &name))
                     .flatten();
-                let code = with_env && rules.catalog.references.scans(&name);
-                if with_env && rules.catalog.references.is_signal(&name) {
+                let code = env.source() && rules.catalog.references.scans(&name);
+                if env.source() && rules.catalog.references.is_signal(&name) {
                     self.signals.insert(name.clone());
                 }
                 if readable || format.is_some() || code {
@@ -393,10 +423,10 @@ impl Inventory {
         root: &Path,
         rules: &Rules,
         mut pending: Vec<(PathBuf, usize)>,
-        with_env: bool,
+        env: EnvScan,
     ) -> Result<()> {
         while let Some((path, depth)) = pending.pop() {
-            pending.extend(self.read_directory(root, &path, depth, rules, with_env)?);
+            pending.extend(self.read_directory(root, &path, depth, rules, env)?);
         }
         Ok(())
     }
@@ -413,13 +443,13 @@ impl Inventory {
     }
 }
 
-fn inventory(root: &Path, rules: &Rules, workers: usize, with_env: bool) -> Result<Inventory> {
+fn inventory(root: &Path, rules: &Rules, workers: usize, env: EnvScan) -> Result<Inventory> {
     let mut inventory = Inventory::default();
     let mut pending = vec![(PathBuf::new(), 0)];
     for _ in 0..3 {
         let mut next = Vec::new();
         for (path, depth) in pending {
-            next.extend(inventory.read_directory(root, &path, depth, rules, with_env)?);
+            next.extend(inventory.read_directory(root, &path, depth, rules, env)?);
         }
         pending = next;
         if pending.is_empty() {
@@ -434,7 +464,7 @@ fn inventory(root: &Path, rules: &Rules, workers: usize, with_env: bool) -> Resu
                     scope.spawn(|| -> Result<Inventory> {
                         let mut inventory = Inventory::default();
                         while let Some(task) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
-                            inventory.walk(root, rules, vec![task.clone()], with_env)?;
+                            inventory.walk(root, rules, vec![task.clone()], env)?;
                         }
                         Ok(inventory)
                     })
@@ -453,7 +483,7 @@ fn inventory(root: &Path, rules: &Rules, workers: usize, with_env: bool) -> Resu
             inventory.merge(result);
         }
     } else {
-        inventory.walk(root, rules, pending, with_env)?;
+        inventory.walk(root, rules, pending, env)?;
     }
     index_parents(&mut inventory.nodes);
     Ok(inventory)
@@ -476,10 +506,10 @@ fn index_parents(nodes: &mut [Node]) {
 
 #[cfg(test)]
 pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
-    scan_options(root, extra_rules, false)
+    scan_options(root, extra_rules, EnvScan::Off)
 }
 
-fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Result<Report> {
+fn scan_options(root: &Path, extra_rules: Option<&str>, env: EnvScan) -> Result<Report> {
     let custom = extra_rules
         .map(|extra| Rules::new(Some(extra)))
         .transpose()?;
@@ -487,7 +517,7 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Resul
         Some(rules) => rules,
         None => Rules::builtin()?,
     };
-    if with_env && fs::symlink_metadata(root)?.file_type().is_symlink() {
+    if env.declarations() && fs::symlink_metadata(root)?.file_type().is_symlink() {
         bail!("environment scan root must not be a symlink");
     }
     let root = root
@@ -501,7 +531,7 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Resul
         projects: Vec::new(),
         diagnostics: Vec::new(),
         stats: Stats::default(),
-        environment: with_env.then(Vec::new),
+        environment: env.declarations().then(Vec::new),
     };
     let workers = thread::available_parallelism().map_or(1, |n| n.get().min(4));
     let Inventory {
@@ -509,7 +539,7 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Resul
         diagnostics,
         stats,
         signals,
-    } = inventory(&root, rules, workers, with_env)?;
+    } = inventory(&root, rules, workers, env)?;
     report.diagnostics = diagnostics;
     report.stats = stats;
     let original_nodes = nodes.len();

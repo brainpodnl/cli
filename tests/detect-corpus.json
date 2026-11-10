@@ -1845,7 +1845,7 @@
           "member": "packages/excalidraw"
         }
       ],
-      "environmentChecks": [
+      "sourceChecks": [
         {
           "kind": "environment",
           "category": "environment",
@@ -2229,7 +2229,7 @@
           "member": "core/spring-boot"
         }
       ],
-      "environmentChecks": [
+      "sourceChecks": [
         {
           "kind": "environment",
           "category": "environment",
@@ -2983,7 +2983,11 @@
           "state": "declared",
           "secret": true,
           "hasDefault": false
-        },
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
         {
           "kind": "environment",
           "category": "environment",
@@ -2996,9 +3000,7 @@
           "provider": "nextjs",
           "scope": "build"
         }
-      ],
-      "supplemental": true,
-      "webRank": null
+      ]
     },
     {
       "repository": "Unleash/unleash",
@@ -3110,7 +3112,11 @@
           "secret": false,
           "hasDefault": true,
           "scope": "runtime"
-        },
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
         {
           "kind": "environment",
           "category": "environment",
@@ -3123,9 +3129,7 @@
           "provider": "vercel",
           "scope": "build-and-runtime"
         }
-      ],
-      "supplemental": true,
-      "webRank": null
+      ]
     },
     {
       "repository": "twilio/twilio-video-app-react",
@@ -3192,7 +3196,11 @@
           "project": ".",
           "state": "declared",
           "hasDefault": true
-        },
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
         {
           "kind": "environment",
           "category": "environment",
@@ -3205,9 +3213,7 @@
           "provider": "heroku",
           "scope": "runtime"
         }
-      ],
-      "supplemental": true,
-      "webRank": null
+      ]
     }
   ],
   "extensions": [
@@ -3238,7 +3244,7 @@
       "purpose": "Opt-in environment coverage for deployment manifests of other hosting platforms (--with-env only).",
       "selection": "Existing corpus repositories with platform manifests received environmentChecks. Five popular non-archived web applications were added because the corpus had no Render reference wiring, DigitalOcean, AWS Copilot, App Engine or duplicate-key app.json example; stars and pinned default-branch heads were read through the GitHub API on the selection date.",
       "note": "Fly.io fly.toml, heroku.yml and Vercel/Netlify template variables have synthetic Rust coverage only; no eligible pinned repository with those declarations was selected.",
-      "codeReferences": "Code-reference checks sample framework prefixes (VITE_, NEXT_PUBLIC_) and platform-injected names (HEROKU_SLUG_COMMIT, DYNO, VERCEL_URL) found by the catalog's literal search; Dockerfile ARG checks sample build-scoped declarations."
+      "codeReferences": "`sourceChecks` sample code references found by the catalog's literal search (framework prefixes VITE_ and NEXT_PUBLIC_; platform-injected HEROKU_SLUG_COMMIT, DYNO, VERCEL_URL) and run only with --with-env --with-source. Dockerfile ARG declaration checks are ordinary environmentChecks."
     }
   ]
 }

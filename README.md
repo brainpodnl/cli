@@ -168,7 +168,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 ## Commands
 
 ```text
-brainpod detect [<path>] [--rules <rules.toml>] [--with-env]
+brainpod detect [<path>] [--rules <rules.toml>] [--with-env [--with-source]]
 brainpod describe [<command>...]
 brainpod describe resource [<kind>]
 brainpod login
@@ -272,6 +272,7 @@ Inspect a directory without credentials, network access, subprocesses, or execut
 brainpod detect .
 brainpod detect ./services --json
 brainpod detect . --with-env --json
+brainpod detect . --with-env --with-source --json
 brainpod detect . --rules ./detection.toml --json
 ```
 
@@ -279,7 +280,7 @@ The result contains sorted project paths, manifest names, languages and version 
 
 Add `--with-env` for name-only environment declarations from dotenv files (including examples/templates), Compose, Dockerfile `ENV` and `ARG` (build-scoped), conventional Kubernetes manifests, GitHub Actions workflow/job/step `env` maps, and deployment manifests of other hosting platforms: Heroku/Dokku `app.json`, Scalingo `scalingo.json`, `heroku.yml`, Render `render.yaml`, Fly.io `fly.toml`, DigitalOcean `.do/app.yaml`/`.do/deploy.template.yaml`, Vercel `vercel.json`/`vercel.toml`, Netlify `netlify.toml`, Google App Engine `app.yaml` and AWS Copilot `copilot/*/manifest.yml`. Platform records add optional `required`, `secret`, `generated`, `hasDefault` (a literal value exists; never the value) and `scope` (`runtime`, `build`, `build-and-runtime`) fields only where the manifest states them, and database/service/secret wiring as a `reference`.
 
-`--with-env` also **reads application source files** (JavaScript/TypeScript, Vue/Svelte/Astro, Python, Ruby, Go, Rust, PHP, Java/Kotlin, C#, Elixir; existing directory exclusions and the 1 MiB limit apply) and searches them literally for a cataloged list of platform-injected names (for example `VERCEL_URL`, `RENDER_GIT_COMMIT`, `HEROKU_SLUG_COMMIT`, `CF_PAGES_URL`) and framework prefixes (`NEXT_PUBLIC_*`, `VITE_*`, `REACT_APP_*`, `NUXT_PUBLIC_*`, `EXPO_PUBLIC_*`, …). This is not a general read-site scanner: arbitrary `process.env` reads are not inferred. Each `(project, name)` becomes one `code-reference` record with `origin`, `provider`, `scope` and up to 20 file/line occurrences, never code text. On the pinned corpus this raised opt-in reads from about 6.8 thousand to 277 thousand files.
+`--with-env` reads only manifest, config and deployment files, never application source. Add `--with-source` (requires `--with-env`) to also **read application source files** (JavaScript/TypeScript, Vue/Svelte/Astro, Python, Ruby, Go, Rust, PHP, Java/Kotlin, C#, Elixir; existing directory exclusions and the 1 MiB limit apply) and search them literally for a cataloged list of platform-injected names (for example `VERCEL_URL`, `RENDER_GIT_COMMIT`, `HEROKU_SLUG_COMMIT`, `CF_PAGES_URL`) and framework prefixes (`NEXT_PUBLIC_*`, `VITE_*`, `REACT_APP_*`, `NUXT_PUBLIC_*`, `EXPO_PUBLIC_*`, …). This is not a general read-site scanner: arbitrary `process.env` reads are not inferred. Each `(project, name)` becomes one `code-reference` record with `origin`, `provider`, `scope` and up to 20 file/line occurrences, never code text. On the pinned corpus `--with-source` reads about 40 times as many files as `--with-env` alone: 277,283 files / 1.77 GB versus 6,822 files / 15.1 MB.
 
 JSON adds `environment`; text shows names, source/format/location, project ownership, unresolved references and the optional fields. Values are never exposed, loaded or evaluated. References are not followed, and declarations are not a claim about usage or installed/effective values. Without the flag, output and read counts are unchanged. See [supported syntax, per-platform mapping, code-reference patterns, privacy/scoping limits and offline validation](tests/detect-env.md).
 

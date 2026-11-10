@@ -3,11 +3,12 @@
 ```sh
 brainpod detect . --with-env
 brainpod detect ./services --with-env --json
+brainpod detect . --with-env --with-source --json
 ```
 
 Without the flag, environment adapters are not run, no additional files are read, and the `environment` field is absent. With it, the field is present even when empty. Project/framework/runtime detection is unchanged.
 
-**With the flag, detection reads application source files.** The original five adapters and the platform manifest adapters read metadata files only. [Code references](#code-references) additionally search every source file with a cataloged extension for a fixed list of platform-injected names and framework prefixes. This multiplies the bytes read: see [local results](#local-results-2026-11-10). Without the flag, reads and output are byte-identical to the base branch.
+**`--with-env` reads metadata files only**: the base five formats and the platform manifests below. It never reads application source. **`--with-source`** (accepted only together with `--with-env`) adds [code references](#code-references): every source file with a cataloged extension is searched for a fixed list of platform-injected names and framework prefixes. This multiplies reads; see [local results](#local-results-2026-11-10). Without flags, reads and output are byte-identical to the base branch.
 
 ## Why the base five
 
@@ -95,7 +96,7 @@ Environment, context and sidecar names used as location segments must be simple 
 
 ## Code references
 
-Some variables are never declared in repository files: platforms inject them at build or run time, and frameworks expose prefixed variables to client code by convention. `--with-env` therefore runs a literal search over source files. This is **not** a read-site scanner. Only the names and prefixes in `catalog.code_references` in [`rules.toml`](../src/detect/rules.toml) are recognised; arbitrary `process.env.X`/`os.environ[...]` reads are not. Patterns are data: an extra `--rules` file can add patterns, extensions and exclusions without code changes.
+Some variables are never declared in repository files: platforms inject them at build or run time, and frameworks expose prefixed variables to client code by convention. `--with-env --with-source` therefore runs a literal search over source files; `--with-env` alone does not, and does not read source files at all. This is **not** a read-site scanner. Only the names and prefixes in `catalog.code_references` in [`rules.toml`](../src/detect/rules.toml) are recognised; arbitrary `process.env.X`/`os.environ[...]` reads are not. Patterns are data: an extra `--rules` file can add patterns, extensions and exclusions without code changes.
 
 - **Files:** basenames with extensions `js jsx mjs cjs ts tsx mts cts vue svelte astro py rb go rs php java kt kts cs ex exs`, excluding `*.min.js`, `*.min.mjs`, `*.min.cjs` and `*.bundle.js`. The existing directory exclusions apply (`node_modules`, `vendor`, `dist`, `build`, `.next`, `.nuxt`, `.output`, `target`, virtualenvs and similar), as do symlink skipping, the 128-level depth limit and the 1 MiB per-file limit. Oversized source files are skipped with the diagnostic `source exceeds 1 MiB read limit; environment references not scanned`. Bytes are searched directly, so non-UTF-8 files are scanned without a diagnostic.
 - **Matching:** the file is split into whole ASCII identifier tokens (`[A-Za-z0-9_]+`, bounded by any other byte, so `$VITE_X` and `env.VITE_X` match). A token matches an exact catalog name, or starts with a catalog prefix and continues with one or more `[A-Z0-9_]` characters (`\bPREFIX[A-Z0-9_]+\b`). The prefix alone, lowercase or mixed-case continuations, and longer identifiers that merely contain a prefix (`MY_NEXT_PUBLIC_X`) do not match. Exact names win over prefixes, and the longest prefix wins (`NUXT_PUBLIC_` before `NUXT_`).
@@ -171,18 +172,35 @@ python3 tests/audit_detect.py --binary target/release/brainpod --cache "$cache" 
   --runs 5 --output /tmp/detect-default.json   # add --fetch once for a fresh cache
 python3 tests/audit_detect.py --binary target/release/brainpod --cache "$cache" \
   --with-env --runs 5 --output /tmp/detect-with-env.json
+python3 tests/audit_detect.py --binary target/release/brainpod --cache "$cache" \
+  --with-env --with-source --runs 5 --output /tmp/detect-with-source.json
 ```
 
-`environmentChecks` in the pinned corpus are only enabled by `--with-env`. They sample reviewed names/sources/formats/project ownership, unresolved references, platform semantic fields, Dockerfile `ARG` and code references in mixed repositories. The audit runner resolves verified cache directory aliases before passing an explicit scan root. Synthetic Rust tests cover malformed input, secret and default redaction, no evaluation, quoting/multiline declarations, duplicate/scoped names, symlinks, read/depth/parser limits, every platform format's semantic mapping, `ARG`, every code-reference pattern family, generic-name gating, identifier boundaries, exclusions, the occurrence cap and serial/parallel determinism.
+`environmentChecks` in the pinned corpus run in both opt-in modes. They sample reviewed names/sources/formats/project ownership, unresolved references, platform semantic fields and Dockerfile `ARG` in mixed repositories. Code-reference checks are kept separately as `sourceChecks` and run only with `--with-source`. The audit runner resolves verified cache directory aliases before passing an explicit scan root. Synthetic Rust tests cover malformed input, secret and default redaction, no evaluation, quoting/multiline declarations, duplicate/scoped names, symlinks, read/depth/parser limits, every platform format's semantic mapping, `ARG`, every code-reference pattern family, generic-name gating, identifier boundaries, exclusions, the occurrence cap and serial/parallel determinism.
 
 ## Local results (2026-11-10)
 
-Validated on this branch: 229 Rust tests passed (3 ignored benchmarks not run), 12 Python audit-runner tests passed, formatting passed and the release build succeeded. `cargo clippy --all-targets -- -D warnings` with clippy 0.1.98 reports four errors in unchanged code: `clippy::question_mark` in `src/detect/deno.rs` and `clippy::result_large_err` in generated tunnel protobuf code. The base branch reports the same four with this toolchain. With only those two lints allowed, clippy is clean. Native OS CI and the Brainpod starter branches were not rerun.
+Validated on this branch: 231 Rust tests passed (3 ignored benchmarks not run), 13 Python audit-runner tests passed, formatting passed and the release build succeeded. `cargo clippy --all-targets -- -D warnings` with clippy 0.1.98 reports four errors in unchanged code: `clippy::question_mark` in `src/detect/deno.rs` and `clippy::result_large_err` in generated tunnel protobuf code. The base branch reports the same four with this toolchain. With only those two lints allowed, clippy is clean. Native OS CI and the Brainpod starter branches were not rerun.
 
-- **56/56 pinned repositories** (51 existing plus five added for platform manifests), five deterministic runs per mode: **300/300** assertions without the flag, **353/353** with it, including **53/53** environment assertions across 19 repositories (27 new).
-- All 56 default JSON reports are byte-identical to the base binary at `27f09ed`, and all opt-in `projects` arrays equal the default arrays.
-- Opt-in records: 7,494 Actions, 3,177 dotenv, 2,545 Compose, 1,127 Dockerfile (`ENV` plus `ARG`), 22 Kubernetes, 818 code references in 24 repositories, 70 Render, 55 `app-json`, 15 Copilot, 7 Vercel, 5 Netlify, 2 DigitalOcean and 1 App Engine. These counts include examples, duplicate names, unresolved references and separate scopes; they are **not** distinct-variable counts or precision/recall measurements. Fly.io, `heroku.yml` and Netlify template variables have synthetic coverage only; no pinned repository declares them.
-- **Read and latency impact of code references:** default scans read 5,239 files / 7,344,517 bytes. Opt-in scans read 6,756 files / 14,383,727 bytes with the base binary and **277,283 files / 1,769,906,284 bytes** with this branch. The median of per-repository five-run warm medians was 17.32 ms default, 19.69 ms base opt-in and **78.35 ms** opt-in (means 36.38 / 39.56 / 125.30 ms). Host timings were taken under concurrent load and include CLI startup and serialization.
-- Compared with base opt-in reports, there are 26 additional diagnostics: 24 source files over 1 MiB (generated bundles and fixtures) and two unsupported `ARG` names in Rails ERB `Dockerfile.tt` templates. The `app.json` that the YAML path rejected for a duplicate key now parses as JSON.
+- **56/56 pinned repositories** (51 existing plus five added for platform manifests), five deterministic runs per mode:
+  - No flags: **300/300** assertions.
+  - `--with-env`: **348/348**, including **48/48** declaration checks (22 new).
+  - `--with-env --with-source`: **353/353**, adding the **5/5** `sourceChecks`.
+- All 56 no-flag JSON reports are byte-identical to the base binary at `27f09ed`, and the `projects` arrays in both opt-in modes equal the no-flag arrays.
+- Reads and latency (sum over the 56 repositories; median and mean of per-repository five-run warm medians, timed under concurrent host load including CLI startup and serialization):
 
-Raw local results are in `/tmp/bp-envplat/{detect-default,detect-with-env,detect-base,compare}.json`, and the comparison script is `/tmp/bp-envplat/compare.py`. These cache-dependent artifacts are not committed.
+| Mode | Files read | Bytes read | Median ms | Mean ms |
+|---|---:|---:|---:|---:|
+| No flags | 5,239 | 7,344,517 | 15.66 | 33.13 |
+| `--with-env` on the base branch (#21) | 6,756 | 14,383,727 | 17.49 | 35.90 |
+| `--with-env` | 6,822 | 15,090,783 | 18.04 | 36.39 |
+| `--with-env --with-source` | 277,283 | 1,769,906,284 | 78.29 | 115.13 |
+
+  `--with-env` reads 66 more files than #21: the platform manifests.
+- Records with `--with-env`: 7,494 Actions, 3,177 dotenv, 2,545 Compose, 1,127 Dockerfile (`ENV` plus `ARG`), 22 Kubernetes, 70 Render, 55 `app-json`, 15 Copilot, 7 Vercel, 5 Netlify, 2 DigitalOcean and 1 App Engine. `--with-source` adds 818 code references in 24 repositories. These counts include examples, duplicate names, unresolved references and separate scopes; they are **not** distinct-variable counts or precision/recall measurements. Fly.io, `heroku.yml` and Netlify template variables have synthetic coverage only; no pinned repository declares them.
+- New diagnostics compared with #21's `--with-env`:
+  - `--with-env`: two unsupported `ARG` names, both in Rails ERB `Dockerfile.tt` templates.
+  - `--with-source`: those two plus 24 source files over 1 MiB (generated bundles and fixtures).
+  - The `app.json` that #21's YAML path rejected for a duplicate key now parses as JSON.
+
+Raw local results are in `/tmp/bp-envplat/{detect-default,detect-with-env,detect-with-source,compare}.json`, and the comparison script is `/tmp/bp-envplat/compare.py`. These cache-dependent artifacts are not committed.

@@ -4,7 +4,7 @@ use super::{Report, render, scan, scan_options};
 
 fn with_env(files: &[(&str, &str)]) -> Report {
     let dir = fixture(files);
-    scan_options(dir.path(), None, true).unwrap()
+    scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap()
 }
 
 fn declarations(report: &Report) -> &[Declaration] {
@@ -738,8 +738,11 @@ fn platform_routing_is_opt_in_deterministic_and_keeps_existing_formats() {
             .get("environment")
             .is_none()
     );
-    let report = scan_options(dir.path(), None, true).unwrap();
-    assert_eq!(scan_options(dir.path(), None, true).unwrap(), report);
+    let report = scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap();
+    assert_eq!(
+        scan_options(dir.path(), None, super::EnvScan::Declarations).unwrap(),
+        report
+    );
     assert_eq!(report.stats.files_read, 6);
     assert_eq!(default.projects, report.projects);
     let kube = declarations(&report)
