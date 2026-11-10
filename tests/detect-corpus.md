@@ -176,6 +176,10 @@ All **295/295 assertions across 51 repositories** pass on the extended engine, w
 
 Official behavior references: [configuration](https://docs.deno.com/runtime/fundamentals/configuration/), [workspaces](https://docs.deno.com/runtime/fundamentals/workspaces/), and [config discovery implementation](https://github.com/denoland/deno_config/blob/main/src/deno_json/mod.rs) (`deno.json` precedes `deno.jsonc`). These document current behavior; pinned repository SHAs, not moving documentation or CI/Docker versions, define the assertion evidence.
 
+## Platform manifest supplement (2026-11-10)
+
+Five non-archived web applications are pinned as `supplemental` entries for `--with-env` platform-manifest coverage. The existing corpus had no Render reference wiring, DigitalOcean spec, AWS Copilot manifest, App Engine `app.yaml` or `app.json` with a duplicate key: [documenso/documenso](https://github.com/documenso/documenso/tree/fdd0337bdd8f6afac64faf97113c65ed2dd0e2a2), [Unleash/unleash](https://github.com/Unleash/unleash/tree/d55a55f2181627c14cb51220390fdc13c45499aa), [elie222/inbox-zero](https://github.com/elie222/inbox-zero/tree/9d7cf0758a9caa23daec728ffaafa63568b166be), [twilio/twilio-video-app-react](https://github.com/twilio/twilio-video-app-react/tree/40c5e765c61794efaa214331fde19e1959ad4fc3) and [chatwoot/chatwoot](https://github.com/chatwoot/chatwoot/tree/af2a870c6d51aecf2a76388cf7b181dcf934c0fa). Each carries one reviewed default project/framework check, so the default audit now covers **300/300 assertions across 56 repositories**. Their environment checks and results are in [`detect-env.md`](detect-env.md#local-results-2026-11-10).
+
 ## Reproduce
 
 ```sh

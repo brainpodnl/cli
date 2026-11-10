@@ -962,8 +962,8 @@ fn parallel_inventory_matches_serial_inventory() {
         fs::write(dir.path().join(format!("services/s{i}/package.json")), "{}").unwrap();
     }
     let rules = super::Rules::builtin().unwrap();
-    let serial = super::inventory(dir.path(), rules, 1).unwrap();
-    let parallel = super::inventory(dir.path(), rules, 4).unwrap();
+    let serial = super::inventory(dir.path(), rules, 1, super::EnvScan::Off).unwrap();
+    let parallel = super::inventory(dir.path(), rules, 4, super::EnvScan::Off).unwrap();
     assert_eq!(serial.stats, parallel.stats);
     assert_eq!(serial.nodes.len(), parallel.nodes.len());
     for (a, b) in serial.nodes.iter().zip(&parallel.nodes) {

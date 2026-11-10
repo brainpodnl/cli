@@ -86,7 +86,19 @@ def snapshot(entry, cache, fetch):
     return destination
 
 
-def check(projects, expected):
+def check(projects, expected, environment=None):
+    if expected["kind"] == "environment":
+        fields = {
+            key: value
+            for key, value in expected.items()
+            if key not in {"kind", "category", "absent"}
+        }
+        actual = [
+            declaration
+            for declaration in environment or []
+            if all(declaration.get(key) == value for key, value in fields.items())
+        ]
+        return (not actual if expected.get("absent") else bool(actual)), actual
     project = projects.get(expected["path"])
     if project is None:
         return False, "project missing"
@@ -176,14 +188,34 @@ def check(projects, expected):
     raise ValueError(f"unknown check kind: {kind}")
 
 
+def detect_command(args, path):
+    command = [str(args.binary), "detect", str(path), "--json"]
+    if args.with_env:
+        command.append("--with-env")
+    if args.with_source:
+        command.append("--with-source")
+    return command
+
+
+def expected_checks(entry, args):
+    """Declaration checks run in both opt-in modes; code-reference
+    `sourceChecks` only when application source is searched."""
+    checks = list(entry["checks"])
+    if args.with_env:
+        checks.extend(entry.get("environmentChecks", []))
+    if args.with_source:
+        checks.extend(entry.get("sourceChecks", []))
+    return checks
+
+
 def audit(entry, args):
-    path = snapshot(entry, args.cache, args.fetch)
+    path = snapshot(entry, args.cache, args.fetch).resolve(strict=True)
     samples, first = [], None
     deterministic = True
     for _ in range(args.runs):
         start = time.perf_counter()
         process = subprocess.run(
-            [str(args.binary), "detect", str(path), "--json"],
+            detect_command(args, path),
             capture_output=True,
             timeout=90,
             check=False,
@@ -200,8 +232,8 @@ def audit(entry, args):
         raise ValueError("unexpected detector schema version")
     projects = {project["path"]: project for project in report["projects"]}
     checks = []
-    for expected in entry["checks"]:
-        passed, actual = check(projects, expected)
+    for expected in expected_checks(entry, args):
+        passed, actual = check(projects, expected, report.get("environment"))
         checks.append({"expected": expected, "passed": passed, "actual": actual})
     return {
         "repository": entry["repository"],
@@ -214,6 +246,7 @@ def audit(entry, args):
         "stats": report["stats"],
         "projectCount": len(projects),
         "diagnostics": report["diagnostics"],
+        **({"environmentCount": len(report["environment"])} if args.with_env else {}),
         "checks": checks,
     }
 
@@ -232,6 +265,16 @@ def main():
     )
     parser.add_argument(
         "--cache", type=Path, help="Snapshot cache; required unless --list"
+    )
+    parser.add_argument(
+        "--with-env",
+        action="store_true",
+        help="Include name-only environment declarations in each scan",
+    )
+    parser.add_argument(
+        "--with-source",
+        action="store_true",
+        help="Also search application source for cataloged code references (requires --with-env)",
     )
     parser.add_argument(
         "--fetch",
@@ -262,6 +305,8 @@ def main():
         return 0
     if args.cache is None or args.output is None:
         parser.error("--cache and --output are required unless --list")
+    if args.with_source and not args.with_env:
+        parser.error("--with-source requires --with-env")
     if args.runs < 2:
         parser.error("--runs must be at least 2")
     args.binary = args.binary.resolve(strict=True)

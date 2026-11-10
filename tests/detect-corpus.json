@@ -81,6 +81,20 @@
           "value": "1.27.0",
           "source": "go.mod"
         }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "netlify",
+          "source": "docs/netlify.toml",
+          "name": "HUGO_VERSION",
+          "project": "docs",
+          "state": "declared",
+          "hasDefault": true,
+          "scope": "build",
+          "location": "document:0/build/environment/HUGO_VERSION"
+        }
       ]
     },
     {
@@ -301,6 +315,23 @@
           "id": "node-workspace",
           "member": "packages/next"
         }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "vercel",
+          "source": "examples/with-firebase/vercel.json",
+          "name": "FIREBASE_API_KEY",
+          "project": "examples/with-firebase",
+          "state": "unresolved",
+          "secret": true,
+          "scope": "build",
+          "reference": {
+            "kind": "platform-secret",
+            "target": "firebase-api-key"
+          }
+        }
       ]
     },
     {
@@ -455,6 +486,57 @@
           "kind": "detection",
           "path": ".",
           "id": "laravel"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "APP_ENV",
+          "project": ".",
+          "source": ".env.development.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "APP_DEBUG",
+          "project": ".",
+          "source": "docker-compose.dev-multi.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "COOLIFY_VERSION",
+          "project": ".",
+          "source": "docker/production/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "dockerfile",
+          "name": "USER_ID",
+          "source": "docker/development/Dockerfile",
+          "project": ".",
+          "state": "declared",
+          "scope": "build",
+          "hasDefault": false
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "dockerfile",
+          "name": "NGINX_VERSION",
+          "source": "docker/development/Dockerfile",
+          "project": ".",
+          "state": "declared",
+          "scope": "build",
+          "hasDefault": true
         }
       ]
     },
@@ -654,6 +736,44 @@
           "path": "autogpt_platform/frontend",
           "id": "nextjs"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "POSTGRES_HOST",
+          "project": "autogpt_platform",
+          "source": "autogpt_platform/.env.default",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "CLAMAV_NO_FRESHCLAMD",
+          "project": "autogpt_platform/backend",
+          "source": "autogpt_platform/backend/docker-compose.test.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "CGO_ENABLED",
+          "project": null,
+          "source": ".github/actions/start-minio/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "ARG1",
+          "project": null,
+          "source": ".github/workflows/batch-command-handler.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -758,6 +878,44 @@
           "value": "npm:@typescript/typescript6@6.0.2",
           "source": "pnpm-workspace.yaml"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "SECRET_KEY",
+          "project": "api",
+          "source": "api/.env.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dotenv",
+          "name": "NEXT_PUBLIC_API_PREFIX",
+          "project": "web",
+          "source": "web/.env.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "MYSQL_DATABASE",
+          "project": "docker",
+          "source": "docker/docker-compose.middleware.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "FLASK_APP",
+          "project": "api",
+          "source": "api/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -805,6 +963,32 @@
           "kind": "detection",
           "path": "src/backend/base",
           "id": "starlette"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "kubernetes",
+          "name": "LANGFLOW_DATABASE_URL",
+          "project": ".",
+          "reference": {
+            "key": "database-url",
+            "kind": "secret-key",
+            "target": "langflow-secrets"
+          },
+          "source": "deploy/listeners/kubernetes-deployment.yaml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "render",
+          "source": "render.yaml",
+          "name": "LANGFLOW_DATABASE_URL",
+          "project": ".",
+          "state": "declared",
+          "hasDefault": true
         }
       ]
     },
@@ -928,6 +1112,30 @@
           "path": ".",
           "id": "rails"
         }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "app.json",
+          "name": "LOCAL_DOMAIN",
+          "project": ".",
+          "state": "declared",
+          "required": true,
+          "hasDefault": false
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "scalingo.json",
+          "name": "SECRET_KEY_BASE",
+          "project": ".",
+          "state": "declared",
+          "generated": true,
+          "secret": true
+        }
       ]
     },
     {
@@ -963,6 +1171,19 @@
           "kind": "detection",
           "path": ".",
           "id": "rails"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "app.json",
+          "name": "APP_SECRET_TOKEN",
+          "project": ".",
+          "state": "declared",
+          "generated": true,
+          "secret": true
         }
       ]
     },
@@ -1056,6 +1277,47 @@
           "id": "cargo-workspace",
           "member": "macros"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "DC_ENV_FILE",
+          "project": "playwright",
+          "source": "playwright/.env.template",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "project": "playwright",
+          "reference": {
+            "kind": "env-file"
+          },
+          "source": "playwright/docker-compose.yml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment",
+          "name": null
+        },
+        {
+          "format": "dockerfile",
+          "name": "LANG",
+          "project": ".",
+          "source": "docker/Dockerfile.alpine",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "RUSTFLAGS",
+          "project": ".",
+          "source": ".github/workflows/build.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -1145,6 +1407,54 @@
           "path": ".",
           "id": "cargo-workspace",
           "member": "crates/router"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "compose",
+          "name": "HYPERSWITCH_SERVER_URL",
+          "project": ".",
+          "source": "docker-compose.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "CARGO_INCREMENTAL",
+          "project": ".",
+          "source": "Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "CARGO_INCREMENTAL",
+          "project": ".",
+          "source": ".github/workflows/CI-pr.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "name": "EXTRA_FEATURES",
+          "source": "Dockerfile",
+          "format": "dockerfile",
+          "absent": true,
+          "scope": null
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "name": "EXTRA_FEATURES",
+          "source": "Dockerfile",
+          "format": "dockerfile",
+          "state": "declared",
+          "scope": "build",
+          "hasDefault": true
         }
       ]
     },
@@ -1268,6 +1578,35 @@
           "path": ".",
           "id": "node-workspace",
           "member": "api"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "MONGOHQ_URL",
+          "project": ".",
+          "source": "sample.env",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "GATSBY_HOST",
+          "project": ".",
+          "source": ".devcontainer/docker-compose.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "CROWDIN_PERSONAL_TOKEN",
+          "project": ".",
+          "source": ".github/workflows/crowdin-download.client-ui.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
         }
       ]
     },
@@ -1417,6 +1756,37 @@
           "path": "apps/api",
           "id": "express"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "kubernetes",
+          "name": "PORT",
+          "project": "examples",
+          "source": "examples/kubernetes/cluster-install/api.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "kubernetes",
+          "project": "examples",
+          "reference": {
+            "kind": "config-map",
+            "target": "firecrawl-config"
+          },
+          "source": "examples/kubernetes/cluster-install/api.yaml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment",
+          "name": null
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "name": "apiKey",
+          "format": "kubernetes",
+          "absent": true
+        }
       ]
     },
     {
@@ -1473,6 +1843,20 @@
           "path": ".",
           "id": "node-workspace",
           "member": "packages/excalidraw"
+        }
+      ],
+      "sourceChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "code-reference",
+          "state": "referenced",
+          "name": "VITE_APP_DISABLE_PREVENT_UNLOAD",
+          "project": "excalidraw-app",
+          "source": "excalidraw-app/App.tsx",
+          "origin": "framework",
+          "provider": "vite",
+          "scope": "build"
         }
       ]
     },
@@ -1843,6 +2227,19 @@
           "path": ".",
           "id": "gradle-workspace",
           "member": "core/spring-boot"
+        }
+      ],
+      "sourceChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "code-reference",
+          "state": "referenced",
+          "name": "DYNO",
+          "project": "core/spring-boot",
+          "origin": "platform",
+          "provider": "heroku",
+          "scope": "runtime"
         }
       ]
     },
@@ -2521,6 +2918,302 @@
       "topicRank": 60,
       "selectionQuery": "topic:deno archived:false fork:false",
       "supplemental": true
+    },
+    {
+      "repository": "documenso/documenso",
+      "language": "TypeScript",
+      "stars": 15710,
+      "revision": "fdd0337bdd8f6afac64faf97113c65ed2dd0e2a2",
+      "platform": "render",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node-workspace"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "render",
+          "source": "render.yaml",
+          "name": "NEXT_PRIVATE_DATABASE_URL",
+          "project": ".",
+          "state": "unresolved",
+          "reference": {
+            "kind": "database",
+            "target": "documenso-db",
+            "key": "connectionString"
+          }
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "render",
+          "source": "render.yaml",
+          "name": "NEXTAUTH_URL",
+          "project": ".",
+          "state": "unresolved",
+          "reference": {
+            "kind": "service-env",
+            "target": "documenso-app",
+            "key": "RENDER_EXTERNAL_URL"
+          }
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "render",
+          "source": "render.yaml",
+          "name": "NEXTAUTH_SECRET",
+          "project": ".",
+          "state": "declared",
+          "generated": true,
+          "secret": true
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "render",
+          "source": "render.yaml",
+          "name": "NEXT_PRIVATE_SMTP_HOST",
+          "project": ".",
+          "state": "declared",
+          "secret": true,
+          "hasDefault": false
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "code-reference",
+          "state": "referenced",
+          "name": "NEXT_PUBLIC_WEBAPP_URL",
+          "project": "packages/lib",
+          "source": "packages/lib/constants/app.ts",
+          "origin": "framework",
+          "provider": "nextjs",
+          "scope": "build"
+        }
+      ]
+    },
+    {
+      "repository": "Unleash/unleash",
+      "language": "TypeScript",
+      "stars": 14293,
+      "revision": "d55a55f2181627c14cb51220390fdc13c45499aa",
+      "platform": "digitalocean",
+      "checks": [
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "express"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "digitalocean",
+          "source": ".do/deploy.template.yaml",
+          "name": "DATABASE_URL",
+          "project": ".",
+          "state": "unresolved",
+          "scope": "runtime",
+          "reference": {
+            "kind": "database",
+            "target": "unleash-db",
+            "key": "DATABASE_URL"
+          }
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "digitalocean",
+          "source": ".do/deploy.template.yaml",
+          "name": "UNLEASH_URL",
+          "project": ".",
+          "state": "unresolved",
+          "scope": "runtime",
+          "reference": {
+            "kind": "app",
+            "key": "APP_URL"
+          }
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "app.json",
+          "name": "NPM_CONFIG_PRODUCTION",
+          "project": ".",
+          "state": "declared",
+          "hasDefault": true
+        }
+      ],
+      "supplemental": true,
+      "webRank": null
+    },
+    {
+      "repository": "elie222/inbox-zero",
+      "language": "TypeScript",
+      "stars": 12969,
+      "revision": "9d7cf0758a9caa23daec728ffaafa63568b166be",
+      "platform": "copilot",
+      "checks": [
+        {
+          "category": "project",
+          "kind": "detection",
+          "path": ".",
+          "id": "node-workspace"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "copilot",
+          "source": "copilot/inbox-zero-ecs/manifest.yml",
+          "name": "DATABASE_URL",
+          "project": ".",
+          "state": "unresolved",
+          "secret": true,
+          "scope": "runtime",
+          "reference": {
+            "kind": "ssm-parameter"
+          }
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "copilot",
+          "source": "copilot/inbox-zero-ecs/manifest.yml",
+          "name": "NEXT_PUBLIC_BASE_URL",
+          "project": ".",
+          "state": "declared",
+          "secret": false,
+          "hasDefault": false,
+          "scope": "runtime"
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "copilot",
+          "source": "copilot/inbox-zero-ecs/manifest.yml",
+          "name": "HOSTNAME",
+          "project": ".",
+          "state": "declared",
+          "secret": false,
+          "hasDefault": true,
+          "scope": "runtime"
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "code-reference",
+          "state": "referenced",
+          "name": "VERCEL_URL",
+          "project": "apps/web",
+          "source": "apps/web/env.ts",
+          "origin": "platform",
+          "provider": "vercel",
+          "scope": "build-and-runtime"
+        }
+      ]
+    },
+    {
+      "repository": "twilio/twilio-video-app-react",
+      "language": "TypeScript",
+      "stars": 1819,
+      "revision": "40c5e765c61794efaa214331fde19e1959ad4fc3",
+      "platform": "app-engine",
+      "checks": [
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "react"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-engine",
+          "source": "app.yaml",
+          "name": "REACT_APP_SET_AUTH",
+          "project": ".",
+          "state": "declared",
+          "hasDefault": true,
+          "scope": "runtime"
+        }
+      ],
+      "supplemental": true,
+      "webRank": null
+    },
+    {
+      "repository": "chatwoot/chatwoot",
+      "language": "Ruby",
+      "stars": 39564,
+      "revision": "af2a870c6d51aecf2a76388cf7b181dcf934c0fa",
+      "platform": "app-json",
+      "checks": [
+        {
+          "category": "framework",
+          "kind": "detection",
+          "path": ".",
+          "id": "rails"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "app.json",
+          "name": "SECRET_TOKEN",
+          "project": ".",
+          "state": "declared",
+          "generated": true,
+          "secret": true
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "app-json",
+          "source": "app.json",
+          "name": "RAILS_ENV",
+          "project": ".",
+          "state": "declared",
+          "hasDefault": true
+        }
+      ],
+      "supplemental": true,
+      "webRank": null,
+      "sourceChecks": [
+        {
+          "kind": "environment",
+          "category": "environment",
+          "format": "code-reference",
+          "state": "referenced",
+          "name": "HEROKU_SLUG_COMMIT",
+          "project": ".",
+          "source": "config/initializers/git_sha.rb",
+          "origin": "platform",
+          "provider": "heroku",
+          "scope": "runtime"
+        }
+      ]
     }
   ],
   "extensions": [
@@ -2545,6 +3238,13 @@
         "honojs/middleware"
       ],
       "note": "Deno is a runtime ecosystem group, not a new language. Primary-language checks stay javascript/typescript."
+    },
+    {
+      "selectedAt": "2026-11-10T16:30:00+00:00",
+      "purpose": "Opt-in environment coverage for deployment manifests of other hosting platforms (--with-env only).",
+      "selection": "Existing corpus repositories with platform manifests received environmentChecks. Five popular non-archived web applications were added because the corpus had no Render reference wiring, DigitalOcean, AWS Copilot, App Engine or duplicate-key app.json example; stars and pinned default-branch heads were read through the GitHub API on the selection date.",
+      "note": "Fly.io fly.toml, heroku.yml and Vercel/Netlify template variables have synthetic Rust coverage only; no eligible pinned repository with those declarations was selected.",
+      "codeReferences": "`sourceChecks` sample code references found by the catalog's literal search (framework prefixes VITE_ and NEXT_PUBLIC_; platform-injected HEROKU_SLUG_COMMIT, DYNO, VERCEL_URL) and run only with --with-env --with-source. Dockerfile ARG declaration checks are ordinary environmentChecks."
     }
   ]
 }

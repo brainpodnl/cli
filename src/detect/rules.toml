@@ -999,3 +999,349 @@ language = "typescript"
 kind = "framework"
 priority = 100
 any = ["dep:npm:hono", "identity:npm:hono", "dep:jsr:@hono/hono", "identity:jsr:@hono/hono", "dep:deno:hono"]
+
+[[catalog.environment]]
+format = "dotenv"
+files = [".env", ".env.*", "*.env", "*.env.example", "*.env.sample", "*.env.template"]
+exclude = ["*.enc", ".env.vault"]
+
+[[catalog.environment]]
+format = "compose"
+files = ["compose.yml", "compose.yaml", "compose.*.yml", "compose.*.yaml", "docker-compose.yml", "docker-compose.yaml", "docker-compose.*.yml", "docker-compose.*.yaml"]
+
+[[catalog.environment]]
+format = "dockerfile"
+files = ["Dockerfile", "Dockerfile.*", "*.Dockerfile"]
+
+[[catalog.environment]]
+format = "github-actions"
+files = ["*.yml", "*.yaml"]
+paths = ["**/.github/workflows/*.yml", "**/.github/workflows/*.yaml"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["*.yml", "*.yaml", "*.json"]
+paths = ["**/k8s/**", "**/kubernetes/**", "**/kube/**", "**/manifests/**", "**/deploy/**", "**/deployment/**", "**/deployments/**"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["pod.yaml", "pod.yml", "deployment.yaml", "deployment.yml", "*.k8s.yaml", "*.k8s.yml", "*.kube.yaml", "*.kube.yml", "kubernetes-*.yaml", "kubernetes-*.yml"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["*.k8s.json", "*.kube.json"]
+
+# Platform deployment manifests. Listed after the generic entries so a file in a
+# Kubernetes metadata directory keeps its Kubernetes routing.
+[[catalog.environment]]
+format = "app-json"
+files = ["app.json", "scalingo.json"]
+
+[[catalog.environment]]
+format = "heroku-yml"
+files = ["heroku.yml"]
+
+[[catalog.environment]]
+format = "render"
+files = ["render.yaml"]
+
+[[catalog.environment]]
+format = "fly"
+files = ["fly.toml", "fly.*.toml"]
+
+[[catalog.environment]]
+format = "digitalocean"
+files = ["app.yaml", "deploy.template.yaml"]
+paths = ["**/.do/app.yaml", "**/.do/deploy.template.yaml"]
+
+[[catalog.environment]]
+format = "vercel"
+files = ["vercel.json", "vercel.toml"]
+
+[[catalog.environment]]
+format = "netlify"
+files = ["netlify.toml"]
+
+[[catalog.environment]]
+format = "app-engine"
+files = ["app.yaml"]
+
+[[catalog.environment]]
+format = "copilot"
+files = ["manifest.yml", "manifest.yaml"]
+paths = ["**/copilot/*/manifest.yml", "**/copilot/*/manifest.yaml"]
+
+# Literal code references to environment names that platforms inject or
+# frameworks expose by documented convention (`--with-env` only). Patterns match
+# whole identifier tokens: exact `names`, or `prefixes` followed by [A-Z0-9_]+.
+# `signals` gate generic names on a platform file existing anywhere in the scan;
+# `requires` gates on a detection id of the owning project. First passing
+# candidate wins. `docs` cites the primary source for each list.
+[catalog.code_references]
+extensions = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "vue", "svelte", "astro", "py", "rb", "go", "rs", "php", "java", "kt", "kts", "cs", "ex", "exs"]
+exclude = ["*.min.js", "*.min.mjs", "*.min.cjs", "*.bundle.js"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "nextjs"
+prefixes = ["NEXT_PUBLIC_"]
+scope = "build"
+docs = ["https://nextjs.org/docs/app/guides/environment-variables#bundling-environment-variables-for-the-browser"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "vite"
+prefixes = ["VITE_"]
+scope = "build"
+docs = ["https://vite.dev/guide/env-and-mode#env-variables", "https://docs.solidjs.com/configuration/environment-variables#public-environment-variables", "https://tanstack.com/start/latest/docs/framework/react/guide/environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "create-react-app"
+prefixes = ["REACT_APP_"]
+scope = "build"
+docs = ["https://create-react-app.dev/docs/adding-custom-environment-variables/"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "nuxt"
+prefixes = ["NUXT_PUBLIC_", "NUXT_"]
+scope = "runtime"
+docs = ["https://nuxt.com/docs/4.x/guide/going-further/runtime-config#environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "sveltekit"
+prefixes = ["PUBLIC_"]
+requires = ["sveltekit"]
+docs = ["https://svelte.dev/docs/kit/$env-static-public", "https://svelte.dev/docs/kit/$env-dynamic-public"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "astro"
+prefixes = ["PUBLIC_"]
+scope = "build"
+requires = ["astro"]
+docs = ["https://docs.astro.build/en/guides/environment-variables/#vites-built-in-support"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "expo"
+prefixes = ["EXPO_PUBLIC_"]
+scope = "build"
+docs = ["https://docs.expo.dev/guides/environment-variables/#reading-environment-variables-from-env-files"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "gatsby"
+prefixes = ["GATSBY_"]
+scope = "build"
+docs = ["https://www.gatsbyjs.com/docs/how-to/local-development/environment-variables/#accessing-environment-variables-in-the-browser"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "vue-cli"
+prefixes = ["VUE_APP_"]
+scope = "build"
+docs = ["https://cli.vuejs.org/guide/mode-and-env.html#environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "redwood"
+prefixes = ["REDWOOD_ENV_"]
+scope = "build"
+docs = ["https://docs.redwoodjs.com/docs/environment-variables#option-2-prefixing-with-redwood_env_"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "storybook"
+prefixes = ["STORYBOOK_"]
+scope = "build"
+docs = ["https://storybook.js.org/docs/configure/environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "sanity"
+prefixes = ["SANITY_STUDIO_"]
+scope = "build"
+docs = ["https://www.sanity.io/docs/studio/environment-variables#exposed-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "umi"
+prefixes = ["UMI_APP_"]
+scope = "build"
+docs = ["https://umijs.org/en-US/docs/guides/env-variables#use-environment-variables-in-browser"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "plasmo"
+prefixes = ["PLASMO_PUBLIC_"]
+scope = "build"
+docs = ["https://docs.plasmo.com/framework/env#custom-environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "wxt"
+prefixes = ["WXT_"]
+scope = "build"
+docs = ["https://wxt.dev/guide/essentials/config/environment-variables#dotenv-files"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "tauri"
+prefixes = ["TAURI_ENV_"]
+scope = "build"
+docs = ["https://v2.tauri.app/reference/environment-variables/#tauri-cli-hook-commands"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "quasar"
+prefixes = ["QCLI_", "QUASAR_"]
+scope = "build"
+docs = ["https://quasar.dev/quasar-cli-vite/handling-import-meta-env#from-dotenv-files", "https://quasar.dev/quasar-cli-vite/handling-import-meta-env#values-provided-by-quasar-cli"]
+
+[[catalog.code_references.patterns]]
+origin = "framework"
+provider = "electron-vite"
+prefixes = ["MAIN_VITE_", "PRELOAD_VITE_", "RENDERER_VITE_"]
+scope = "build"
+docs = ["https://electron-vite.org/guide/env-and-mode#global-env-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "vercel"
+names = ["VERCEL_OIDC_TOKEN", "VERCEL_HASH_SALT", "VERCEL_GIT_PREVIOUS_SHA"]
+scope = "build"
+docs = ["https://vercel.com/docs/environment-variables/system-environment-variables#system-environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "vercel"
+names = ["VERCEL", "VERCEL_ENV", "VERCEL_TARGET_ENV", "VERCEL_URL", "VERCEL_BRANCH_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_DEPLOYMENT_ID", "VERCEL_PROJECT_ID", "VERCEL_PROJECT_NAME", "VERCEL_SKEW_PROTECTION_ENABLED", "VERCEL_AUTOMATION_BYPASS_SECRET", "VERCEL_GIT_PROVIDER", "VERCEL_GIT_REPO_SLUG", "VERCEL_GIT_REPO_OWNER", "VERCEL_GIT_REPO_ID", "VERCEL_GIT_COMMIT_REF", "VERCEL_GIT_COMMIT_SHA", "VERCEL_GIT_COMMIT_MESSAGE", "VERCEL_GIT_COMMIT_AUTHOR_LOGIN", "VERCEL_GIT_COMMIT_AUTHOR_NAME", "VERCEL_GIT_PULL_REQUEST_ID"]
+scope = "build-and-runtime"
+docs = ["https://vercel.com/docs/environment-variables/system-environment-variables#system-environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "vercel"
+names = ["VERCEL_REGION"]
+scope = "runtime"
+docs = ["https://vercel.com/docs/environment-variables/system-environment-variables#system-environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "netlify"
+names = ["NETLIFY", "NETLIFY_PREVIEW_SERVER", "CACHED_COMMIT_REF", "DEPLOY_PRIME_URL", "INCOMING_HOOK_TITLE", "INCOMING_HOOK_URL", "INCOMING_HOOK_BODY"]
+scope = "build"
+docs = ["https://docs.netlify.com/build/configure-builds/environment-variables/#read-only-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "render"
+names = ["RENDER_CPU_COUNT", "RENDER_DISCOVERY_SERVICE", "RENDER_EXTERNAL_HOSTNAME", "RENDER_EXTERNAL_URL", "RENDER_GIT_BRANCH", "RENDER_GIT_COMMIT", "RENDER_GIT_REPO_SLUG", "RENDER_INSTANCE_ID", "RENDER_SERVICE_ID", "RENDER_SERVICE_NAME", "RENDER_SERVICE_TYPE"]
+scope = "build-and-runtime"
+docs = ["https://render.com/docs/environment-variables#all-runtimes"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "render"
+names = ["RENDER_WEB_CONCURRENCY"]
+scope = "runtime"
+docs = ["https://render.com/docs/environment-variables#all-runtimes"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "railway"
+names = ["RAILWAY_PUBLIC_DOMAIN", "RAILWAY_PRIVATE_DOMAIN", "RAILWAY_TCP_PROXY_DOMAIN", "RAILWAY_TCP_PROXY_PORT", "RAILWAY_TCP_APPLICATION_PORT", "RAILWAY_PROJECT_NAME", "RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_SERVICE_NAME", "RAILWAY_SERVICE_ID", "RAILWAY_REPLICA_ID", "RAILWAY_REPLICA_REGION", "RAILWAY_DEPLOYMENT_ID", "RAILWAY_SNAPSHOT_ID", "RAILWAY_VOLUME_NAME", "RAILWAY_VOLUME_MOUNT_PATH", "RAILWAY_GIT_COMMIT_SHA", "RAILWAY_GIT_AUTHOR", "RAILWAY_GIT_BRANCH", "RAILWAY_GIT_REPO_NAME", "RAILWAY_GIT_REPO_OWNER", "RAILWAY_GIT_COMMIT_MESSAGE"]
+scope = "build-and-runtime"
+docs = ["https://docs.railway.com/variables/reference#railway-provided-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "heroku"
+names = ["DYNO", "HEROKU_APP_ID", "HEROKU_APP_NAME", "HEROKU_APP_DEFAULT_DOMAIN_NAME", "HEROKU_DYNO_ID", "HEROKU_RELEASE_CREATED_AT", "HEROKU_RELEASE_VERSION", "HEROKU_SLUG_COMMIT", "HEROKU_SLUG_DESCRIPTION", "HEROKU_BUILD_COMMIT", "HEROKU_BUILD_DESCRIPTION"]
+scope = "runtime"
+docs = ["https://devcenter.heroku.com/articles/dyno-metadata#dyno-metadata"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "cloudflare-pages"
+names = ["CF_PAGES", "CF_PAGES_COMMIT_SHA", "CF_PAGES_BRANCH", "CF_PAGES_URL"]
+scope = "build"
+docs = ["https://developers.cloudflare.com/pages/configuration/build-configuration/#environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "app-engine"
+names = ["GAE_APPLICATION", "GAE_DEPLOYMENT_ID", "GAE_ENV", "GAE_INSTANCE", "GAE_MEMORY_MB", "GAE_RUNTIME", "GAE_SERVICE", "GAE_VERSION"]
+scope = "runtime"
+docs = ["https://cloud.google.com/appengine/docs/standard/nodejs/runtime#environment_variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "koyeb"
+names = ["KOYEB_APP_NAME", "KOYEB_APP_ID", "KOYEB_ORGANIZATION_NAME", "KOYEB_ORGANIZATION_ID", "KOYEB_SERVICE_NAME", "KOYEB_SERVICE_ID", "KOYEB_SERVICE_PRIVATE_DOMAIN", "KOYEB_PUBLIC_DOMAIN", "KOYEB_PRIVILEGED", "KOYEB_DOCKER_REF", "KOYEB_GIT_SHA", "KOYEB_GIT_BRANCH", "KOYEB_GIT_REPOSITORY", "KOYEB_GIT_COMMIT_MESSAGE", "KOYEB_GIT_COMMIT_AUTHOR"]
+scope = "build-and-runtime"
+docs = ["https://www.koyeb.com/docs/build-and-deploy/environment-variables#koyeb-provided-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "koyeb"
+names = ["KOYEB_REGION", "KOYEB_REGIONAL_DEPLOYMENT_ID", "KOYEB_INSTANCE_ID", "KOYEB_INSTANCE_TYPE", "KOYEB_INSTANCE_MEMORY_MB", "KOYEB_REPLICA_INDEX", "KOYEB_HYPERVISOR_ID", "KOYEB_DC", "KOYEB_GPU_COUNT"]
+scope = "runtime"
+docs = ["https://www.koyeb.com/docs/build-and-deploy/environment-variables#koyeb-provided-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "cloud-run"
+names = ["K_SERVICE", "K_REVISION", "K_CONFIGURATION", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", "CLOUD_RUN_TASK_INDEX", "CLOUD_RUN_TASK_ATTEMPT", "CLOUD_RUN_TASK_COUNT", "CLOUD_RUN_WORKER_POOL", "CLOUD_RUN_REVISION", "FUNCTION_TARGET", "FUNCTION_SIGNATURE_TYPE"]
+scope = "runtime"
+docs = ["https://cloud.google.com/run/docs/container-contract#env-vars"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "fly"
+names = ["FLY_APP_NAME", "FLY_MACHINE_ID", "FLY_ALLOC_ID", "FLY_REGION", "FLY_PUBLIC_IP", "FLY_IMAGE_REF", "FLY_MACHINE_VERSION", "FLY_PRIVATE_IP", "FLY_PROCESS_GROUP", "FLY_VM_MEMORY_MB", "FLY_TEST_MACHINE_IP"]
+scope = "runtime"
+docs = ["https://fly.io/docs/machines/runtime-environment/#environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "netlify"
+names = ["BUILD_ID", "REPOSITORY_URL", "COMMIT_REF", "PULL_REQUEST", "REVIEW_ID", "DEPLOY_URL", "DEPLOY_ID"]
+scope = "build"
+signals = ["netlify.toml"]
+docs = ["https://docs.netlify.com/build/configure-builds/environment-variables/#read-only-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "netlify"
+names = ["SITE_NAME", "SITE_ID"]
+scope = "build-and-runtime"
+signals = ["netlify.toml"]
+docs = ["https://docs.netlify.com/build/configure-builds/environment-variables/#read-only-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "render"
+names = ["RENDER", "IS_PULL_REQUEST"]
+scope = "build-and-runtime"
+signals = ["render.yaml"]
+docs = ["https://render.com/docs/environment-variables#all-runtimes"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "fly"
+names = ["PRIMARY_REGION", "RELEASE_COMMAND"]
+scope = "runtime"
+signals = ["fly.toml"]
+docs = ["https://fly.io/docs/machines/runtime-environment/#environment-variables"]
+
+[[catalog.code_references.patterns]]
+origin = "platform"
+provider = "app-engine"
+names = ["GOOGLE_CLOUD_PROJECT"]
+scope = "runtime"
+signals = ["app.yaml"]
+docs = ["https://cloud.google.com/appengine/docs/standard/nodejs/runtime#environment_variables"]
