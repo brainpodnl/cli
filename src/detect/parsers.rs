@@ -4,56 +4,28 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::catalog::{Catalog, Normalize, Reader, Resolver, workspace_patterns};
 use super::{Diagnostic, Node, Workspace, relative_file};
 
-pub fn readable(name: &str) -> bool {
-    matches!(
-        name,
-        "composer.json"
-            | "package.json"
-            | "pnpm-workspace.yaml"
-            | "Cargo.toml"
-            | "go.mod"
-            | "go.work"
-            | "Gemfile"
-            | "pyproject.toml"
-            | "Pipfile"
-            | ".go-version"
-            | ".php-version"
-            | ".ruby-version"
-            | ".python-version"
-            | ".node-version"
-            | ".nvmrc"
-            | ".tool-versions"
-            | "rust-toolchain"
-            | "rust-toolchain.toml"
-            | "global.json"
-            | "pom.xml"
-            | "gradle.properties"
-            | "gradle-daemon-jvm.properties"
-            | ".java-version"
-            | ".sdkmanrc"
-    ) || name.ends_with(".csproj")
-        || name.ends_with(".sln")
-        || name.ends_with(".slnx")
-        || name.ends_with(".props")
-        || name.ends_with(".targets")
-        || name.ends_with(".gradle")
-        || name.ends_with(".gradle.kts")
-        || name.ends_with(".versions.toml")
-        || name.ends_with(".gemspec")
-        || (name.starts_with("requirements") && name.ends_with(".txt"))
-}
+pub(super) type Documents = HashMap<PathBuf, BTreeMap<String, Value>>;
 
-pub fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
+pub fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Diagnostic>) {
     let mut documents = Documents::new();
     let mut pnpm = HashMap::<PathBuf, Option<Pnpm>>::new();
     for node in nodes.iter() {
-        if node.files.contains("pnpm-workspace.yaml") {
+        if node
+            .files
+            .iter()
+            .any(|file| catalog.reader(file, Reader::Pnpm))
+        {
             pnpm.insert(node.path.clone(), None);
         }
         for (file, content) in &node.contents {
-            if file == "pnpm-workspace.yaml" {
+            let manifests = catalog.matching(file).collect::<Vec<_>>();
+            let Some(manifest) = manifests.first() else {
+                continue;
+            };
+            if manifest.reader == Reader::Pnpm {
                 match serde_saphyr::from_str::<PnpmDocument>(content) {
                     Ok(manifest) => {
                         let (members, exclude) = workspace_patterns(
@@ -80,13 +52,11 @@ pub fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
                 }
                 continue;
             }
-            let parsed = match file.as_str() {
-                "composer.json" | "package.json" => {
+            let parsed = match manifest.reader {
+                Reader::Json => {
                     Some(serde_json::from_str::<Value>(content).map_err(|e| e.to_string()))
                 }
-                "Cargo.toml" | "pyproject.toml" | "Pipfile" | "rust-toolchain.toml" => {
-                    Some(toml::from_str::<Value>(content).map_err(|e| e.to_string()))
-                }
+                Reader::Toml => Some(toml::from_str::<Value>(content).map_err(|e| e.to_string())),
                 _ => None,
             };
             if let Some(parsed) = parsed {
@@ -109,106 +79,64 @@ pub fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
     }
-    super::dotnet::parse(nodes, diagnostics);
-    super::java::parse(nodes, diagnostics);
-    for node in nodes {
+    for node in nodes.iter_mut() {
         if let Some(Some(manifest)) = pnpm.get(&node.path) {
             node.workspaces.push(manifest.workspace.clone());
         }
         for (file, doc) in documents.get(&node.path).into_iter().flatten() {
-            if let Some(name) = doc
-                .get("name")
-                .or_else(|| doc.pointer("/package/name"))
-                .or_else(|| doc.pointer("/project/name"))
-                .and_then(Value::as_str)
-            {
-                node.names.insert(name.to_owned());
+            for manifest in catalog.matching(file) {
+                manifest.apply(node, file, doc);
             }
-            match file.as_str() {
-                "composer.json" => composer(node, doc),
-                "package.json" => javascript(node, doc),
-                "Cargo.toml" => cargo(node, doc, &documents),
-                "pyproject.toml" => python(node, doc),
-                "Pipfile" => {
-                    dependencies(node, doc.get("packages"), "pypi", file);
-                    if let Some(v) = doc
-                        .pointer("/requires/python_full_version")
-                        .or_else(|| doc.pointer("/requires/python_version"))
-                        .and_then(Value::as_str)
-                    {
-                        node.version("python", v, file, "requirement");
-                    }
-                }
-                _ => (),
+        }
+    }
+    super::dotnet::parse(nodes, catalog, &documents, diagnostics);
+    super::java::parse(nodes, catalog, diagnostics);
+    for node in nodes {
+        for (file, doc) in documents.get(&node.path).into_iter().flatten() {
+            if catalog
+                .matching(file)
+                .any(|manifest| manifest.resolver == Some(Resolver::Cargo))
+            {
+                cargo(node, doc, &documents);
             }
         }
         let contents = std::mem::take(&mut node.contents);
         for (file, text) in &contents {
-            match file.as_str() {
-                "go.mod" | "go.work" => go(node, file, text),
-                "Gemfile" => ruby(node, text, diagnostics),
-                f if f.ends_with(".gemspec") => gemspec(node, file, text),
-                ".java-version" => pin(node, "java", file, text),
-                ".sdkmanrc" => {
-                    if let Some(value) =
-                        super::values::properties(text, &relative_file(&node.path, file))
-                            .get("java")
-                    {
-                        node.version("java", &value.value, file, "pin");
+            for manifest in catalog.matching(file) {
+                match manifest.reader {
+                    Reader::Go => go(node, file, text, manifest.workspace.as_deref()),
+                    Reader::Gemfile => ruby(node, file, text, diagnostics),
+                    Reader::Gemspec => gemspec(node, file, text),
+                    Reader::Pin | Reader::Properties | Reader::Tools => {
+                        manifest.text_versions(node, file, text)
                     }
-                }
-                ".go-version" => pin(node, "go", file, text),
-                ".php-version" => pin(node, "php", file, text),
-                ".ruby-version" => pin(node, "ruby", file, text),
-                ".python-version" => pin(node, "python", file, text),
-                ".node-version" | ".nvmrc" => pin(node, "javascript", file, text),
-                "rust-toolchain" => pin(node, "rust", file, text),
-                "rust-toolchain.toml" => {
-                    if let Some(v) = documents
-                        .get(&node.path)
-                        .and_then(|docs| docs.get(file))
-                        .and_then(|d| d.pointer("/toolchain/channel"))
-                        .and_then(Value::as_str)
-                    {
-                        node.version("rust", v, file, "toolchain");
-                    }
-                }
-                ".tool-versions" => {
-                    for line in text.lines() {
-                        let mut words = line.split('#').next().unwrap_or("").split_whitespace();
-                        let language = match words.next() {
-                            Some("nodejs") => "javascript",
-                            Some("golang") => "go",
-                            Some("java") => "java",
-                            Some("python") => "python",
-                            Some("ruby") => "ruby",
-                            Some("rust") => "rust",
-                            Some("php") => "php",
-                            _ => continue,
-                        };
-                        let value = words.collect::<Vec<_>>().join(" ");
-                        node.version(language, &value, file, "pin");
-                    }
-                }
-                f if f.starts_with("requirements") && f.ends_with(".txt") => {
-                    for line in logical_lines(text) {
-                        let line = line.trim();
-                        if line.starts_with('-') {
-                            if !line.starts_with("--hash=") {
-                                diagnostics.push(Diagnostic {
-                                    path: relative_file(&node.path, file),
-                                    message: format!("requirements option not evaluated: {line}"),
-                                });
+                    Reader::Requirements => {
+                        for line in logical_lines(text) {
+                            let line = line.trim();
+                            if line.starts_with('-') {
+                                if !line.starts_with("--hash=") {
+                                    diagnostics.push(Diagnostic {
+                                        path: relative_file(&node.path, file),
+                                        message: format!(
+                                            "requirements option not evaluated: {line}"
+                                        ),
+                                    });
+                                }
+                            } else {
+                                requirement(node, line, file);
                             }
-                            continue;
                         }
-                        requirement(node, line, file);
                     }
+                    _ => (),
                 }
-                _ => (),
             }
         }
         resolve_catalogs(node, &pnpm, diagnostics);
+        for (file, doc) in documents.get(&node.path).into_iter().flatten() {
+            for manifest in catalog.matching(file) {
+                manifest.versions(node, file, Some(doc), None, true);
+            }
+        }
     }
 }
 
@@ -223,18 +151,6 @@ struct Pnpm {
     workspace: Workspace,
     catalog: BTreeMap<String, String>,
     catalogs: BTreeMap<String, BTreeMap<String, String>>,
-}
-
-fn workspace_patterns(patterns: Vec<String>) -> (Vec<String>, Vec<String>) {
-    let (mut members, mut exclude) = (Vec::new(), Vec::new());
-    for pattern in patterns {
-        if let Some(pattern) = pattern.strip_prefix('!') {
-            exclude.push(pattern.to_owned());
-        } else {
-            members.push(pattern);
-        }
-    }
-    (members, exclude)
 }
 
 fn resolve_catalogs(
@@ -281,12 +197,6 @@ fn resolve_catalogs(
                 })
         });
         if let Some(resolved) = value {
-            if package == "typescript" {
-                node.versions
-                    .entry("typescript".to_owned())
-                    .or_default()
-                    .push(resolved.clone());
-            }
             dependency.resolved = Some(resolved);
         } else {
             diagnostics.push(Diagnostic {
@@ -297,93 +207,8 @@ fn resolve_catalogs(
     }
 }
 
-fn dependencies(node: &mut Node, object: Option<&Value>, ecosystem: &str, file: &str) {
-    if let Some(deps) = object.and_then(Value::as_object) {
-        for (name, value) in deps {
-            let name = if ecosystem == "pypi" {
-                normalize_python(name)
-            } else {
-                name.clone()
-            };
-            let version = value
-                .as_str()
-                .or_else(|| value.get("version").and_then(Value::as_str));
-            node.dependency(ecosystem, &name, version, file);
-        }
-    }
-}
-
-fn composer(node: &mut Node, doc: &Value) {
-    if let Some(name) = doc.get("name").and_then(Value::as_str) {
-        node.identity(
-            "composer",
-            name,
-            doc.get("version").and_then(Value::as_str),
-            "composer.json",
-        );
-    }
-    dependencies(node, doc.get("require"), "composer", "composer.json");
-    if let Some(v) = doc.pointer("/require/php").and_then(Value::as_str) {
-        node.version("php", v, "composer.json", "requirement");
-    }
-    if let Some(v) = doc.pointer("/config/platform/php").and_then(Value::as_str) {
-        node.version("php", v, "composer.json", "platform");
-    }
-}
-
-fn javascript(node: &mut Node, doc: &Value) {
-    if let Some(name) = doc.get("name").and_then(Value::as_str) {
-        node.identity(
-            "npm",
-            name,
-            doc.get("version").and_then(Value::as_str),
-            "package.json",
-        );
-    }
-    dependencies(node, doc.get("devDependencies"), "npm", "package.json");
-    dependencies(node, doc.get("dependencies"), "npm", "package.json");
-    if let Some(v) = doc.pointer("/engines/node").and_then(Value::as_str) {
-        node.version("javascript", v, "package.json", "requirement");
-    }
-    if let Some(v) = doc.pointer("/volta/node").and_then(Value::as_str) {
-        node.version("javascript", v, "package.json", "pin");
-    }
-    if let Some(v) = doc
-        .pointer("/dependencies/typescript")
-        .or_else(|| doc.pointer("/devDependencies/typescript"))
-        .and_then(Value::as_str)
-    {
-        node.version(
-            "typescript",
-            v,
-            "package.json",
-            if v.starts_with("catalog:") {
-                "reference"
-            } else {
-                "requirement"
-            },
-        );
-    }
-    if let Some(workspaces) = doc.get("workspaces") {
-        let (members, exclude) =
-            workspace_patterns(strings(workspaces.get("packages").unwrap_or(workspaces)));
-        node.workspaces.push(Workspace {
-            ecosystem: "node".to_owned(),
-            source: relative_file(&node.path, "package.json"),
-            members,
-            exclude,
-        });
-    }
-}
-
-type Documents = HashMap<PathBuf, BTreeMap<String, Value>>;
-
 fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
     let file = "Cargo.toml";
-    if doc.get("package").is_some_and(Value::is_object) {
-        node.packages
-            .insert("cargo".to_owned(), relative_file(&node.path, file));
-    }
     let workspace =
         if let Some(explicit) = doc.pointer("/package/workspace").and_then(Value::as_str) {
             normalize_path(&node.path.join(explicit)).and_then(|path| {
@@ -402,48 +227,40 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
                     .map(|d| (path.to_path_buf(), d))
             })
         };
-    if let Some(name) = doc.pointer("/package/name").and_then(Value::as_str) {
-        node.identity(
-            "cargo",
-            name,
-            doc.pointer("/package/version").and_then(Value::as_str),
-            file,
-        );
-        if doc
+    if let Some(name) = doc.pointer("/package/name").and_then(Value::as_str)
+        && doc
             .pointer("/package/version/workspace")
             .and_then(Value::as_bool)
             == Some(true)
-            && let Some((path, workspace)) = &workspace
-            && let Some(version) = workspace
-                .pointer("/workspace/package/version")
-                .and_then(Value::as_str)
-            && let Some(identity) = node.identities.get_mut(&format!("cargo:{name}"))
-        {
-            identity.resolved = Some(super::Version {
+        && let Some((path, workspace)) = &workspace
+        && let Some(version) = workspace
+            .pointer("/workspace/package/version")
+            .and_then(Value::as_str)
+        && let Some(identity) = node.identities.get_mut(&format!("cargo:{name}"))
+    {
+        identity.resolved = Some(super::Version {
+            value: version.to_owned(),
+            source: relative_file(path, file),
+            kind: "package".to_owned(),
+        });
+    }
+    if doc
+        .pointer("/package/rust-version/workspace")
+        .and_then(Value::as_bool)
+        == Some(true)
+        && let Some((path, ws)) = &workspace
+        && let Some(version) = ws
+            .pointer("/workspace/package/rust-version")
+            .and_then(Value::as_str)
+    {
+        node.versions
+            .entry("rust".to_owned())
+            .or_default()
+            .push(super::Version {
                 value: version.to_owned(),
                 source: relative_file(path, file),
-                kind: "package".to_owned(),
+                kind: "requirement".to_owned(),
             });
-        }
-    }
-    if let Some(version) = doc.pointer("/package/rust-version") {
-        if let Some(v) = version.as_str() {
-            node.version("rust", v, file, "requirement");
-        } else if version.get("workspace").and_then(Value::as_bool) == Some(true)
-            && let Some((path, ws)) = &workspace
-            && let Some(v) = ws
-                .pointer("/workspace/package/rust-version")
-                .and_then(Value::as_str)
-        {
-            node.versions
-                .entry("rust".to_owned())
-                .or_default()
-                .push(super::Version {
-                    value: v.to_owned(),
-                    source: relative_file(path, file),
-                    kind: "requirement".to_owned(),
-                });
-        }
     }
     let mut dep_tables = Vec::new();
     if let Some(d) = doc.get("dependencies") {
@@ -489,103 +306,23 @@ fn cargo(node: &mut Node, doc: &Value, documents: &Documents) {
             }
         }
     }
-    if let Some(ws) = doc.get("workspace") {
-        node.workspaces.push(Workspace {
-            ecosystem: "cargo".to_owned(),
-            source: relative_file(&node.path, file),
-            members: strings(&ws["members"]),
-            exclude: strings(&ws["exclude"]),
-        });
-    }
 }
 
-fn python(node: &mut Node, doc: &Value) {
-    let file = "pyproject.toml";
-    if let Some(name) = doc
-        .pointer("/project/name")
-        .or_else(|| doc.pointer("/tool/poetry/name"))
-        .and_then(Value::as_str)
-    {
-        let version = doc
-            .pointer("/project/version")
-            .or_else(|| doc.pointer("/tool/poetry/version"))
-            .and_then(Value::as_str);
-        node.identity("pypi", &normalize_python(name), version, file);
-        node.names.insert(name.to_owned());
-    }
-    if let Some(v) = doc
-        .pointer("/project/requires-python")
-        .and_then(Value::as_str)
-    {
-        node.version("python", v, file, "requirement");
-    }
-    for dep in doc
-        .pointer("/project/dependencies")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        requirement(node, dep, file);
-    }
-    if let Some(deps) = doc
-        .pointer("/tool/poetry/dependencies")
-        .and_then(Value::as_object)
-    {
-        for (name, v) in deps {
-            let version = v
-                .as_str()
-                .or_else(|| v.get("version").and_then(Value::as_str));
-            if name == "python" {
-                if let Some(v) = version {
-                    node.version("python", v, file, "requirement");
-                }
-            } else {
-                node.dependency("pypi", &normalize_python(name), version, file);
-            }
-        }
-    }
-    if let Some(ws) = doc.pointer("/tool/uv/workspace") {
-        node.workspaces.push(Workspace {
-            ecosystem: "python".to_owned(),
-            source: relative_file(&node.path, file),
-            members: strings(&ws["members"]),
-            exclude: strings(&ws["exclude"]),
-        });
-    }
-}
-
-fn normalize_python(name: &str) -> String {
-    let mut normalized = String::new();
-    for ch in name.chars() {
-        if matches!(ch, '-' | '_' | '.') {
-            if !normalized.ends_with('-') {
-                normalized.push('-');
-            }
-        } else {
-            normalized.push(ch.to_ascii_lowercase());
-        }
-    }
-    normalized
-}
-
-fn requirement(node: &mut Node, line: &str, file: &str) {
+pub(super) fn requirement_parts(line: &str) -> Option<(&str, Option<&str>)> {
     let line = line.split('#').next().unwrap_or("").trim();
     if line.is_empty() {
-        return;
+        return None;
     }
     let end = line
         .find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.'))
         .unwrap_or(line.len());
     if end == 0 {
-        return;
+        return None;
     }
-    let name = normalize_python(&line[..end]);
+    let name = &line[..end];
     let mut rest = line[end..].trim();
     if rest.starts_with('[') {
-        let Some(end) = rest.find(']') else {
-            return;
-        };
+        let end = rest.find(']')?;
         rest = rest[end + 1..].trim();
     }
     let constraint = rest.split(';').next().unwrap_or("").trim();
@@ -595,7 +332,13 @@ fn requirement(node: &mut Node, line: &str, file: &str) {
     } else {
         Some(constraint)
     };
-    node.dependency("pypi", &name, version, file);
+    Some((name, version))
+}
+
+fn requirement(node: &mut Node, line: &str, file: &str) {
+    if let Some((name, version)) = requirement_parts(line) {
+        node.dependency("pypi", &Normalize::Python.name(name), version, file);
+    }
 }
 
 fn logical_lines(text: &str) -> Vec<String> {
@@ -617,7 +360,7 @@ fn logical_lines(text: &str) -> Vec<String> {
     lines
 }
 
-fn go(node: &mut Node, file: &str, text: &str) {
+fn go(node: &mut Node, file: &str, text: &str, workspace: Option<&str>) {
     let mut block = "";
     let mut members = Vec::new();
     for line in text.lines() {
@@ -675,9 +418,9 @@ fn go(node: &mut Node, file: &str, text: &str) {
             _ => (),
         }
     }
-    if file == "go.work" {
+    if let Some(ecosystem) = workspace {
         node.workspaces.push(Workspace {
-            ecosystem: "go".to_owned(),
+            ecosystem: ecosystem.to_owned(),
             source: relative_file(&node.path, file),
             members,
             exclude: Vec::new(),
@@ -699,7 +442,7 @@ fn quoted(input: &str) -> Option<(&str, &str)> {
     Some((value, &input[end + 1..]))
 }
 
-fn ruby(node: &mut Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
+fn ruby(node: &mut Node, file: &str, text: &str, diagnostics: &mut Vec<Diagnostic>) {
     for line in text.lines() {
         let line = line.trim();
         let (directive, rest) = if let Some(rest) = line
@@ -719,13 +462,13 @@ fn ruby(node: &mut Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
         };
         let Some((name, rest)) = quoted(rest) else {
             diagnostics.push(Diagnostic {
-                path: relative_file(&node.path, "Gemfile"),
+                path: relative_file(&node.path, file),
                 message: format!("dynamic {directive} declaration not evaluated"),
             });
             continue;
         };
         if directive == "ruby" {
-            node.version("ruby", name, "Gemfile", "requirement");
+            node.version("ruby", name, file, "requirement");
         } else {
             let mut versions = Vec::new();
             let mut rest = rest.trim_start();
@@ -741,7 +484,7 @@ fn ruby(node: &mut Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
                 "gem",
                 name,
                 (!version.is_empty()).then_some(version.as_str()),
-                "Gemfile",
+                file,
             );
         }
     }
@@ -778,25 +521,6 @@ fn gemspec(node: &mut Node, file: &str, text: &str) {
         node.names.insert(name.to_owned());
         node.identity("gem", name, version, file);
     }
-}
-
-fn strings(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect()
-}
-
-fn pin(node: &mut Node, language: &str, file: &str, text: &str) {
-    let value = text
-        .lines()
-        .filter(|line| !line.trim().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join(" ");
-    node.version(language, &value, file, "pin");
 }
 
 fn normalize_path(path: &Path) -> Option<PathBuf> {

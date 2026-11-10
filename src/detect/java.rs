@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
+use super::catalog::{Catalog, PropertyReader};
 use super::values::{self, Located, Properties, Syntax};
 use super::{Diagnostic, Node, Workspace, display_path, relative_file, xml};
 
@@ -30,7 +31,7 @@ struct Pom {
     modules: Vec<String>,
 }
 
-fn pom(text: &str, source: &str) -> Result<Pom> {
+fn pom(text: &str, source: &str, catalog: &Catalog) -> Result<Pom> {
     let mut doc = Pom::default();
     let mut artifacts = BTreeMap::<usize, Artifact>::new();
     xml::read(text, |stack| {
@@ -84,7 +85,9 @@ fn pom(text: &str, source: &str) -> Result<Pom> {
             }
         }
         if let Some(plugin) = stack.iter().position(|e| e.name == "plugin")
-            && matches!(element.name, "release" | "source" | "target")
+            && catalog
+                .property(PropertyReader::MavenCompiler, element.name)
+                .is_some()
             && stack
                 .get(stack.len().saturating_sub(2))
                 .is_some_and(|e| e.name == "configuration")
@@ -180,7 +183,7 @@ fn resolved(value: &str, source: &str, properties: &Properties) -> Option<String
     values::resolve(&literal(value, source), properties, Syntax::Maven).map(|v| v.value)
 }
 
-pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
+pub(super) fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Diagnostic>) {
     let mut documents = BTreeMap::<PathBuf, Option<Pom>>::new();
     for node in nodes.iter() {
         if node.files.contains("pom.xml") {
@@ -188,7 +191,7 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
         }
         if let Some(text) = node.contents.get("pom.xml") {
             let source = relative_file(&node.path, "pom.xml");
-            match pom(text, &source) {
+            match pom(text, &source, catalog) {
                 Ok(doc) => {
                     documents.insert(node.path.join("pom.xml"), Some(doc));
                 }
@@ -200,7 +203,7 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
         }
     }
     if documents.is_empty() {
-        super::gradle::parse(nodes, diagnostics);
+        super::gradle::parse(nodes, catalog, diagnostics);
         return;
     }
     for node in nodes.iter_mut() {
@@ -283,15 +286,8 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
                 Syntax::Maven,
             );
         }
-        for (key, kind) in [
-            ("java.version", "requirement"),
-            ("maven.compiler.release", "release"),
-            ("maven.compiler.source", "source"),
-            ("maven.compiler.target", "target"),
-        ] {
-            if let Some(raw) = properties.get(key) {
-                values::version(node, "java", raw, kind, &properties, Syntax::Maven);
-            }
+        for (field, raw) in catalog.property_values(PropertyReader::Maven, &properties) {
+            field.emit(node, raw, &properties, Syntax::Maven);
         }
         for (path, parent) in &inherited {
             let source = display_path(path);
@@ -333,7 +329,11 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
                     );
                     if artifact.name == "maven-compiler-plugin" {
                         for (kind, raw) in &artifact.compiler {
-                            values::version(node, "java", raw, kind, &properties, Syntax::Maven);
+                            if let Some(field) =
+                                catalog.property(PropertyReader::MavenCompiler, kind)
+                            {
+                                field.emit(node, raw, &properties, Syntax::Maven);
+                            }
                         }
                     }
                 }
@@ -355,5 +355,5 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
             });
         }
     }
-    super::gradle::parse(nodes, diagnostics);
+    super::gradle::parse(nodes, catalog, diagnostics);
 }

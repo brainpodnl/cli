@@ -39,6 +39,29 @@ The expanded corpus covers **45 repositories across nine languages**: the origin
 
 Additional unscored coverage gaps include Jekyll, Hugo, Dioxus, Ember, Gradio, and aiohttp. Their generic language/project fallback is not counted as a failed framework assertion. Test fixtures and example projects are intentionally scanned, so the report is not a list of deployable services.
 
+### Engine refactor validation
+
+The manifest catalog now declares filename-to-reader dispatch, JSON/TOML field extraction, workspace candidate selection, language families, inheritance boundaries, exclusions, property/version mappings, and MSBuild reference kinds. Detection predicates compile into typed fact indexes. Tests add an entire JSON manifest format and an XML property/reference policy through TOML only, rather than adding another language-specific Rust branch.
+
+All 45 complete reports match the pre-refactor binary after canonicalizing version-declaration ordering. The 227 corpus assertions still pass, including framework provider/consumer roles and version kinds. The ten starter branches are rerun too; Outline's unsupported Koa label and the redundant Ruby file-directive warning remain documented rather than counted as passing main-stack assertions. Version declarations are now sorted consistently, independent of reader execution order.
+
+The final local rerun passed 179 Rust tests and nine audit-runner tests. The XML corpus and portable benchmarks were run explicitly (they are ignored in ordinary test runs). The declarative filename router indexes known extensions and uses compiled basename matchers; this avoids paying for every manifest wildcard on every ordinary source filename. The 200-service/20,200-file warm synthetic scan remains roughly 4–5 ms on this host, reading only 200 manifests. The configuration compiler adds roughly half a millisecond of cold CLI startup in the local empty-directory A/B; these measurements are not cross-machine guarantees.
+
+### XML I/O and parser measurement
+
+The pinned cache contains 1,192 selected XML manifests, totaling 2,714,415 bytes and 31,157 closed/empty elements. Three independent release benchmark invocations measured the following aggregate warm-cache medians. Read timing includes bounded `open`/`read_to_end` plus UTF-8 ownership/validation; parse timing uses preloaded strings and a black-box no-op visitor. Discovery, .NET/Maven fact extraction, rules, and CLI output are excluded. These are not cold-disk measurements or timing budgets for CI.
+
+| XML kind | Files | Bytes | Warm read + UTF-8, ms | Preloaded parse, ms |
+|---|---:|---:|---:|---:|
+| csproj | 803 | 1,781,367 | 1.795 | 4.387 |
+| props | 107 | 328,021 | 0.212 | 0.835 |
+| targets | 67 | 178,848 | 0.131 | 0.539 |
+| slnx | 7 | 105,053 | 0.019 | 0.249 |
+| pom | 208 | 321,126 | 0.438 | 1.290 |
+| **All XML** | **1,192** | **2,714,415** | **2.668** | **7.414** |
+
+XML is not demonstrated to be the whole-engine bottleneck. A text-allocation fast path reduced allocation calls by 9.5%, but paired CPU runs showed only a noisy 0.7% difference; separate invocations were sometimes slower. It was rejected, and production XML parsing/validation is unchanged. The ignored corpus and portable XML microbenchmarks are retained so future parser changes can be measured rather than guessed.
+
 ### Timing
 
 Each repository was scanned through the release CLI five times, serially. The table reports the median of runs 2–5 with a warm filesystem, including process startup, traversal, JSON serialization, and stdout transfer. Python JSON parsing and snapshot downloads are excluded. These are local measurements, not portable timing budgets or controlled cold-cache benchmarks.
@@ -130,17 +153,10 @@ Timings are warm-filesystem, end-to-end CLI medians of runs 2–5. Empty or part
 
 Koa needs an additional npm framework rule. C#/.NET and Java/Spring are now supported and verified by the follow-up run. The Maybe warning is redundant with the already detected Ruby pin. None of these observations was silently converted into a passing assertion or hidden by skipping a branch. The initial validation was read-only; the follow-up uses the new language support.
 
-## CI regression investigation
-
-The Intel macOS failure is `s3::tests::streaming_download_exceeds_small_copy_limit_without_credentials_or_summary`, not a detector compilation failure. Replacing the fixture's five-second total deadline with connect/read-inactivity limits fixes a controlled slow-transfer failure, but native run `42725208393` still failed the same test after a 7.18-second suite. The original timeout diagnosis was therefore insufficient to establish the macOS cause; all other platform jobs passed.
-
-Follow-up controls show a progressing transfer can exceed five seconds while retaining the five-second read-inactivity bound. Record-sized 16 KiB TLS writes are substantially faster than the original 64 KiB write-all progression locally, but Linux cannot prove the native macOS cause. The fixture now uses those record-sized writes and joins its provider asynchronously before unwrapping the download result, so server-side I/O panics are captured without starving Tokio shutdown. Transfer-size, redirect, and credential assertions are unchanged. No timeouts were increased and no checks were disabled.
-
-Nix now streams full build logs, and test-only body failures report received bytes and URL-stripped error details. Production error messages remain sanitized and unchanged. Native macOS confirmation is still required for this follow-up.
-
 ## Reproduce
 
 ```sh
+python3 tests/audit_detect.py --list
 cargo build --release --locked
 cache=$(mktemp -d)
 python3 tests/audit_detect.py --fetch --cache "$cache" --output "$cache/results.json"
@@ -152,4 +168,10 @@ Downloads require the explicit `--fetch` flag; omit it to rerun against an exist
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-The runner uses Python 3.11+ and the standard library only. Full per-check results and repeat timings are written to the specified JSON output; downloaded repositories and generated reports are not committed.
+Use `--list` to print all repository names and pinned revisions without a binary, cache, downloads, or network access. The complete language-grouped list is also in the main README. The runner uses Python 3.11+ and the standard library only. Full per-check results and repeat timings are written to the specified JSON output; downloaded repositories and generated reports are not committed.
+
+```sh
+XML_BENCH_CACHE="$cache" cargo test --release detect::xml::tests::benchmark_xml_corpus \
+  -- --ignored --nocapture --test-threads=1
+cargo test --release detect::xml::tests::benchmark_xml_local -- --ignored --nocapture
+```

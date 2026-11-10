@@ -324,8 +324,9 @@ mod tests {
     #[ignore = "set XML_BENCH_CACHE to pinned detect-corpus cache; run release with --ignored --nocapture"]
     fn benchmark_xml_corpus() -> Result<()> {
         let cache = PathBuf::from(std::env::var("XML_BENCH_CACHE")?);
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/detect-corpus.json"))?;
+        let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/detect-corpus.json"),
+        )?)?;
         let mut all = Vec::new();
         let entries = manifest["repositories"].as_array().unwrap();
         for entry in entries {

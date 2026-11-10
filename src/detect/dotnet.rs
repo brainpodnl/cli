@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use super::catalog::{Catalog, PropertyReader, Reader};
+use super::parsers::Documents;
 use anyhow::{Result, bail};
 use serde_json::Value;
 
 use super::values::{self, Located, Properties, Syntax};
-use super::{Diagnostic, Node, Version, Workspace, display_path, relative_file, xml};
+use super::{Diagnostic, Node, Workspace, display_path, relative_file, xml};
 
 #[derive(Default)]
 struct Document {
@@ -29,7 +31,7 @@ struct Reference {
     version: Option<Located>,
 }
 
-fn document(text: &str, source: &str) -> Result<Document> {
+fn document(text: &str, source: &str, catalog: &Catalog) -> Result<Document> {
     let mut doc = Document::default();
     let mut nested_versions = BTreeMap::new();
     xml::read(text, |stack| {
@@ -81,13 +83,11 @@ fn document(text: &str, source: &str) -> Result<Document> {
                 located(&element.text),
             );
         }
-        if matches!(
-            element.name,
-            "PackageReference" | "PackageVersion" | "FrameworkReference" | "Reference"
-        ) && let Some(name) = element
-            .attributes
-            .get("Include")
-            .or_else(|| element.attributes.get("Update"))
+        if catalog.reference(element.name).is_some()
+            && let Some(name) = element
+                .attributes
+                .get("Include")
+                .or_else(|| element.attributes.get("Update"))
         {
             let version = element
                 .attributes
@@ -349,13 +349,18 @@ fn apply(
     active.remove(path);
 }
 
-pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
+pub(super) fn parse(
+    nodes: &mut [Node],
+    catalog: &Catalog,
+    parsed: &Documents,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     if !nodes.iter().any(|node| {
         node.files.iter().any(|file| {
-            file == "global.json"
-                || file.ends_with(".csproj")
-                || file.ends_with(".sln")
-                || file.ends_with(".slnx")
+            catalog.matching(file).any(|manifest| {
+                manifest.package.as_deref() == Some("dotnet")
+                    || manifest.workspace.as_deref() == Some("dotnet")
+            })
         })
     }) {
         return;
@@ -367,11 +372,7 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             if file == "global.json" {
                 sdk_versions.insert(node.path.clone(), BTreeMap::new());
             }
-            if file.ends_with(".csproj")
-                || file.ends_with(".slnx")
-                || file.ends_with(".props")
-                || file.ends_with(".targets")
-            {
+            if catalog.reader(file, Reader::Msbuild) {
                 documents.insert(node.path.join(file), None);
             }
         }
@@ -379,49 +380,38 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
             let source = relative_file(&node.path, file);
             if file == "global.json" {
                 sdk_versions.insert(node.path.clone(), BTreeMap::new());
-                match serde_json::from_str::<Value>(text) {
-                    Ok(doc) => {
-                        if let Some(version) = doc.pointer("/sdk/version").and_then(Value::as_str) {
-                            node.versions
-                                .entry("csharp".to_owned())
-                                .or_default()
-                                .push(Version {
-                                    value: version.to_owned(),
-                                    source: source.clone(),
-                                    kind: "sdk".to_owned(),
-                                });
-                        }
-                        if let Some(versions) = doc.get("msbuild-sdks").and_then(Value::as_object) {
-                            sdk_versions.insert(
-                                node.path.clone(),
-                                versions
-                                    .iter()
-                                    .filter_map(|(name, version)| {
-                                        version.as_str().map(|value| {
-                                            (
-                                                name.to_ascii_lowercase(),
-                                                Located {
-                                                    value: value.to_owned(),
-                                                    source: source.clone(),
-                                                    conditional: false,
-                                                },
-                                            )
-                                        })
-                                    })
-                                    .collect(),
-                            );
-                        }
-                    }
-                    Err(error) => diagnostics.push(Diagnostic {
-                        path: source,
-                        message: error.to_string(),
-                    }),
+                if let Some(doc) = parsed.get(&node.path).and_then(|docs| docs.get(file))
+                    && let Some(versions) = doc.get("msbuild-sdks").and_then(Value::as_object)
+                {
+                    sdk_versions.insert(
+                        node.path.clone(),
+                        versions
+                            .iter()
+                            .filter_map(|(name, version)| {
+                                version.as_str().map(|value| {
+                                    (
+                                        name.to_ascii_lowercase(),
+                                        Located {
+                                            value: value.to_owned(),
+                                            source: source.clone(),
+                                            conditional: false,
+                                        },
+                                    )
+                                })
+                            })
+                            .collect(),
+                    );
                 }
             } else if let std::collections::btree_map::Entry::Occupied(mut entry) =
                 documents.entry(node.path.join(file))
             {
-                match document(text, &source) {
-                    Ok(doc) if file.ends_with(".slnx") == doc.solution => {
+                match document(text, &source, catalog) {
+                    Ok(doc)
+                        if catalog
+                            .matching(file)
+                            .any(|manifest| manifest.workspace.as_deref() == Some("dotnet"))
+                            == doc.solution =>
+                    {
                         entry.insert(Some(doc));
                     }
                     Ok(_) => diagnostics.push(Diagnostic {
@@ -440,11 +430,15 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
         for file in node
             .files
             .iter()
-            .filter(|file| file.ends_with(".sln") || file.ends_with(".slnx"))
+            .filter(|file| {
+                catalog
+                    .matching(file)
+                    .any(|manifest| manifest.workspace.as_deref() == Some("dotnet"))
+            })
             .cloned()
             .collect::<Vec<_>>()
         {
-            let projects = if file.ends_with(".slnx") {
+            let projects = if catalog.reader(&file, Reader::Msbuild) {
                 documents
                     .get(&node.path.join(&file))
                     .and_then(Option::as_ref)
@@ -484,7 +478,11 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
         let projects = node
             .files
             .iter()
-            .filter(|file| file.ends_with(".csproj"))
+            .filter(|file| {
+                catalog
+                    .matching(file)
+                    .any(|manifest| manifest.package.as_deref() == Some("dotnet"))
+            })
             .cloned()
             .collect::<Vec<_>>();
         for file in projects {
@@ -574,7 +572,10 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                 for path in central_sources {
                     if let Some(Some(doc)) = documents.get(&path) {
                         for reference in &doc.references {
-                            if reference.kind == "PackageVersion" {
+                            if catalog
+                                .reference(&reference.kind)
+                                .is_some_and(|reference| reference.catalog)
+                            {
                                 central.insert(
                                     reference.name.to_ascii_lowercase(),
                                     reference.version.as_ref(),
@@ -584,37 +585,13 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                     }
                 }
             }
-            for (key, kind) in [
-                ("targetframework", "target"),
-                ("targetframeworks", "target"),
-                ("targetframeworkversion", "target"),
-                ("langversion", "language"),
-                ("runtimeframeworkversion", "runtime"),
-            ] {
-                if let Some(raw) = properties.get(key) {
-                    for value in raw.value.split(';').filter(|v| !v.trim().is_empty()) {
-                        values::version(
-                            node,
-                            "csharp",
-                            &Located {
-                                value: value.trim().to_owned(),
-                                ..raw.clone()
-                            },
-                            kind,
-                            &properties,
-                            Syntax::MsBuild,
-                        );
-                    }
-                }
+            for (field, raw) in catalog.property_values(PropertyReader::Msbuild, &properties) {
+                field.emit(node, raw, &properties, Syntax::MsBuild);
             }
             for (key, raw) in &conditional {
-                let kind = match key.as_str() {
-                    "targetframework" | "targetframeworks" | "targetframeworkversion" => "target",
-                    "langversion" => "language",
-                    "runtimeframeworkversion" => "runtime",
-                    _ => continue,
-                };
-                values::version(node, "csharp", raw, kind, &properties, Syntax::MsBuild);
+                if let Some(field) = catalog.property(PropertyReader::Msbuild, key) {
+                    field.emit(node, raw, &properties, Syntax::MsBuild);
+                }
             }
             for location in &sources {
                 let Some(Some(document)) = documents.get(location) else {
@@ -651,26 +628,20 @@ pub(super) fn parse(nodes: &mut [Node], diagnostics: &mut Vec<Diagnostic>) {
                     );
                 }
                 for reference in &document.references {
-                    let ecosystem = match reference.kind.as_str() {
-                        "PackageReference" => "nuget",
-                        "FrameworkReference" => "dotnet-framework",
-                        "Reference" => "dotnet-reference",
-                        _ => continue,
+                    let Some(policy) = catalog
+                        .reference(&reference.kind)
+                        .filter(|policy| !policy.catalog)
+                    else {
+                        continue;
                     };
-                    let name = reference
-                        .name
-                        .split(',')
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_ascii_lowercase();
+                    let name = policy.name(&reference.name);
                     let version = reference
                         .version
                         .as_ref()
                         .or_else(|| central.get(&name).copied().flatten());
                     values::dependency(
                         node,
-                        ecosystem,
+                        &policy.ecosystem,
                         &name,
                         &display_path(location),
                         version,

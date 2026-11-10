@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use super::catalog::{Catalog, PropertyReader, Reader};
 use super::values::{self, Located, Properties, Syntax};
 use super::{Diagnostic, Node, Workspace, display_path, relative_file};
 
@@ -191,7 +192,7 @@ struct Script {
     dynamic_includes: bool,
 }
 
-fn script(text: &str, source: &str) -> Result<Script, String> {
+fn script(text: &str, source: &str, catalog: &Catalog) -> Result<Script, String> {
     let tokens = tokens(text)?;
     let mut script = Script::default();
     let mut scopes = Vec::new();
@@ -278,39 +279,20 @@ fn script(text: &str, source: &str) -> Result<Script, String> {
                         shared,
                         root,
                     };
-                    if matches!(
-                        key,
-                        "sourceCompatibility"
-                            | "targetCompatibility"
-                            | "languageVersion"
-                            | "options.release"
-                    ) {
-                        let kind = if key == "languageVersion" {
-                            "toolchain"
-                        } else if key == "sourceCompatibility" {
-                            "source"
-                        } else if key == "targetCompatibility" {
-                            "target"
-                        } else {
-                            "release"
-                        };
-                        script.java.push((kind.to_owned(), declaration));
+                    if catalog.property(PropertyReader::Gradle, key).is_some() {
+                        script.java.push((key.to_owned(), declaration));
                     } else {
                         script.properties.insert(key.to_owned(), declaration);
                     }
                 }
             }
         }
-        if matches!(key, "languageVersion.set" | "options.release.set")
+        if catalog.property(PropertyReader::Gradle, key).is_some()
+            && matches!(tokens.get(index + 1), Some(Token::Symbol('(')))
             && let Some((value, _)) = argument(&tokens, index + 1)
         {
             script.java.push((
-                if key == "languageVersion.set" {
-                    "toolchain"
-                } else {
-                    "release"
-                }
-                .to_owned(),
+                key.to_owned(),
                 Declaration {
                     value: located(value),
                     shared,
@@ -468,15 +450,15 @@ fn build_file(path: &Path) -> bool {
         || file == format!("{directory}.gradle.kts")
 }
 
-pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
+pub(super) fn parse(nodes: &mut Vec<Node>, catalog: &Catalog, diagnostics: &mut Vec<Diagnostic>) {
     let mut scripts = BTreeMap::<PathBuf, Script>::new();
     let mut property_files = BTreeMap::<PathBuf, Properties>::new();
     let mut daemon_versions = BTreeMap::<PathBuf, Located>::new();
     for node in nodes.iter() {
         for (file, text) in &node.contents {
             let source = relative_file(&node.path, file);
-            if file.ends_with(".gradle") || file.ends_with(".gradle.kts") {
-                match script(text, &source) {
+            if catalog.reader(file, Reader::Gradle) {
+                match script(text, &source, catalog) {
                     Ok(script) => {
                         if matches!(file.as_str(), "settings.gradle" | "settings.gradle.kts")
                             && script.dynamic_includes
@@ -490,14 +472,14 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
                         message,
                     }),
                 }
-            } else if file == "gradle-daemon-jvm.properties" {
+            } else if catalog.reader(file, Reader::GradleJvm) {
                 if let Some(version) = values::properties(text, &source).get("toolchainVersion") {
                     daemon_versions.insert(
                         node.path.parent().unwrap_or(Path::new("")).to_path_buf(),
                         version.clone(),
                     );
                 }
-            } else if file == "gradle.properties" {
+            } else if catalog.reader(file, Reader::GradleProperties) {
                 property_files.insert(node.path.clone(), values::properties(text, &source));
             }
         }
@@ -633,15 +615,10 @@ pub(super) fn parse(nodes: &mut Vec<Node>, diagnostics: &mut Vec<Diagnostic>) {
         }
         for (path, script, inherited) in declarations {
             for (kind, declaration) in &script.java {
-                if (!inherited && declaration.root) || (inherited && declaration.shared) {
-                    values::version(
-                        node,
-                        "java",
-                        &declaration.value,
-                        kind,
-                        &properties,
-                        Syntax::Maven,
-                    );
+                if ((!inherited && declaration.root) || (inherited && declaration.shared))
+                    && let Some(field) = catalog.property(PropertyReader::Gradle, kind)
+                {
+                    field.emit(node, &declaration.value, &properties, Syntax::Maven);
                 }
             }
             for plugin in &script.plugins {

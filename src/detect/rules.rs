@@ -4,50 +4,8 @@ use std::sync::OnceLock;
 use anyhow::{Result, bail};
 use serde::Deserialize;
 
+use super::catalog::{Catalog, CatalogSpec};
 use super::{Detection, Evidence, FrameworkRole, Node};
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Rule {
-    pub id: String,
-    pub language: String,
-    pub kind: Kind,
-    pub priority: i32,
-    #[serde(default)]
-    pub any: Vec<Pattern>,
-    #[serde(default)]
-    pub all: Vec<Pattern>,
-    #[serde(default)]
-    pub none: Vec<Pattern>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Pattern {
-    Atom(String),
-    All(AllPattern),
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AllPattern {
-    all: Vec<String>,
-}
-
-impl Pattern {
-    fn atoms(&self) -> &[String] {
-        match self {
-            Self::Atom(atom) => std::slice::from_ref(atom),
-            Self::All(group) => &group.all,
-        }
-    }
-
-    fn matches(&self, node: &Node) -> bool {
-        self.atoms()
-            .iter()
-            .all(|atom| matched(node, atom).is_some())
-    }
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -60,21 +18,170 @@ pub enum Kind {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RuleSpec {
+    id: String,
+    language: String,
+    kind: Kind,
+    priority: i32,
+    #[serde(default)]
+    any: Vec<PatternSpec>,
+    #[serde(default)]
+    all: Vec<PatternSpec>,
+    #[serde(default)]
+    none: Vec<PatternSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PatternSpec {
+    Atom(String),
+    All(AllPattern),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllPattern {
+    all: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Document {
-    rules: Vec<Rule>,
+    #[serde(default)]
+    rules: Vec<RuleSpec>,
+    #[serde(default)]
+    catalog: CatalogSpec,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+enum FactKind {
+    File,
+    Source,
+    Dependency,
+    Identity,
+    Package,
+    Workspace,
+}
+
+impl FactKind {
+    fn parse(name: &str) -> Result<Self> {
+        match name {
+            "file" => Ok(Self::File),
+            "source" => Ok(Self::Source),
+            "dep" => Ok(Self::Dependency),
+            "identity" => Ok(Self::Identity),
+            "package" => Ok(Self::Package),
+            "workspace" => Ok(Self::Workspace),
+            _ => bail!("unknown detection fact: {name}"),
+        }
+    }
+}
+
+pub(super) enum FilePattern {
+    Exact(String),
+    Star { prefix: String, suffix: String },
+    Glob(String),
+}
+
+impl FilePattern {
+    pub fn new(value: &str) -> Self {
+        if !value.contains(['*', '?']) {
+            Self::Exact(value.to_owned())
+        } else if !value.contains('?') && value.bytes().filter(|b| *b == b'*').count() == 1 {
+            let (prefix, suffix) = value.split_once('*').unwrap_or((value, ""));
+            Self::Star {
+                prefix: prefix.to_owned(),
+                suffix: suffix.to_owned(),
+            }
+        } else {
+            Self::Glob(value.to_owned())
+        }
+    }
+
+    pub fn matches(&self, value: &str) -> bool {
+        match self {
+            Self::Exact(exact) => exact == value,
+            Self::Star { prefix, suffix } => {
+                value.len() >= prefix.len() + suffix.len()
+                    && value.starts_with(prefix)
+                    && value.ends_with(suffix)
+            }
+            Self::Glob(pattern) => glob(pattern, value),
+        }
+    }
+}
+
+struct Atom {
+    kind: FactKind,
+    value: String,
+    text: String,
+    file: FilePattern,
+}
+struct Pattern {
+    atoms: Vec<Atom>,
+}
+struct Rule {
+    id: String,
+    language: String,
+    kind: Kind,
+    priority: i32,
+    any: Vec<Pattern>,
+    all: Vec<Pattern>,
+    none: Vec<Pattern>,
+}
+
+impl PatternSpec {
+    fn compile(self) -> Result<Pattern> {
+        let atoms = match self {
+            Self::Atom(atom) => vec![atom],
+            Self::All(group) => group.all,
+        };
+        if atoms.is_empty() {
+            bail!("empty detection pattern group");
+        }
+        let atoms = atoms
+            .into_iter()
+            .map(|text| {
+                let Some((kind, value)) = text.split_once(':') else {
+                    bail!("invalid detection pattern: {text}");
+                };
+                let kind = FactKind::parse(kind)?;
+                let valid = match kind {
+                    FactKind::File | FactKind::Source => !value.is_empty() && !value.contains('/'),
+                    FactKind::Dependency | FactKind::Identity => value
+                        .split_once(':')
+                        .is_some_and(|(ecosystem, name)| !ecosystem.is_empty() && !name.is_empty()),
+                    FactKind::Package | FactKind::Workspace => !value.is_empty(),
+                };
+                if !valid {
+                    bail!("invalid detection pattern: {text}");
+                }
+                Ok(Atom {
+                    kind,
+                    value: value.to_owned(),
+                    file: FilePattern::new(value),
+                    text,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Pattern { atoms })
+    }
+}
+
+impl Pattern {
+    fn matches(&self, node: &Node) -> bool {
+        self.atoms.iter().all(|atom| atom.matched(node).is_some())
+    }
 }
 
 pub struct Rules {
+    pub catalog: Catalog,
     rules: Vec<Rule>,
-    files: HashMap<String, Vec<usize>>,
-    sources: HashMap<String, Vec<usize>>,
-    dependencies: HashMap<String, Vec<usize>>,
-    identities: HashMap<String, Vec<usize>>,
-    workspaces: HashMap<String, Vec<usize>>,
-    packages: HashMap<String, Vec<usize>>,
-    wildcard_files: Vec<(String, usize)>,
-    file_patterns: BTreeSet<String>,
-    wildcard_interest: BTreeSet<String>,
+    indexes: [HashMap<String, Vec<usize>>; 6],
+    wildcard_files: Vec<(FilePattern, usize)>,
+    file_interest: BTreeSet<String>,
+    wildcard_interest: Vec<FilePattern>,
     source_interest: BTreeSet<String>,
 }
 
@@ -90,191 +197,147 @@ impl Rules {
     pub fn new(extra: Option<&str>) -> Result<Self> {
         let mut document: Document = toml::from_str(include_str!("rules.toml"))?;
         if let Some(extra) = extra {
-            document
-                .rules
-                .extend(toml::from_str::<Document>(extra)?.rules);
+            let extra: Document = toml::from_str(extra)?;
+            document.rules.extend(extra.rules);
+            document.catalog.extend(extra.catalog);
         }
         let mut ids = BTreeSet::new();
-        for rule in &document.rules {
-            if rule.id.is_empty() || rule.language.is_empty() || !ids.insert(&rule.id) {
-                bail!("empty or duplicate detection rule: {}", rule.id);
-            }
-            if rule.any.is_empty() && rule.all.is_empty() {
-                bail!("rule {} needs an any or all pattern", rule.id);
-            }
-            for pattern in rule.any.iter().chain(&rule.all).chain(&rule.none) {
-                if pattern.atoms().is_empty() {
-                    bail!("empty pattern group in rule {}", rule.id);
-                }
-                for pattern in pattern.atoms() {
-                    let valid = match pattern.split_once(':') {
-                        Some(("file" | "source", value)) => {
-                            !value.is_empty() && !value.contains('/')
-                        }
-                        Some(("dep" | "identity", value)) => {
-                            value.split_once(':').is_some_and(|(ecosystem, name)| {
-                                !ecosystem.is_empty() && !name.is_empty()
-                            })
-                        }
-                        Some(("package", "cargo" | "dotnet" | "maven" | "gradle")) => true,
-                        Some(("workspace", value)) => {
-                            matches!(
-                                value,
-                                "cargo" | "node" | "go" | "python" | "dotnet" | "maven" | "gradle"
-                            )
-                        }
-                        _ => false,
-                    };
-                    if !valid {
-                        bail!("invalid pattern {pattern:?} in rule {}", rule.id);
-                    }
-                }
-            }
-        }
-        document
-            .rules
-            .sort_by(|a, b| b.priority.cmp(&a.priority).then(a.id.cmp(&b.id)));
         let mut rules = Self {
-            rules: document.rules,
-            files: HashMap::new(),
-            sources: HashMap::new(),
-            dependencies: HashMap::new(),
-            identities: HashMap::new(),
-            workspaces: HashMap::new(),
-            packages: HashMap::new(),
+            catalog: Catalog::new(document.catalog)?,
+            rules: Vec::new(),
+            indexes: std::array::from_fn(|_| HashMap::new()),
             wildcard_files: Vec::new(),
-            file_patterns: BTreeSet::new(),
-            wildcard_interest: BTreeSet::new(),
+            file_interest: BTreeSet::new(),
+            wildcard_interest: Vec::new(),
             source_interest: BTreeSet::new(),
         };
-        for (i, rule) in rules.rules.iter().enumerate() {
-            for pattern in rule
+        for spec in document.rules {
+            if spec.id.is_empty() || spec.language.is_empty() || !ids.insert(spec.id.clone()) {
+                bail!("empty or duplicate detection rule: {}", spec.id);
+            }
+            if spec.any.is_empty() && spec.all.is_empty() {
+                bail!("rule {} needs an any or all pattern", spec.id);
+            }
+            let compile = |patterns: Vec<PatternSpec>| {
+                patterns
+                    .into_iter()
+                    .map(PatternSpec::compile)
+                    .collect::<Result<Vec<_>>>()
+            };
+            rules.rules.push(Rule {
+                id: spec.id,
+                language: spec.language,
+                kind: spec.kind,
+                priority: spec.priority,
+                any: compile(spec.any)?,
+                all: compile(spec.all)?,
+                none: compile(spec.none)?,
+            });
+        }
+        rules
+            .rules
+            .sort_by(|a, b| b.priority.cmp(&a.priority).then(a.id.cmp(&b.id)));
+        let mut wildcards = BTreeSet::new();
+        for (index, rule) in rules.rules.iter().enumerate() {
+            for atom in rule
                 .all
                 .iter()
                 .chain(&rule.any)
                 .chain(&rule.none)
-                .flat_map(Pattern::atoms)
+                .flat_map(|p| &p.atoms)
             {
-                if let Some(value) = pattern.strip_prefix("source:") {
-                    rules.source_interest.insert(value.to_owned());
-                }
-                if let Some(value) = pattern.strip_prefix("file:") {
-                    if value.contains(['*', '?']) {
-                        rules.wildcard_interest.insert(value.to_owned());
-                    } else {
-                        rules.file_patterns.insert(value.to_owned());
+                match atom.kind {
+                    FactKind::Source => {
+                        rules.source_interest.insert(atom.value.clone());
                     }
+                    FactKind::File if matches!(atom.file, FilePattern::Exact(_)) => {
+                        rules.file_interest.insert(atom.value.clone());
+                    }
+                    FactKind::File => {
+                        wildcards.insert(atom.value.clone());
+                    }
+                    _ => (),
                 }
             }
-            for pattern in rule.all.iter().chain(&rule.any).flat_map(Pattern::atoms) {
-                let Some((kind, value)) = pattern.split_once(':') else {
-                    continue;
-                };
-                let index = match kind {
-                    "file" if value.contains(['*', '?']) => {
-                        rules.wildcard_files.push((value.to_owned(), i));
-                        continue;
-                    }
-                    "file" => &mut rules.files,
-                    "source" => &mut rules.sources,
-                    "dep" => &mut rules.dependencies,
-                    "identity" => &mut rules.identities,
-                    "workspace" => &mut rules.workspaces,
-                    "package" => &mut rules.packages,
-                    _ => continue,
-                };
-                index.entry(value.to_owned()).or_default().push(i);
+            for atom in rule.all.iter().chain(&rule.any).flat_map(|p| &p.atoms) {
+                if atom.kind == FactKind::File && !matches!(atom.file, FilePattern::Exact(_)) {
+                    rules
+                        .wildcard_files
+                        .push((FilePattern::new(&atom.value), index));
+                } else {
+                    rules.indexes[atom.kind as usize]
+                        .entry(atom.value.clone())
+                        .or_default()
+                        .push(index);
+                }
             }
         }
+        rules.wildcard_interest = wildcards
+            .iter()
+            .map(|pattern| FilePattern::new(pattern))
+            .collect();
         Ok(rules)
     }
+
     pub fn needs_source(&self, extension: &str) -> bool {
         self.source_interest.contains(extension)
     }
-
     pub fn needs_filename(&self, name: &str) -> bool {
-        self.file_patterns.contains(name) || self.wildcard_interest.iter().any(|p| glob(p, name))
+        self.file_interest.contains(name)
+            || self
+                .wildcard_interest
+                .iter()
+                .any(|pattern| pattern.matches(name))
     }
 
     pub fn evaluate(&self, node: &Node) -> Vec<Detection> {
         let mut candidates = Vec::new();
-        for file in &node.files {
-            if let Some(ids) = self.files.get(file) {
+        let facts = node
+            .files
+            .iter()
+            .map(|s| (FactKind::File, s.as_str()))
+            .chain(node.sources.keys().map(|s| (FactKind::Source, s.as_str())))
+            .chain(
+                node.dependencies
+                    .keys()
+                    .map(|s| (FactKind::Dependency, s.as_str())),
+            )
+            .chain(
+                node.identities
+                    .keys()
+                    .map(|s| (FactKind::Identity, s.as_str())),
+            )
+            .chain(
+                node.packages
+                    .keys()
+                    .map(|s| (FactKind::Package, s.as_str())),
+            )
+            .chain(
+                node.workspaces
+                    .iter()
+                    .map(|w| (FactKind::Workspace, w.ecosystem.as_str())),
+            );
+        for (kind, value) in facts {
+            if let Some(ids) = self.indexes[kind as usize].get(value) {
                 candidates.extend(ids);
             }
         }
-        for source in node.sources.keys() {
-            if let Some(ids) = self.sources.get(source) {
-                candidates.extend(ids);
-            }
-        }
-        for dependency in node.dependencies.keys() {
-            if let Some(ids) = self.dependencies.get(dependency) {
-                candidates.extend(ids);
-            }
-        }
-        for identity in node.identities.keys() {
-            if let Some(ids) = self.identities.get(identity) {
-                candidates.extend(ids);
-            }
-        }
-        for package in node.packages.keys() {
-            if let Some(ids) = self.packages.get(package) {
-                candidates.extend(ids);
-            }
-        }
-        for workspace in &node.workspaces {
-            if let Some(ids) = self.workspaces.get(&workspace.ecosystem) {
-                candidates.extend(ids);
-            }
-        }
-        for (pattern, id) in &self.wildcard_files {
-            if node.files.iter().any(|file| glob(pattern, file)) {
-                candidates.push(id);
+        for (pattern, index) in &self.wildcard_files {
+            if node.files.iter().any(|file| pattern.matches(file)) {
+                candidates.push(index);
             }
         }
         candidates.sort_unstable();
         candidates.dedup();
         candidates
             .into_iter()
-            .filter_map(|&i| {
-                let rule = &self.rules[i];
-                rule.evaluate(node).map(|evidence| Detection {
-                    id: rule.id.clone(),
-                    language: rule.language.clone(),
-                    kind: rule.kind,
-                    priority: rule.priority,
-                    roles: if rule.kind == Kind::Framework {
-                        let mut roles = evidence
-                            .iter()
-                            .filter_map(|e| {
-                                if e.pattern.starts_with("identity:") {
-                                    Some(FrameworkRole::Provides)
-                                } else if e.pattern.starts_with("dep:") {
-                                    Some(FrameworkRole::Uses)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>();
-                        if roles.is_empty() {
-                            roles.push(FrameworkRole::Uses);
-                        }
-                        roles.sort();
-                        roles.dedup();
-                        roles
-                    } else {
-                        Vec::new()
-                    },
-                    evidence,
-                })
-            })
+            .filter_map(|&index| self.rules[index].evaluate(node))
             .collect()
     }
 }
 
 impl Rule {
-    pub fn evaluate(&self, node: &Node) -> Option<Vec<Evidence>> {
+    fn evaluate(&self, node: &Node) -> Option<Detection> {
         if !self.all.iter().all(|p| p.matches(node))
             || (!self.any.is_empty() && !self.any.iter().any(|p| p.matches(node)))
             || self.none.iter().any(|p| p.matches(node))
@@ -282,16 +345,40 @@ impl Rule {
             return None;
         }
         let mut evidence = Vec::new();
-        for pattern in self.all.iter().chain(&self.any).filter(|p| p.matches(node)) {
-            for atom in pattern.atoms() {
-                if let Some(found) = matched(node, atom) {
-                    found.evidence(node, atom, &mut evidence);
+        let mut roles = Vec::new();
+        for atom in self
+            .all
+            .iter()
+            .chain(&self.any)
+            .filter(|p| p.matches(node))
+            .flat_map(|p| &p.atoms)
+        {
+            if let Some(found) = atom.matched(node) {
+                found.evidence(node, &atom.text, &mut evidence);
+                match atom.kind {
+                    FactKind::Identity => roles.push(FrameworkRole::Provides),
+                    FactKind::Dependency => roles.push(FrameworkRole::Uses),
+                    _ => (),
                 }
             }
         }
         evidence.sort();
         evidence.dedup();
-        Some(evidence)
+        roles.sort();
+        roles.dedup();
+        if self.kind != Kind::Framework {
+            roles.clear();
+        } else if roles.is_empty() {
+            roles.push(FrameworkRole::Uses);
+        }
+        Some(Detection {
+            id: self.id.clone(),
+            language: self.language.clone(),
+            kind: self.kind,
+            priority: self.priority,
+            roles,
+            evidence,
+        })
     }
 }
 
@@ -327,33 +414,35 @@ impl Matched<'_> {
     }
 }
 
-fn matched<'a>(node: &'a Node, pattern: &str) -> Option<Matched<'a>> {
-    let (kind, value) = pattern.split_once(':')?;
-    match kind {
-        "file" => {
-            let name = if value.contains(['*', '?']) {
-                node.files.iter().find(|name| glob(value, name))
-            } else {
-                node.files.get(value)
-            };
-            name.map(|name| Matched::File(name))
+impl Atom {
+    fn matched<'a>(&self, node: &'a Node) -> Option<Matched<'a>> {
+        match self.kind {
+            FactKind::File => {
+                let file = if matches!(self.file, FilePattern::Exact(_)) {
+                    node.files.get(&self.value)
+                } else {
+                    node.files.iter().find(|name| self.file.matches(name))
+                };
+                file.map(|name| Matched::File(name))
+            }
+            FactKind::Source => node
+                .sources
+                .get(&self.value)
+                .map(|name| Matched::File(name)),
+            FactKind::Dependency => node.dependencies.get(&self.value).map(Matched::Dependency),
+            FactKind::Identity => node.identities.get(&self.value).map(Matched::Dependency),
+            FactKind::Package => node
+                .packages
+                .get(&self.value)
+                .map(|source| Matched::Package(source)),
+            FactKind::Workspace => node
+                .workspaces
+                .iter()
+                .find(|w| w.ecosystem == self.value)
+                .map(Matched::Workspace),
         }
-        "source" => node.sources.get(value).map(|name| Matched::File(name)),
-        "dep" => node.dependencies.get(value).map(Matched::Dependency),
-        "identity" => node.identities.get(value).map(Matched::Dependency),
-        "package" => node
-            .packages
-            .get(value)
-            .map(|source| Matched::Package(source)),
-        "workspace" => node
-            .workspaces
-            .iter()
-            .find(|w| w.ecosystem == value)
-            .map(Matched::Workspace),
-        _ => None,
     }
 }
-
 pub fn glob(pattern: &str, value: &str) -> bool {
     let (p, v) = (pattern.as_bytes(), value.as_bytes());
     let (mut i, mut j, mut star, mut retry) = (0, 0, None, 0);

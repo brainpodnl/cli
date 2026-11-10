@@ -1062,3 +1062,161 @@ fn provider_file_guards_do_not_imply_framework_consumption() {
         [super::FrameworkRole::Provides]
     );
 }
+
+#[test]
+fn custom_manifest_registration_emits_facts_without_a_new_parser() {
+    let dir = fixture(&[
+        (
+            "service.meta.json",
+            r#"{"project":{"name":"platform","version":"1.0"},"uses":{"next":"16"},"runtime":{"node":">=26"},"modules":["services/*"]}"#,
+        ),
+        (
+            "services/api/service.meta.json",
+            r#"{"project":{"name":"api"},"runtime":{"node":">=24"}}"#,
+        ),
+        ("unrelated.json", "not a manifest and must not be parsed"),
+    ]);
+    let config = r#"
+[[catalog.manifests]]
+id = "service-meta"
+files = ["service.meta.json"]
+reader = "json"
+package = "service-meta"
+names = ["/project/name"]
+[catalog.manifests.identity]
+ecosystem = "company"
+paths = ["/project/name"]
+versions = ["/project/version"]
+[[catalog.manifests.dependencies]]
+ecosystem = "npm"
+paths = ["/uses"]
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "requirement"
+paths = ["/runtime/node"]
+[[catalog.manifests.workspaces]]
+ecosystem = "service-meta"
+present = "/modules"
+members = ["/modules"]
+[[catalog.workspaces]]
+ecosystem = "service-meta"
+package = "service-meta"
+[[rules]]
+id = "company-project"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["package:service-meta"]
+[[rules]]
+id = "company-workspace"
+language = "javascript"
+kind = "workspace"
+priority = 20
+any = ["workspace:service-meta"]
+"#;
+    let report = scan(dir.path(), Some(config)).unwrap();
+    assert!(report.diagnostics.is_empty(), "{report:#?}");
+    assert_eq!(report.stats.files_read, 2);
+    let root = project(&report, ".");
+    assert_eq!(root.names, ["platform"]);
+    assert!(detects(root, "nextjs"));
+    assert!(detects(root, "company-workspace"));
+    assert_eq!(root.workspace_members, ["services/api"]);
+    assert!(version(root, "javascript", ">=26", "service.meta.json"));
+    assert!(version(
+        project(&report, "services/api"),
+        "javascript",
+        ">=24",
+        "services/api/service.meta.json"
+    ));
+}
+
+#[test]
+fn xml_property_and_reference_policies_are_extensible_in_toml() {
+    let dir = fixture(&[(
+        "App.csproj",
+        "<Project Sdk='Microsoft.NET.Sdk'><PropertyGroup><CompanyCompilerLevel>15.0</CompanyCompilerLevel></PropertyGroup><ItemGroup><CompanyReference Include='Company.Web' Version='2.1'/></ItemGroup></Project>",
+    )]);
+    let config = r#"
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["companycompilerlevel"]
+language = "csharp"
+kind = "language"
+[catalog.reference_kinds.CompanyReference]
+ecosystem = "company"
+normalize = "lowercase"
+[[rules]]
+id = "company-web"
+language = "csharp"
+kind = "framework"
+priority = 100
+any = ["dep:company:company.web"]
+"#;
+    let report = scan(dir.path(), Some(config)).unwrap();
+    assert!(report.diagnostics.is_empty(), "{report:#?}");
+    let app = project(&report, ".");
+    assert!(version(app, "csharp", "15.0", "App.csproj"));
+    assert!(detects(app, "company-web"));
+    assert_eq!(
+        app.detections
+            .iter()
+            .find(|d| d.id == "company-web")
+            .unwrap()
+            .roles,
+        [super::FrameworkRole::Uses]
+    );
+}
+
+#[test]
+fn manifest_schema_errors_are_rejected_before_scanning() {
+    let config = "[[catalog.manifests]]\nid='custom'\nfiles=['custom.json']\nreader='json'\n";
+    for invalid in [
+        config.replace("reader='json'", "reader='command'"),
+        config.replace("custom.json", "../custom.json"),
+        format!("{config}{config}"),
+        format!("{config}names=['not-a-pointer']\n"),
+        format!("{config}unknown_option=true\n"),
+        "[[catalog.manifests]]\nid='conflict'\nfiles=['package.json']\nreader='toml'\n".to_owned(),
+        "[[catalog.property_versions]]\nreader='msbuid'\nfields=['newfield']\nlanguage='csharp'\nkind='language'\n".to_owned(),
+    ] {
+        let error = scan(
+            std::path::Path::new("/nonexistent-detection-fixture"),
+            Some(&invalid),
+        )
+        .unwrap_err();
+        assert!(!error.to_string().contains("could not open"), "{error}");
+    }
+}
+
+#[test]
+fn compiled_basename_patterns_preserve_glob_matching() {
+    for pattern in [
+        "*.csproj",
+        "requirements*.txt",
+        "a*b",
+        "a?b",
+        "a**b",
+        "Cargo.toml",
+        "ab*bc",
+    ] {
+        let compiled = super::rules::FilePattern::new(pattern);
+        for value in [
+            "App.csproj",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "ab",
+            "a123b",
+            "Cargo.toml",
+            "abc",
+            "abbc",
+            "",
+        ] {
+            assert_eq!(
+                compiled.matches(value),
+                super::rules::glob(pattern, value),
+                "{pattern}: {value}"
+            );
+        }
+    }
+}

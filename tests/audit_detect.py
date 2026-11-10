@@ -184,7 +184,9 @@ def main():
         type=Path,
         default=Path(__file__).resolve().parents[1] / "target/release/brainpod",
     )
-    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument(
+        "--cache", type=Path, help="Snapshot cache; required unless --list"
+    )
     parser.add_argument(
         "--fetch",
         action="store_true",
@@ -196,16 +198,29 @@ def main():
         default=5,
         help="CLI invocations per repository; the first is excluded from the warm median",
     )
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--output", type=Path, help="Results JSON; required unless --list"
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List pinned repositories without downloading or running the detector",
+    )
     args = parser.parse_args()
+    corpus = json.loads(args.corpus.read_text())
+    if corpus["schemaVersion"] != 1:
+        parser.error("unsupported corpus schema version")
+    if args.list:
+        for entry in corpus["repositories"]:
+            print(f"{entry['language']}\t{entry['repository']}\t{entry['revision']}")
+        return 0
+    if args.cache is None or args.output is None:
+        parser.error("--cache and --output are required unless --list")
     if args.runs < 2:
         parser.error("--runs must be at least 2")
     args.binary = args.binary.resolve(strict=True)
     args.cache = args.cache.resolve()
     args.cache.mkdir(parents=True, exist_ok=True)
-    corpus = json.loads(args.corpus.read_text())
-    if corpus["schemaVersion"] != 1:
-        parser.error("unsupported corpus schema version")
     with args.binary.open("rb") as binary:
         binary_sha = hashlib.file_digest(binary, "sha256").hexdigest()
     results = []

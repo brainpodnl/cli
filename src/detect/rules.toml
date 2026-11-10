@@ -1,3 +1,472 @@
+[catalog.scan]
+ignore = [".git", ".jj", ".svn", "node_modules", "vendor", "target", ".venv", ".gradle", ".vs", "venv", "__pycache__", ".next", ".nuxt", ".output", "dist", "build", "coverage", ".bundle", ".brainpod", ".cache", "site-packages"]
+
+[[catalog.scan.prune]]
+when_files = ["*.csproj"]
+directories = ["bin", "obj"]
+
+[catalog.families]
+javascript = "node"
+typescript = "node"
+
+[[catalog.inheritance]]
+kind = "pin"
+
+[[catalog.inheritance]]
+kind = "toolchain"
+
+[[catalog.inheritance]]
+kind = "sdk"
+boundary_files = ["global.json"]
+
+[[catalog.workspaces]]
+ecosystem = "cargo"
+files = ["Cargo.toml"]
+
+[[catalog.workspaces]]
+ecosystem = "go"
+files = ["go.mod"]
+
+[[catalog.workspaces]]
+ecosystem = "node"
+files = ["package.json"]
+
+[[catalog.workspaces]]
+ecosystem = "python"
+files = ["pyproject.toml"]
+
+[[catalog.workspaces]]
+ecosystem = "maven"
+files = ["pom.xml"]
+
+[[catalog.workspaces]]
+ecosystem = "dotnet"
+package = "dotnet"
+
+[[catalog.workspaces]]
+ecosystem = "gradle"
+package = "gradle"
+
+[catalog.reference_kinds.PackageReference]
+ecosystem = "nuget"
+normalize = "lowercase"
+
+[catalog.reference_kinds.PackageVersion]
+ecosystem = "nuget"
+normalize = "lowercase"
+catalog = true
+
+[catalog.reference_kinds.FrameworkReference]
+ecosystem = "dotnet-framework"
+normalize = "lowercase"
+
+[catalog.reference_kinds.Reference]
+ecosystem = "dotnet-reference"
+normalize = "lowercase"
+separator = ","
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["targetframework", "targetframeworks", "targetframeworkversion"]
+language = "csharp"
+kind = "target"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["langversion"]
+language = "csharp"
+kind = "language"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["runtimeframeworkversion"]
+language = "csharp"
+kind = "runtime"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["java.version"]
+language = "java"
+kind = "requirement"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.release"]
+language = "java"
+kind = "release"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.source"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.target"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["release"]
+language = "java"
+kind = "release"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["source"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["target"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["sourceCompatibility"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["targetCompatibility"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["languageVersion", "languageVersion.set"]
+language = "java"
+kind = "toolchain"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["options.release", "options.release.set"]
+language = "java"
+kind = "release"
+
+[[catalog.manifests]]
+id = "composer"
+files = ["composer.json"]
+reader = "json"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "composer"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.dependencies]]
+ecosystem = "composer"
+paths = ["/require"]
+[[catalog.manifests.versions]]
+language = "php"
+kind = "requirement"
+paths = ["/require/php"]
+[[catalog.manifests.versions]]
+language = "php"
+kind = "platform"
+paths = ["/config/platform/php"]
+
+[[catalog.manifests]]
+id = "npm"
+files = ["package.json"]
+reader = "json"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "npm"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.dependencies]]
+ecosystem = "npm"
+paths = ["/devDependencies", "/dependencies"]
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "requirement"
+paths = ["/engines/node"]
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+paths = ["/volta/node"]
+[[catalog.manifests.versions]]
+language = "typescript"
+kind = "requirement"
+dependency = "npm:typescript"
+reference_prefix = "catalog:"
+[[catalog.manifests.workspaces]]
+ecosystem = "node"
+present = "/workspaces"
+members = ["/workspaces/packages", "/workspaces"]
+
+[[catalog.manifests]]
+id = "cargo"
+files = ["Cargo.toml"]
+reader = "toml"
+resolver = "cargo"
+package = "cargo"
+package_path = "/package"
+names = ["/package/name"]
+[catalog.manifests.identity]
+ecosystem = "cargo"
+paths = ["/package/name"]
+versions = ["/package/version"]
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "requirement"
+paths = ["/package/rust-version"]
+[[catalog.manifests.workspaces]]
+ecosystem = "cargo"
+present = "/workspace"
+members = ["/workspace/members"]
+exclude = ["/workspace/exclude"]
+
+[[catalog.manifests]]
+id = "python"
+files = ["pyproject.toml"]
+reader = "toml"
+names = ["/project/name", "/tool/poetry/name"]
+[catalog.manifests.identity]
+ecosystem = "pypi"
+paths = ["/project/name", "/tool/poetry/name"]
+versions = ["/project/version", "/tool/poetry/version"]
+normalize = "python"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/project/dependencies"]
+requirements = true
+normalize = "python"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/tool/poetry/dependencies"]
+exclude = ["python"]
+normalize = "python"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/project/requires-python"]
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/tool/poetry/dependencies/python"]
+[[catalog.manifests.workspaces]]
+ecosystem = "python"
+present = "/tool/uv/workspace"
+members = ["/tool/uv/workspace/members"]
+exclude = ["/tool/uv/workspace/exclude"]
+
+[[catalog.manifests]]
+id = "pipenv"
+files = ["Pipfile"]
+reader = "toml"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/packages"]
+normalize = "python"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/requires/python_full_version", "/requires/python_version"]
+
+[[catalog.manifests]]
+id = "pnpm"
+files = ["pnpm-workspace.yaml"]
+reader = "pnpm"
+
+[[catalog.manifests]]
+id = "go-module"
+files = ["go.mod"]
+reader = "go"
+
+[[catalog.manifests]]
+id = "go-workspace"
+files = ["go.work"]
+reader = "go"
+workspace = "go"
+
+[[catalog.manifests]]
+id = "bundler"
+files = ["Gemfile"]
+reader = "gemfile"
+
+[[catalog.manifests]]
+id = "rubygems"
+files = ["*.gemspec"]
+reader = "gemspec"
+
+[[catalog.manifests]]
+id = "requirements"
+files = ["requirements*.txt"]
+reader = "requirements"
+
+[[catalog.manifests]]
+id = "ruby-pin"
+files = [".ruby-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "ruby"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "python-pin"
+files = [".python-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "node-pin"
+files = [".node-version", ".nvmrc"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "rust-pin"
+files = ["rust-toolchain"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "go-pin"
+files = [".go-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "go"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "php-pin"
+files = [".php-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "php"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "java-pin"
+files = [".java-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "rust-toolchain"
+files = ["rust-toolchain.toml"]
+reader = "toml"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "toolchain"
+paths = ["/toolchain/channel"]
+
+[[catalog.manifests]]
+id = "tool-versions"
+files = [".tool-versions"]
+reader = "tools"
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+key = "nodejs"
+[[catalog.manifests.versions]]
+language = "go"
+kind = "pin"
+key = "golang"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+key = "java"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "pin"
+key = "python"
+[[catalog.manifests.versions]]
+language = "ruby"
+kind = "pin"
+key = "ruby"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "pin"
+key = "rust"
+[[catalog.manifests.versions]]
+language = "php"
+kind = "pin"
+key = "php"
+
+[[catalog.manifests]]
+id = "sdkman"
+files = [".sdkmanrc"]
+reader = "properties"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+key = "java"
+
+[[catalog.manifests]]
+id = "dotnet-sdk"
+files = ["global.json"]
+reader = "json"
+[[catalog.manifests.versions]]
+language = "csharp"
+kind = "sdk"
+paths = ["/sdk/version"]
+
+[[catalog.manifests]]
+id = "dotnet-project"
+files = ["*.csproj"]
+reader = "msbuild"
+package = "dotnet"
+
+[[catalog.manifests]]
+id = "solution-xml"
+files = ["*.slnx"]
+reader = "msbuild"
+workspace = "dotnet"
+
+[[catalog.manifests]]
+id = "msbuild-metadata"
+files = ["*.props", "*.targets"]
+reader = "msbuild"
+
+[[catalog.manifests]]
+id = "solution"
+files = ["*.sln"]
+reader = "solution"
+workspace = "dotnet"
+
+[[catalog.manifests]]
+id = "maven"
+files = ["pom.xml"]
+reader = "maven"
+
+[[catalog.manifests]]
+id = "gradle"
+files = ["*.gradle", "*.gradle.kts"]
+reader = "gradle"
+
+[[catalog.manifests]]
+id = "gradle-properties"
+files = ["gradle.properties"]
+reader = "gradle-properties"
+
+[[catalog.manifests]]
+id = "gradle-jvm"
+files = ["gradle-daemon-jvm.properties"]
+reader = "gradle-jvm"
+
+[[catalog.manifests]]
+id = "version-catalog"
+files = ["*.versions.toml"]
+reader = "version-catalog"
+
 [[rules]]
 id = "composer"
 language = "php"

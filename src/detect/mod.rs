@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde::Serialize;
 
+mod catalog;
 mod dotnet;
 mod gradle;
 mod java;
@@ -25,30 +26,6 @@ use rules::{Kind, Rules};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_DEPTH: usize = 128;
-const IGNORED: &[&str] = &[
-    ".git",
-    ".jj",
-    ".svn",
-    "node_modules",
-    "vendor",
-    "target",
-    ".venv",
-    ".gradle",
-    ".vs",
-    "venv",
-    "__pycache__",
-    ".next",
-    ".nuxt",
-    ".output",
-    "dist",
-    "build",
-    "coverage",
-    ".bundle",
-    ".brainpod",
-    ".cache",
-    "site-packages",
-];
-
 #[derive(Debug, Args)]
 pub struct DetectArgs {
     /// Repository or project directory to inspect without executing project code
@@ -246,7 +223,7 @@ impl Inventory {
                 continue;
             };
             if ty.is_dir() {
-                if IGNORED.contains(&name.as_str()) {
+                if rules.catalog.ignored(&name) {
                     self.stats.skipped_directories += 1;
                 } else if depth == MAX_DEPTH {
                     self.diagnostics.push(Diagnostic {
@@ -270,7 +247,8 @@ impl Inventory {
                         })
                         .or_insert_with(|| name.clone());
                 }
-                if parsers::readable(&name) {
+                let readable = rules.catalog.readable(&name);
+                if readable {
                     let file = File::open(entry.path())?;
                     let mut bytes = Vec::new();
                     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
@@ -291,25 +269,21 @@ impl Inventory {
                         }),
                     }
                 }
-                if parsers::readable(&name) || rules.needs_filename(&name) {
+                if readable || rules.needs_filename(&name) {
                     node.files.insert(name);
                 }
             }
         }
-        if node.files.iter().any(|file| file.ends_with(".csproj")) {
-            children.retain(|(path, _)| {
-                let output = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.eq_ignore_ascii_case("bin") || name.eq_ignore_ascii_case("obj")
-                    });
-                if output {
-                    self.stats.skipped_directories += 1;
-                }
-                !output
-            });
-        }
+        children.retain(|(path, _)| {
+            let prune = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| rules.catalog.pruned(&node, name));
+            if prune {
+                self.stats.skipped_directories += 1;
+            }
+            !prune
+        });
         if !node.files.is_empty() || !node.sources.is_empty() {
             node.path = path.to_path_buf();
             self.nodes.push(node);
@@ -430,7 +404,7 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
     report.diagnostics = diagnostics;
     report.stats = stats;
     let original_nodes = nodes.len();
-    parsers::parse(&mut nodes, &mut report.diagnostics);
+    parsers::parse(&mut nodes, &rules.catalog, &mut report.diagnostics);
     if nodes.len() != original_nodes {
         index_parents(&mut nodes);
     }
@@ -467,7 +441,9 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         while let Some(i) = ancestor {
             if let Some(project_index) = project_indices[i]
                 && projects[project_index].1.detections.iter().any(|d| {
-                    d.kind != Kind::Workspace && family(&d.language) == family(&detection.language)
+                    d.kind != Kind::Workspace
+                        && rules.catalog.family(&d.language)
+                            == rules.catalog.family(&detection.language)
                 })
             {
                 owner = Some(project_index);
@@ -508,28 +484,25 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         for language in languages {
             let mut versions = Vec::new();
             let mut ancestor = Some(*index);
-            let mut sdk_scope_seen = false;
+            let mut boundaries = BTreeSet::new();
             while let Some(i) = ancestor {
                 if let Some(found) = nodes[i].versions.get(&language) {
                     versions.extend(
                         found
                             .iter()
                             .filter(|v| {
-                                if v.kind == "sdk" {
-                                    return !sdk_scope_seen;
-                                }
-                                i == *index || v.kind == "pin" || v.kind == "toolchain"
+                                (i == *index || rules.catalog.inherited(&v.kind))
+                                    && !boundaries.contains(v.kind.as_str())
                             })
                             .cloned(),
                     );
                 }
-                if nodes[i].files.contains("global.json") {
-                    sdk_scope_seen = true;
-                }
+                boundaries.extend(rules.catalog.boundaries(&nodes[i]));
                 ancestor = nodes[i].parent;
             }
             let mut seen = BTreeSet::new();
             versions.retain(|v| seen.insert(v.clone()));
+            versions.sort();
             project.languages.push(Language {
                 name: language,
                 versions,
@@ -544,21 +517,8 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         if project_indices[index].is_none() {
             continue;
         }
-        for ecosystem in ["dotnet", "gradle"] {
-            if node.packages.contains_key(ecosystem) {
-                candidates.entry(ecosystem).or_default().push(index);
-            }
-        }
-        for (ecosystem, file) in [
-            ("cargo", "Cargo.toml"),
-            ("go", "go.mod"),
-            ("node", "package.json"),
-            ("python", "pyproject.toml"),
-            ("maven", "pom.xml"),
-        ] {
-            if node.files.contains(file) {
-                candidates.entry(ecosystem).or_default().push(index);
-            }
+        for ecosystem in rules.catalog.workspace_candidates(node) {
+            candidates.entry(ecosystem).or_default().push(index);
         }
     }
     for (index, project) in &mut projects {
@@ -591,13 +551,6 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         .diagnostics
         .sort_by(|a, b| a.path.cmp(&b.path).then(a.message.cmp(&b.message)));
     Ok(report)
-}
-
-fn family(language: &str) -> &str {
-    match language {
-        "typescript" | "javascript" => "node",
-        other => other,
-    }
 }
 
 fn display_path(path: &Path) -> String {

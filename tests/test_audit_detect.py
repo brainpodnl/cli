@@ -83,6 +83,44 @@ class DetectionAuditTests(unittest.TestCase):
         expected["versionKind"] = "sdk"
         self.assertTrue(audit_detect.check({".": self.project}, expected)[0])
 
+    def test_listing_needs_no_binary_cache_or_network(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("urllib.request.urlopen") as request,
+        ):
+            corpus = Path(directory) / "corpus.json"
+            corpus.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "repositories": [
+                            {
+                                "language": "Java",
+                                "repository": "owner/app",
+                                "revision": "a" * 40,
+                            }
+                        ],
+                    }
+                )
+            )
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "audit_detect.py",
+                        "--corpus",
+                        str(corpus),
+                        "--binary",
+                        "/missing/binary",
+                        "--list",
+                    ],
+                ),
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                self.assertEqual(audit_detect.main(), 0)
+            self.assertIn("Java\towner/app\t" + "a" * 40, output.getvalue())
+            request.assert_not_called()
+
     def archive(self, path="repo/package.json", size=None):
         data = b"{}" if size is None else b"x" * size
         output = io.BytesIO()
