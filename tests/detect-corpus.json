@@ -456,6 +456,35 @@
           "path": ".",
           "id": "laravel"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "APP_ENV",
+          "project": ".",
+          "source": ".env.development.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "APP_DEBUG",
+          "project": ".",
+          "source": "docker-compose.dev-multi.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "COOLIFY_VERSION",
+          "project": ".",
+          "source": "docker/production/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -654,6 +683,44 @@
           "path": "autogpt_platform/frontend",
           "id": "nextjs"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "POSTGRES_HOST",
+          "project": "autogpt_platform",
+          "source": "autogpt_platform/.env.default",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "CLAMAV_NO_FRESHCLAMD",
+          "project": "autogpt_platform/backend",
+          "source": "autogpt_platform/backend/docker-compose.test.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "CGO_ENABLED",
+          "project": null,
+          "source": ".github/actions/start-minio/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "ARG1",
+          "project": null,
+          "source": ".github/workflows/batch-command-handler.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -758,6 +825,44 @@
           "value": "npm:@typescript/typescript6@6.0.2",
           "source": "pnpm-workspace.yaml"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "SECRET_KEY",
+          "project": "api",
+          "source": "api/.env.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dotenv",
+          "name": "NEXT_PUBLIC_API_PREFIX",
+          "project": "web",
+          "source": "web/.env.example",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "MYSQL_DATABASE",
+          "project": "docker",
+          "source": "docker/docker-compose.middleware.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "FLASK_APP",
+          "project": "api",
+          "source": "api/Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -805,6 +910,22 @@
           "kind": "detection",
           "path": "src/backend/base",
           "id": "starlette"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "kubernetes",
+          "name": "LANGFLOW_DATABASE_URL",
+          "project": ".",
+          "reference": {
+            "key": "database-url",
+            "kind": "secret-key",
+            "target": "langflow-secrets"
+          },
+          "source": "deploy/listeners/kubernetes-deployment.yaml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment"
         }
       ]
     },
@@ -1056,6 +1177,47 @@
           "id": "cargo-workspace",
           "member": "macros"
         }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "DC_ENV_FILE",
+          "project": "playwright",
+          "source": "playwright/.env.template",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "project": "playwright",
+          "reference": {
+            "kind": "env-file"
+          },
+          "source": "playwright/docker-compose.yml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment",
+          "name": null
+        },
+        {
+          "format": "dockerfile",
+          "name": "LANG",
+          "project": ".",
+          "source": "docker/Dockerfile.alpine",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "RUSTFLAGS",
+          "project": ".",
+          "source": ".github/workflows/build.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        }
       ]
     },
     {
@@ -1145,6 +1307,43 @@
           "path": ".",
           "id": "cargo-workspace",
           "member": "crates/router"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "compose",
+          "name": "HYPERSWITCH_SERVER_URL",
+          "project": ".",
+          "source": "docker-compose.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "dockerfile",
+          "name": "CARGO_INCREMENTAL",
+          "project": ".",
+          "source": "Dockerfile",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "CARGO_INCREMENTAL",
+          "project": ".",
+          "source": ".github/workflows/CI-pr.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "name": "EXTRA_FEATURES",
+          "source": "Dockerfile",
+          "format": "dockerfile",
+          "absent": true
         }
       ]
     },
@@ -1268,6 +1467,35 @@
           "path": ".",
           "id": "node-workspace",
           "member": "api"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "dotenv",
+          "name": "MONGOHQ_URL",
+          "project": ".",
+          "source": "sample.env",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "compose",
+          "name": "GATSBY_HOST",
+          "project": ".",
+          "source": ".devcontainer/docker-compose.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "github-actions",
+          "name": "CROWDIN_PERSONAL_TOKEN",
+          "project": ".",
+          "source": ".github/workflows/crowdin-download.client-ui.yml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
         }
       ]
     },
@@ -1416,6 +1644,37 @@
           "kind": "detection",
           "path": "apps/api",
           "id": "express"
+        }
+      ],
+      "environmentChecks": [
+        {
+          "format": "kubernetes",
+          "name": "PORT",
+          "project": "examples",
+          "source": "examples/kubernetes/cluster-install/api.yaml",
+          "state": "declared",
+          "kind": "environment",
+          "category": "environment"
+        },
+        {
+          "format": "kubernetes",
+          "project": "examples",
+          "reference": {
+            "kind": "config-map",
+            "target": "firecrawl-config"
+          },
+          "source": "examples/kubernetes/cluster-install/api.yaml",
+          "state": "unresolved",
+          "kind": "environment",
+          "category": "environment",
+          "name": null
+        },
+        {
+          "kind": "environment",
+          "category": "environment",
+          "name": "apiKey",
+          "format": "kubernetes",
+          "absent": true
         }
       ]
     },

@@ -86,7 +86,19 @@ def snapshot(entry, cache, fetch):
     return destination
 
 
-def check(projects, expected):
+def check(projects, expected, environment=None):
+    if expected["kind"] == "environment":
+        fields = {
+            key: value
+            for key, value in expected.items()
+            if key not in {"kind", "category", "absent"}
+        }
+        actual = [
+            declaration
+            for declaration in environment or []
+            if all(declaration.get(key) == value for key, value in fields.items())
+        ]
+        return (not actual if expected.get("absent") else bool(actual)), actual
     project = projects.get(expected["path"])
     if project is None:
         return False, "project missing"
@@ -177,13 +189,16 @@ def check(projects, expected):
 
 
 def audit(entry, args):
-    path = snapshot(entry, args.cache, args.fetch)
+    path = snapshot(entry, args.cache, args.fetch).resolve(strict=True)
     samples, first = [], None
     deterministic = True
     for _ in range(args.runs):
         start = time.perf_counter()
+        command = [str(args.binary), "detect", str(path), "--json"]
+        if args.with_env:
+            command.append("--with-env")
         process = subprocess.run(
-            [str(args.binary), "detect", str(path), "--json"],
+            command,
             capture_output=True,
             timeout=90,
             check=False,
@@ -200,8 +215,11 @@ def audit(entry, args):
         raise ValueError("unexpected detector schema version")
     projects = {project["path"]: project for project in report["projects"]}
     checks = []
-    for expected in entry["checks"]:
-        passed, actual = check(projects, expected)
+    expected_checks = list(entry["checks"])
+    if args.with_env:
+        expected_checks.extend(entry.get("environmentChecks", []))
+    for expected in expected_checks:
+        passed, actual = check(projects, expected, report.get("environment"))
         checks.append({"expected": expected, "passed": passed, "actual": actual})
     return {
         "repository": entry["repository"],
@@ -214,6 +232,7 @@ def audit(entry, args):
         "stats": report["stats"],
         "projectCount": len(projects),
         "diagnostics": report["diagnostics"],
+        **({"environmentCount": len(report["environment"])} if args.with_env else {}),
         "checks": checks,
     }
 
@@ -232,6 +251,11 @@ def main():
     )
     parser.add_argument(
         "--cache", type=Path, help="Snapshot cache; required unless --list"
+    )
+    parser.add_argument(
+        "--with-env",
+        action="store_true",
+        help="Include name-only environment declarations in each scan",
     )
     parser.add_argument(
         "--fetch",

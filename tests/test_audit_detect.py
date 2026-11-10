@@ -184,6 +184,21 @@ class DetectionAuditTests(unittest.TestCase):
             )[0]
         )
 
+    def test_environment_checks_preserve_source_format_and_project_scope(self):
+        declaration = {
+            "source": ".env.example", "format": "dotenv", "project": "api", "name": "TOKEN"
+        }
+        expected = {"kind": "environment", "category": "environment", **declaration}
+        self.assertTrue(audit_detect.check({}, expected, [declaration])[0])
+        for wrong in [
+            {"source": ".env"}, {"project": "web"}, {"format": "compose"}, {"name": "SECRET"}
+        ]:
+            self.assertFalse(audit_detect.check({}, {**expected, **wrong}, [declaration])[0])
+        self.assertFalse(audit_detect.check({}, expected)[0])
+        self.assertTrue(audit_detect.check({}, {**expected, "absent": True})[0])
+        unowned = {**declaration, "project": None}
+        self.assertTrue(audit_detect.check({}, {**expected, "project": None}, [unowned])[0])
+
     def test_listing_needs_no_binary_cache_or_network(self):
         with (
             tempfile.TemporaryDirectory() as directory,

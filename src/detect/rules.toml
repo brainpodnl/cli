@@ -999,3 +999,35 @@ language = "typescript"
 kind = "framework"
 priority = 100
 any = ["dep:npm:hono", "identity:npm:hono", "dep:jsr:@hono/hono", "identity:jsr:@hono/hono", "dep:deno:hono"]
+
+[[catalog.environment]]
+format = "dotenv"
+files = [".env", ".env.*", "*.env", "*.env.example", "*.env.sample", "*.env.template"]
+exclude = ["*.enc", ".env.vault"]
+
+[[catalog.environment]]
+format = "compose"
+files = ["compose.yml", "compose.yaml", "compose.*.yml", "compose.*.yaml", "docker-compose.yml", "docker-compose.yaml", "docker-compose.*.yml", "docker-compose.*.yaml"]
+
+[[catalog.environment]]
+format = "dockerfile"
+files = ["Dockerfile", "Dockerfile.*", "*.Dockerfile"]
+
+[[catalog.environment]]
+format = "github-actions"
+files = ["*.yml", "*.yaml"]
+paths = ["**/.github/workflows/*.yml", "**/.github/workflows/*.yaml"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["*.yml", "*.yaml", "*.json"]
+paths = ["**/k8s/**", "**/kubernetes/**", "**/kube/**", "**/manifests/**", "**/deploy/**", "**/deployment/**", "**/deployments/**"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["pod.yaml", "pod.yml", "deployment.yaml", "deployment.yml", "*.k8s.yaml", "*.k8s.yml", "*.kube.yaml", "*.kube.yml", "kubernetes-*.yaml", "kubernetes-*.yml"]
+
+[[catalog.environment]]
+format = "kubernetes"
+files = ["*.k8s.json", "*.kube.json"]
+

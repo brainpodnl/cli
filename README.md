@@ -168,7 +168,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 ## Commands
 
 ```text
-brainpod detect [<path>] [--rules <rules.toml>]
+brainpod detect [<path>] [--rules <rules.toml>] [--with-env]
 brainpod describe [<command>...]
 brainpod describe resource [<kind>]
 brainpod login
@@ -271,10 +271,13 @@ Inspect a directory without credentials, network access, subprocesses, or execut
 ```sh
 brainpod detect .
 brainpod detect ./services --json
+brainpod detect . --with-env --json
 brainpod detect . --rules ./detection.toml --json
 ```
 
 The result contains sorted project paths, manifest names, languages and version declarations, priority-ranked detections with evidence and `uses`/`provides` framework roles, workspace members, diagnostics, and scan statistics. Optional `runtimes` records Deno declarations separately from JavaScript/TypeScript versions; `workspaces` records each manager’s ecosystem, source, and members, while `workspaceMembers` remains their union. Framework versions are attached to dependency evidence. JavaScript versions describe Node.js; TypeScript versions describe the compiler. C# versions distinguish `language` (LangVersion), `target` (TFM), `runtime`, and `sdk`; Java distinguishes compiler `source`/`target`/`release`, toolchains, build-JDK metadata, and pins. Requirements and pins retain their source and kind: these are declarations, not a claim about installed versions. Missing versions remain unknown.
+
+Add `--with-env` for name-only environment declarations from dotenv files (including examples/templates), Compose, Dockerfile `ENV`, conventional Kubernetes manifests, and GitHub Actions workflow/job/step `env` maps. JSON adds `environment`; text shows names, source/format/location, project ownership and unresolved references. Values are never exposed, loaded or evaluated. References are not followed, and declarations are not a claim about usage or installed/effective values. Without the flag, output and read counts are unchanged. See [supported syntax, privacy/scoping limits and offline validation](tests/detect-env.md).
 
 Built-in coverage includes Laravel, Symfony, CakePHP, CodeIgniter, Composer; Go modules/workspaces and Gin/Echo/Fiber; Cargo workspaces, axum, Rocket, Actix; Bundler, Rails, Sinatra, Hanami; Python requirements, PEP 621, Poetry, Pipenv, uv workspaces, Django, FastAPI, Flask, Starlette, Celery; npm/pnpm and Deno workspaces and catalogs, Fresh, Oak, Hono, Next.js, Nuxt, Astro, SvelteKit, Remix, Angular, Express, React, Vue, Vite; C#/.NET projects and solutions, ASP.NET Core/classic, Aspire, FastEndpoints; Java/JVM Maven and Gradle projects, Spring/Spring Boot, Quarkus, Micronaut; and standalone source files in all nine languages. Rust workspace dependency aliases and inherited `rust-version` are understood. Ancestor runtime pin/toolchain files are included with provenance. Poetry names, literal gemspec metadata, and Rails component dependencies are recognized. pnpm catalog references retain the original declaration and add the locally resolved constraint with its YAML source; unresolved references produce diagnostics.
 

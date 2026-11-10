@@ -14,6 +14,9 @@ mod deno;
 #[cfg(test)]
 mod deno_tests;
 mod dotnet;
+mod environment;
+#[cfg(test)]
+mod environment_tests;
 mod gradle;
 mod java;
 mod jsonc;
@@ -38,6 +41,9 @@ pub struct DetectArgs {
     /// Additional TOML detection rules; IDs must be unique
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
+    /// Discover environment declarations and references without exposing values
+    #[arg(long)]
+    pub with_env: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -47,6 +53,8 @@ pub struct Report {
     pub projects: Vec<Project>,
     pub diagnostics: Vec<Diagnostic>,
     pub stats: Stats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<Vec<environment::Declaration>>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -134,6 +142,7 @@ pub struct Stats {
 #[derive(Default)]
 struct Node {
     path: PathBuf,
+    environment: Vec<environment::Declaration>,
     parent: Option<usize>,
     files: BTreeSet<String>,
     contents: BTreeMap<String, String>,
@@ -231,7 +240,7 @@ pub fn handle(args: DetectArgs) -> Result<crate::output::CommandOutput> {
         .map(fs::read_to_string)
         .transpose()
         .context("could not read detection rules")?;
-    let report = scan(&args.path, extra.as_deref())?;
+    let report = scan_options(&args.path, extra.as_deref(), args.with_env)?;
     Ok(crate::output::CommandOutput::new(
         serde_json::to_value(report)?,
         crate::output::View::Detect,
@@ -252,6 +261,7 @@ impl Inventory {
         path: &Path,
         depth: usize,
         rules: &Rules,
+        with_env: bool,
     ) -> Result<Vec<(PathBuf, usize)>> {
         let mut node = Node::default();
         self.stats.directories += 1;
@@ -290,7 +300,10 @@ impl Inventory {
                         .or_insert_with(|| name.clone());
                 }
                 let readable = rules.catalog.readable(&name);
-                if readable {
+                let format = with_env
+                    .then(|| rules.catalog.environment.matching(path, &name))
+                    .flatten();
+                if readable || format.is_some() {
                     let file = File::open(entry.path())?;
                     let mut bytes = Vec::new();
                     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
@@ -303,7 +316,17 @@ impl Inventory {
                     };
                     match content {
                         Ok(content) => {
-                            node.contents.insert(name.clone(), content);
+                            if let Some(format) = format {
+                                node.environment.extend(environment::parse(
+                                    format,
+                                    &relative_file(path, &name),
+                                    &content,
+                                    &mut self.diagnostics,
+                                ));
+                            }
+                            if readable {
+                                node.contents.insert(name.clone(), content);
+                            }
                         }
                         Err(message) => self.diagnostics.push(Diagnostic {
                             path: relative_file(path, &name),
@@ -326,7 +349,7 @@ impl Inventory {
             }
             !prune
         });
-        if !node.files.is_empty() || !node.sources.is_empty() {
+        if !node.files.is_empty() || !node.sources.is_empty() || !node.environment.is_empty() {
             node.path = path.to_path_buf();
             self.nodes.push(node);
         }
@@ -338,9 +361,10 @@ impl Inventory {
         root: &Path,
         rules: &Rules,
         mut pending: Vec<(PathBuf, usize)>,
+        with_env: bool,
     ) -> Result<()> {
         while let Some((path, depth)) = pending.pop() {
-            pending.extend(self.read_directory(root, &path, depth, rules)?);
+            pending.extend(self.read_directory(root, &path, depth, rules, with_env)?);
         }
         Ok(())
     }
@@ -356,13 +380,13 @@ impl Inventory {
     }
 }
 
-fn inventory(root: &Path, rules: &Rules, workers: usize) -> Result<Inventory> {
+fn inventory(root: &Path, rules: &Rules, workers: usize, with_env: bool) -> Result<Inventory> {
     let mut inventory = Inventory::default();
     let mut pending = vec![(PathBuf::new(), 0)];
     for _ in 0..3 {
         let mut next = Vec::new();
         for (path, depth) in pending {
-            next.extend(inventory.read_directory(root, &path, depth, rules)?);
+            next.extend(inventory.read_directory(root, &path, depth, rules, with_env)?);
         }
         pending = next;
         if pending.is_empty() {
@@ -377,7 +401,7 @@ fn inventory(root: &Path, rules: &Rules, workers: usize) -> Result<Inventory> {
                     scope.spawn(|| -> Result<Inventory> {
                         let mut inventory = Inventory::default();
                         while let Some(task) = pending.get(next.fetch_add(1, Ordering::Relaxed)) {
-                            inventory.walk(root, rules, vec![task.clone()])?;
+                            inventory.walk(root, rules, vec![task.clone()], with_env)?;
                         }
                         Ok(inventory)
                     })
@@ -396,7 +420,7 @@ fn inventory(root: &Path, rules: &Rules, workers: usize) -> Result<Inventory> {
             inventory.merge(result);
         }
     } else {
-        inventory.walk(root, rules, pending)?;
+        inventory.walk(root, rules, pending, with_env)?;
     }
     index_parents(&mut inventory.nodes);
     Ok(inventory)
@@ -417,7 +441,12 @@ fn index_parents(nodes: &mut [Node]) {
     }
 }
 
+#[cfg(test)]
 pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
+    scan_options(root, extra_rules, false)
+}
+
+fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Result<Report> {
     let custom = extra_rules
         .map(|extra| Rules::new(Some(extra)))
         .transpose()?;
@@ -425,6 +454,9 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         Some(rules) => rules,
         None => Rules::builtin()?,
     };
+    if with_env && fs::symlink_metadata(root)?.file_type().is_symlink() {
+        bail!("environment scan root must not be a symlink");
+    }
     let root = root
         .canonicalize()
         .with_context(|| format!("could not open {}", root.display()))?;
@@ -436,13 +468,14 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         projects: Vec::new(),
         diagnostics: Vec::new(),
         stats: Stats::default(),
+        environment: with_env.then(Vec::new),
     };
     let workers = thread::available_parallelism().map_or(1, |n| n.get().min(4));
     let Inventory {
         mut nodes,
         diagnostics,
         stats,
-    } = inventory(&root, rules, workers)?;
+    } = inventory(&root, rules, workers, with_env)?;
     report.diagnostics = diagnostics;
     report.stats = stats;
     let original_nodes = nodes.len();
@@ -637,6 +670,24 @@ pub fn scan(root: &Path, extra_rules: Option<&str>) -> Result<Report> {
         project.workspace_members.sort();
         project.workspace_members.dedup();
     }
+    if let Some(environment) = &mut report.environment {
+        for (index, node) in nodes.iter().enumerate() {
+            let mut ancestor = Some(index);
+            let mut owner = None;
+            while let Some(i) = ancestor {
+                if let Some(project) = project_indices[i] {
+                    owner = Some(projects[project].1.path.clone());
+                    break;
+                }
+                ancestor = nodes[i].parent;
+            }
+            environment.extend(node.environment.iter().cloned().map(|mut declaration| {
+                declaration.project = owner.clone();
+                declaration
+            }));
+        }
+        environment.sort_by(|a, b| a.source.cmp(&b.source));
+    }
     projects.sort_by(|a, b| nodes[a.0].path.cmp(&nodes[b.0].path));
     report.projects = projects.into_iter().map(|(_, project)| project).collect();
     report
@@ -702,6 +753,28 @@ pub fn render(value: &serde_json::Value) -> Vec<String> {
                     ));
                 }
             }
+        }
+    }
+    for declaration in value["environment"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "env {}\t{} ({}, {}, {}, project: {})",
+            declaration["name"]
+                .as_str()
+                .unwrap_or("<unresolved reference>"),
+            declaration["source"].as_str().unwrap_or(""),
+            declaration["format"].as_str().unwrap_or(""),
+            declaration["location"].as_str().unwrap_or(""),
+            declaration["state"].as_str().unwrap_or(""),
+            declaration["project"].as_str().unwrap_or("unowned")
+        ));
+        if let Some(reference) = declaration.get("reference") {
+            lines.push(format!(
+                "  reference {} (target: {}, key: {}, prefix: {})",
+                reference["kind"].as_str().unwrap_or(""),
+                reference["target"].as_str().unwrap_or("unresolved"),
+                reference["key"].as_str().unwrap_or("-"),
+                reference["prefix"].as_str().unwrap_or("-")
+            ));
         }
     }
     for diagnostic in value["diagnostics"].as_array().into_iter().flatten() {

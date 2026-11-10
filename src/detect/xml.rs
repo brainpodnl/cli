@@ -194,7 +194,7 @@ mod tests {
     }
 
     fn files(root: &Path) -> Result<Vec<(PathBuf, String, &'static str)>> {
-        let inventory = inventory(root, Rules::builtin()?, 1)?;
+        let inventory = inventory(root, Rules::builtin()?, 1, false)?;
         for diagnostic in &inventory.diagnostics {
             eprintln!("inventory: {}: {}", diagnostic.path, diagnostic.message);
         }

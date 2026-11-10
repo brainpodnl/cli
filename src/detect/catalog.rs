@@ -41,6 +41,7 @@ pub(super) enum Resolver {
 #[serde(default, deny_unknown_fields)]
 pub(super) struct CatalogSpec {
     manifests: Vec<Manifest>,
+    environment: Vec<super::environment::Spec>,
     scan: Scan,
     families: BTreeMap<String, String>,
     inheritance: Vec<Inheritance>,
@@ -249,6 +250,7 @@ struct WorkspaceField {
 
 pub(super) struct Catalog {
     spec: CatalogSpec,
+    pub environment: super::environment::Catalog,
     exact: HashMap<String, Vec<usize>>,
     wildcard: Vec<(FilePattern, usize)>,
     extensions: HashMap<String, Vec<(FilePattern, usize)>>,
@@ -260,6 +262,7 @@ pub(super) struct Catalog {
 impl CatalogSpec {
     pub fn extend(&mut self, extra: Self) {
         self.manifests.extend(extra.manifests);
+        self.environment.extend(extra.environment);
         self.scan.ignore.extend(extra.scan.ignore);
         self.scan.prune.extend(extra.scan.prune);
         self.families.extend(extra.families);
@@ -272,7 +275,9 @@ impl CatalogSpec {
 
 impl Catalog {
     pub fn new(spec: CatalogSpec) -> Result<Self> {
+        let environment = super::environment::Catalog::new(&spec.environment)?;
         let mut catalog = Self {
+            environment,
             spec,
             exact: HashMap::new(),
             wildcard: Vec::new(),
