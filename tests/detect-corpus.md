@@ -130,9 +130,13 @@ Timings are warm-filesystem, end-to-end CLI medians of runs 2–5. Empty or part
 
 Koa needs an additional npm framework rule. C#/.NET and Java/Spring are now supported and verified by the follow-up run. The Maybe warning is redundant with the already detected Ruby pin. None of these observations was silently converted into a passing assertion or hidden by skipping a branch. The initial validation was read-only; the follow-up uses the new language support.
 
-## CI regression repaired in a separate session
+## CI regression investigation
 
-The Intel macOS failure was `s3::tests::streaming_download_exceeds_small_copy_limit_without_credentials_or_summary`, not a detector or build-workflow defect. The fixture imposed a five-second total deadline on a 26 MiB localhost TLS transfer. A controlled 60 ms / 256 KiB throttled reproduction failed at 5.02 s with `Body TimedOut`; replacing that total deadline with five-second connect and read-inactivity limits let the same transfer pass in 6.33 s. A separately stalled response still failed after five seconds. Only the test fixture client changed; size, redirect, and credential assertions remain intact, and no CI checks were disabled. Linux release tests/Clippy passed; native macOS verification depends on the new GitHub Actions run.
+The Intel macOS failure is `s3::tests::streaming_download_exceeds_small_copy_limit_without_credentials_or_summary`, not a detector compilation failure. Replacing the fixture's five-second total deadline with connect/read-inactivity limits fixes a controlled slow-transfer failure, but native run `42725208393` still failed the same test after a 7.18-second suite. The original timeout diagnosis was therefore insufficient to establish the macOS cause; all other platform jobs passed.
+
+Follow-up controls show a progressing transfer can exceed five seconds while retaining the five-second read-inactivity bound. Record-sized 16 KiB TLS writes are substantially faster than the original 64 KiB write-all progression locally, but Linux cannot prove the native macOS cause. The fixture now uses those record-sized writes and joins its provider asynchronously before unwrapping the download result, so server-side I/O panics are captured without starving Tokio shutdown. Transfer-size, redirect, and credential assertions are unchanged. No timeouts were increased and no checks were disabled.
+
+Nix now streams full build logs, and test-only body failures report received bytes and URL-stripped error details. Production error messages remain sanitized and unchanged. Native macOS confirmation is still required for this follow-up.
 
 ## Reproduce
 
