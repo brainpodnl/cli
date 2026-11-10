@@ -432,7 +432,9 @@ fn provider(body: &[u8], declared_length: usize) -> (String, std::thread::JoinHa
             "HTTP/1.1 200 OK\r\nContent-Length: {declared_length}\r\nConnection: close\r\n\r\n"
         )
         .unwrap();
-        stream.write_all(&body).unwrap();
+        for chunk in body.chunks(16 * 1024) {
+            stream.write_all(chunk).unwrap();
+        }
         stream.flush().unwrap();
         String::from_utf8(request).unwrap()
     });
@@ -447,7 +449,8 @@ fn trust_provider(gateway: &mut Gateway<'_>) {
         .no_proxy()
         .tls_certs_only([certificate])
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(5))
+        .read_timeout(Duration::from_secs(5))
         .build()
         .unwrap();
 }
@@ -860,14 +863,14 @@ async fn streaming_download_exceeds_small_copy_limit_without_credentials_or_summ
         mock(vec![(307, vec![("location", url)], String::new())]).await;
     trust_provider(&mut gateway);
     let mut output = tokio::io::sink();
-    assert_eq!(
-        gateway
-            .download_stream(&streaming_remote(), &mut output)
-            .await
-            .unwrap(),
-        body.len() as u64
-    );
-    let request = provider.join().unwrap().to_ascii_lowercase();
+    let result = gateway
+        .download_stream(&streaming_remote(), &mut output)
+        .await;
+    let provider_result = tokio::task::spawn_blocking(move || provider.join())
+        .await
+        .unwrap();
+    assert_eq!(result.unwrap(), body.len() as u64);
+    let request = provider_result.unwrap().to_ascii_lowercase();
     assert!(!request.contains("authorization:"));
     assert!(!request.contains("test-key"));
     assert_eq!(requests.lock().unwrap().len(), 1);

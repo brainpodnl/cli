@@ -269,11 +269,18 @@ impl Gateway<'_> {
     ) -> Result<u64> {
         let mut response = self.provider_response(remote, true).await?;
         let mut size = 0u64;
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow!("provider download interrupted; output may be partial"))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            #[cfg(test)]
+            eprintln!(
+                "provider body failed after {size} bytes: timeout={}, body={}, error={:?}",
+                error.is_timeout(),
+                error.is_body(),
+                error.without_url()
+            );
+            #[cfg(not(test))]
+            let _ = error;
+            anyhow!("provider download interrupted; output may be partial")
+        })? {
             output
                 .write_all(&chunk)
                 .await

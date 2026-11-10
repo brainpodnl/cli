@@ -168,6 +168,7 @@ Errors go to stderr and return a non-zero exit code. With `--json`, errors also 
 ## Commands
 
 ```text
+brainpod detect [<path>] [--rules <rules.toml>]
 brainpod describe [<command>...]
 brainpod describe resource [<kind>]
 brainpod login
@@ -262,6 +263,110 @@ Each chat gets its own console, so two agents working in one checkout do not ove
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 
 `revision wait` polls revision details until every resource reports `healthy: true`. `deploy --wait` deploys first, then waits on the returned revision in the same way. Both use a 90-second timeout by default; pass `--timeout <seconds>` to override it. Interactive waits report each unhealthy-to-healthy transition on stderr. Progress is suppressed when stderr is redirected or `--json` is used. Failed or canceled revisions stop the wait immediately, and timeouts report the resources that are still unhealthy.
+
+## Project detection
+
+Inspect a directory without credentials, network access, subprocesses, or executing project code:
+
+```sh
+brainpod detect .
+brainpod detect ./services --json
+brainpod detect . --rules ./detection.toml --json
+```
+
+The result contains sorted project paths, manifest names, languages and version declarations, priority-ranked detections with evidence and `uses`/`provides` framework roles, workspace members, diagnostics, and scan statistics. Optional `runtimes` records Deno declarations separately from JavaScript/TypeScript versions; `workspaces` records each manager’s ecosystem, source, and members, while `workspaceMembers` remains their union. Framework versions are attached to dependency evidence. JavaScript versions describe Node.js; TypeScript versions describe the compiler. C# versions distinguish `language` (LangVersion), `target` (TFM), `runtime`, and `sdk`; Java distinguishes compiler `source`/`target`/`release`, toolchains, build-JDK metadata, and pins. Requirements and pins retain their source and kind: these are declarations, not a claim about installed versions. Missing versions remain unknown.
+
+Built-in coverage includes Laravel, Symfony, CakePHP, CodeIgniter, Composer; Go modules/workspaces and Gin/Echo/Fiber; Cargo workspaces, axum, Rocket, Actix; Bundler, Rails, Sinatra, Hanami; Python requirements, PEP 621, Poetry, Pipenv, uv workspaces, Django, FastAPI, Flask, Starlette, Celery; npm/pnpm and Deno workspaces and catalogs, Fresh, Oak, Hono, Next.js, Nuxt, Astro, SvelteKit, Remix, Angular, Express, React, Vue, Vite; C#/.NET projects and solutions, ASP.NET Core/classic, Aspire, FastEndpoints; Java/JVM Maven and Gradle projects, Spring/Spring Boot, Quarkus, Micronaut; and standalone source files in all nine languages. Rust workspace dependency aliases and inherited `rust-version` are understood. Ancestor runtime pin/toolchain files are included with provenance. Poetry names, literal gemspec metadata, and Rails component dependencies are recognized. pnpm catalog references retain the original declaration and add the locally resolved constraint with its YAML source; unresolved references produce diagnostics.
+
+Deno supports `deno.json`/`deno.jsonc` (comments and trailing commas), Deno-only, hybrid, and npm-only workspace members, globs/exclusions, and shared imports with member alias overrides. Registry targets (`npm:`, `jsr:`) and supported `deno.land/x`/`esm.sh` URLs supply dependency evidence without downloading modules. Local relative import maps are bounded and cannot escape the scan root or follow symlinks. `.deno-version`, `.tool-versions` and npm `engines.deno` retain explicit runtime version provenance; a JSR package’s `version` is never treated as a Deno runtime version. Peer and development dependency constraints remain separate evidence. pnpm-only membership is not inferred as Deno membership. Scoped import-map overrides and non-relative/remote import-map files are diagnosed, not fetched or guessed; source imports, lockfiles, Docker/CI version hints, and tasks are not evaluated.
+
+The engine has three layers: bounded discovery, format readers that emit facts, and compiled detection rules. [`src/detect/rules.toml`](src/detect/rules.toml) owns manifest filenames/readers, JSON/TOML field projections, version/property mappings, workspace candidates, source-language families, inheritance boundaries, and directory exclusions. Format-specific syntax and local-reference resolution stay in adapters; framework decisions do not.
+
+Additional framework rules use unique IDs:
+
+```toml
+[[rules]]
+id = "company-next"
+language = "javascript"
+kind = "framework"
+priority = 200
+all = ["dep:npm:next", "file:company.config.*"]
+none = ["file:legacy.config"]
+```
+
+A new JSON/TOML manifest can also be registered without another Rust parser or filename branch. For example, `--rules custom.toml` can add a project format and runtime declaration:
+
+```toml
+[[catalog.manifests]]
+id = "service-meta"
+files = ["service.meta.json"]
+reader = "json"
+package = "service-meta"
+names = ["/name"]
+
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "requirement"
+paths = ["/runtime/node"]
+
+[[rules]]
+id = "service-meta"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["package:service-meta"]
+```
+
+The same catalog supports identity/dependency extraction and workspace members. JSON pointers select fields; schemas reject unknown options/readers and conflicting definitions. MSBuild/Maven/Gradle property-to-version mappings and MSBuild reference item kinds are declarative too.
+
+`all` requires every pattern, `any` requires at least one when supplied, and `none` rejects any match. Higher priorities sort first; ties sort by ID. Matches coexist rather than hiding other frameworks or languages. Patterns also accept conjunction groups, for example `any = ["dep:gem:rails", { all = ["dep:gem:actionpack", "dep:gem:railties"] }]`. Patterns support `file:<basename glob>` (`*`, `?`), `source:<extension>`, `dep:<ecosystem>:<exact package>`, `identity:<ecosystem>:<exact package>`, `workspace:<ecosystem>`, and `package:<ecosystem>`. Workspace paths additionally support `**`. Ecosystems include `composer`, `go`, `cargo`, `gem`, `pypi`, `npm`, `nuget`, `dotnet-sdk`, `dotnet-framework`, `dotnet-reference`, `maven`, `maven-parent`, `maven-plugin`, and `gradle-plugin`.
+
+Rule atoms and basename patterns are compiled once into typed fact indexes and fast exact/prefix/suffix matchers. The scanner walks once, caches the catalog, and never reads application source bodies or lockfiles. Wide trees use at most four directory workers; small trees stay serial. Directory facts are indexed and irrelevant empty directories are discarded, while output stays deterministic. pnpm YAML is deserialized directly into typed fields without building a syntax tree; unused fields/comments are not retained. XML uses the existing zero-allocation pull tokenizer, with structure/namespace checks and DTD/custom-entity rejection. Maven local parents and managed versions, MSBuild directory props/targets, central package versions, and static Gradle plugin/dependency/module declarations are resolved without running build tools. Arbitrary MSBuild functions, remote Maven parents/BOMs, profile activation, and dynamic Gradle build logic are not executed or guessed; unresolved version references remain explicit. Each manifest/version file is capped at 1 MiB. Symlinks are not followed; traversal stops at depth 128 with a diagnostic. Dependency/build directories such as `.git`, `.jj`, `node_modules`, `vendor`, `target`, `.venv`, `.next`, `dist`, `build`, `.gradle`, and `.vs` are pruned. `bin`/`obj` are additionally pruned beneath C# project roots without skipping Rust `src/bin` sources. It does not evaluate `.gitignore`. Source-only directories roll up to a same-language project ancestor when available; sibling services keep their own manifest boundaries.
+
+Detection uses declared dependencies, not arbitrary substring matches or inferred framework usage from source. Composer/Cargo development dependencies are excluded; npm development dependencies are included because tools such as Astro commonly live there. Dynamic Ruby declarations and unsupported requirements options produce diagnostics instead of executing code. Invalid manifests are diagnosed without stopping discovery of other projects.
+
+Run the generated large-tree performance fixture with:
+
+```sh
+cargo test --release detect::tests::benchmark_polyglot_scan -- --ignored --nocapture
+```
+
+### Reproduce the repository checks
+
+The corpus contains 51 repositories: the original 45, five ranked Deno web projects, and one supplemental mixed-workspace repository. It is public and pinned to commit SHAs in [`tests/detect-corpus.json`](tests/detect-corpus.json). The [audit report](tests/detect-corpus.md) contains assertions, per-repository timings, known limitations, and the additional Brainpod starter branches.
+
+| Language | Repositories |
+|---|---|
+| JavaScript | [react/react](https://github.com/react/react), [vercel/next.js](https://github.com/vercel/next.js), [mrdoob/three.js](https://github.com/mrdoob/three.js), [axios/axios](https://github.com/axios/axios), [react/create-react-app](https://github.com/react/create-react-app) |
+| TypeScript | [freeCodeCamp/freeCodeCamp](https://github.com/freeCodeCamp/freeCodeCamp), [vuejs/vue](https://github.com/vuejs/vue), [n8n-io/n8n](https://github.com/n8n-io/n8n), [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl), [excalidraw/excalidraw](https://github.com/excalidraw/excalidraw) |
+| Python | [Significant-Gravitas/AutoGPT](https://github.com/Significant-Gravitas/AutoGPT), [AUTOMATIC1111/stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui), [langgenius/dify](https://github.com/langgenius/dify), [langflow-ai/langflow](https://github.com/langflow-ai/langflow), [Comfy-Org/ComfyUI](https://github.com/Comfy-Org/ComfyUI) |
+| PHP | [coollabsio/coolify](https://github.com/coollabsio/coolify), [nextcloud/server](https://github.com/nextcloud/server), [laravel/framework](https://github.com/laravel/framework), [filamentphp/filament](https://github.com/filamentphp/filament), [symfony/symfony](https://github.com/symfony/symfony) |
+| Ruby | [rails/rails](https://github.com/rails/rails), [jekyll/jekyll](https://github.com/jekyll/jekyll), [mastodon/mastodon](https://github.com/mastodon/mastodon), [huginn/huginn](https://github.com/huginn/huginn), [discourse/discourse](https://github.com/discourse/discourse) |
+| Go | [infiniflow/ragflow](https://github.com/infiniflow/ragflow), [gohugoio/hugo](https://github.com/gohugoio/hugo), [gin-gonic/gin](https://github.com/gin-gonic/gin), [netdata/netdata](https://github.com/netdata/netdata), [caddyserver/caddy](https://github.com/caddyserver/caddy) |
+| Rust | [dani-garcia/vaultwarden](https://github.com/dani-garcia/vaultwarden), [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch), [juspay/hyperswitch](https://github.com/juspay/hyperswitch), [parcel-bundler/parcel](https://github.com/parcel-bundler/parcel), [DioxusLabs/dioxus](https://github.com/DioxusLabs/dioxus) |
+| C# | [jellyfin/jellyfin](https://github.com/jellyfin/jellyfin), [dotnet/aspnetcore](https://github.com/dotnet/aspnetcore), [jasontaylordev/CleanArchitecture](https://github.com/jasontaylordev/CleanArchitecture), [bitwarden/server](https://github.com/bitwarden/server), [ardalis/CleanArchitecture](https://github.com/ardalis/CleanArchitecture) |
+| Java | [macrozheng/mall](https://github.com/macrozheng/mall), [spring-projects/spring-boot](https://github.com/spring-projects/spring-boot), [elastic/elasticsearch](https://github.com/elastic/elasticsearch), [spring-projects/spring-framework](https://github.com/spring-projects/spring-framework), [jeecgboot/JeecgBoot](https://github.com/jeecgboot/JeecgBoot) |
+| Deno ecosystem (JS/TS) | [supabase/supabase](https://github.com/supabase/supabase), [honojs/hono](https://github.com/honojs/hono), [freshframework/fresh](https://github.com/freshframework/fresh), [InsForge/InsForge](https://github.com/InsForge/InsForge), [ryo-ma/github-profile-trophy](https://github.com/ryo-ma/github-profile-trophy) |
+| Supplemental mixed Deno/npm workspace | [honojs/middleware](https://github.com/honojs/middleware) |
+
+```sh
+python3 tests/audit_detect.py --list
+cargo build --release --locked
+cache=$(mktemp -d)
+python3 tests/audit_detect.py --fetch --cache "$cache" --output "$cache/results.json"
+```
+
+Repeat offline by reusing the cache and omitting `--fetch`.
+
+XML timing is independently reproducible (warm bounded reads/UTF-8 versus preloaded pull parsing; excludes discovery, fact extraction, and CLI output):
+
+```sh
+XML_BENCH_CACHE="$cache" cargo test --release detect::xml::tests::benchmark_xml_corpus \
+  -- --ignored --nocapture --test-threads=1
+cargo test --release detect::xml::tests::benchmark_xml_local -- --ignored --nocapture
+```
+
+On the pinned corpus, 1,192 XML manifests (2.7 MB) took about **2.7 ms to read** and **7.4 ms to parse** in aggregate on the measured warm-cache machine. This is not a cold-disk or whole-engine latency claim. No XML parser replacement was justified by those measurements.
 
 ## Image discovery
 

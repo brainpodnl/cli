@@ -1,0 +1,1001 @@
+[catalog.scan]
+ignore = [".git", ".jj", ".svn", "node_modules", "vendor", "target", ".venv", ".gradle", ".vs", "venv", "__pycache__", ".next", ".nuxt", ".output", "dist", "build", "coverage", ".bundle", ".brainpod", ".cache", "site-packages"]
+
+[[catalog.scan.prune]]
+when_files = ["*.csproj"]
+directories = ["bin", "obj"]
+
+[catalog.families]
+javascript = "node"
+typescript = "node"
+
+[[catalog.inheritance]]
+kind = "pin"
+
+[[catalog.inheritance]]
+kind = "toolchain"
+
+[[catalog.inheritance]]
+kind = "sdk"
+boundary_files = ["global.json"]
+
+[[catalog.workspaces]]
+ecosystem = "cargo"
+files = ["Cargo.toml"]
+
+[[catalog.workspaces]]
+ecosystem = "go"
+files = ["go.mod"]
+
+[[catalog.workspaces]]
+ecosystem = "node"
+files = ["package.json"]
+
+[[catalog.workspaces]]
+ecosystem = "deno"
+files = ["deno.json", "deno.jsonc", "package.json"]
+
+[[catalog.workspaces]]
+ecosystem = "python"
+files = ["pyproject.toml"]
+
+[[catalog.workspaces]]
+ecosystem = "maven"
+files = ["pom.xml"]
+
+[[catalog.workspaces]]
+ecosystem = "dotnet"
+package = "dotnet"
+
+[[catalog.workspaces]]
+ecosystem = "gradle"
+package = "gradle"
+
+[catalog.reference_kinds.PackageReference]
+ecosystem = "nuget"
+normalize = "lowercase"
+
+[catalog.reference_kinds.PackageVersion]
+ecosystem = "nuget"
+normalize = "lowercase"
+catalog = true
+
+[catalog.reference_kinds.FrameworkReference]
+ecosystem = "dotnet-framework"
+normalize = "lowercase"
+
+[catalog.reference_kinds.Reference]
+ecosystem = "dotnet-reference"
+normalize = "lowercase"
+separator = ","
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["targetframework", "targetframeworks", "targetframeworkversion"]
+language = "csharp"
+kind = "target"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["langversion"]
+language = "csharp"
+kind = "language"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "msbuild"
+fields = ["runtimeframeworkversion"]
+language = "csharp"
+kind = "runtime"
+split = ";"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["java.version"]
+language = "java"
+kind = "requirement"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.release"]
+language = "java"
+kind = "release"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.source"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "maven"
+fields = ["maven.compiler.target"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["release"]
+language = "java"
+kind = "release"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["source"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "maven-compiler"
+fields = ["target"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["sourceCompatibility"]
+language = "java"
+kind = "source"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["targetCompatibility"]
+language = "java"
+kind = "target"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["languageVersion", "languageVersion.set"]
+language = "java"
+kind = "toolchain"
+
+[[catalog.property_versions]]
+reader = "gradle"
+fields = ["options.release", "options.release.set"]
+language = "java"
+kind = "release"
+
+[[catalog.manifests]]
+id = "composer"
+files = ["composer.json"]
+reader = "json"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "composer"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.dependencies]]
+ecosystem = "composer"
+paths = ["/require"]
+[[catalog.manifests.versions]]
+language = "php"
+kind = "requirement"
+paths = ["/require/php"]
+[[catalog.manifests.versions]]
+language = "php"
+kind = "platform"
+paths = ["/config/platform/php"]
+
+[[catalog.manifests]]
+id = "npm"
+files = ["package.json"]
+reader = "json"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "npm"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.dependencies]]
+ecosystem = "npm"
+paths = ["/peerDependencies", "/devDependencies", "/dependencies"]
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "requirement"
+paths = ["/engines/node"]
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+paths = ["/volta/node"]
+[[catalog.manifests.versions]]
+runtime = "deno"
+kind = "requirement"
+paths = ["/engines/deno"]
+[[catalog.manifests.versions]]
+language = "typescript"
+kind = "requirement"
+dependency = "npm:typescript"
+reference_prefix = "catalog:"
+[[catalog.manifests.workspaces]]
+ecosystem = "node"
+present = "/workspaces"
+members = ["/workspaces/packages", "/workspaces"]
+
+[[catalog.manifests]]
+id = "deno"
+files = ["deno.json", "deno.jsonc"]
+prefer_first = true
+reader = "jsonc"
+package = "deno"
+runtime = "deno"
+names = ["/name"]
+[catalog.manifests.identity]
+ecosystem = "jsr"
+paths = ["/name"]
+versions = ["/version"]
+[[catalog.manifests.versions]]
+language = "typescript"
+kind = "requirement"
+dependency = "npm:typescript"
+reference_prefix = "catalog:"
+[[catalog.manifests.workspaces]]
+ecosystem = "deno"
+present = "/workspace"
+members = ["/workspace/members", "/workspace"]
+
+[[catalog.manifests]]
+id = "deno-pin"
+files = [".deno-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+runtime = "deno"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "cargo"
+files = ["Cargo.toml"]
+reader = "toml"
+resolver = "cargo"
+package = "cargo"
+package_path = "/package"
+names = ["/package/name"]
+[catalog.manifests.identity]
+ecosystem = "cargo"
+paths = ["/package/name"]
+versions = ["/package/version"]
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "requirement"
+paths = ["/package/rust-version"]
+[[catalog.manifests.workspaces]]
+ecosystem = "cargo"
+present = "/workspace"
+members = ["/workspace/members"]
+exclude = ["/workspace/exclude"]
+
+[[catalog.manifests]]
+id = "python"
+files = ["pyproject.toml"]
+reader = "toml"
+names = ["/project/name", "/tool/poetry/name"]
+[catalog.manifests.identity]
+ecosystem = "pypi"
+paths = ["/project/name", "/tool/poetry/name"]
+versions = ["/project/version", "/tool/poetry/version"]
+normalize = "python"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/project/dependencies"]
+requirements = true
+normalize = "python"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/tool/poetry/dependencies"]
+exclude = ["python"]
+normalize = "python"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/project/requires-python"]
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/tool/poetry/dependencies/python"]
+[[catalog.manifests.workspaces]]
+ecosystem = "python"
+present = "/tool/uv/workspace"
+members = ["/tool/uv/workspace/members"]
+exclude = ["/tool/uv/workspace/exclude"]
+
+[[catalog.manifests]]
+id = "pipenv"
+files = ["Pipfile"]
+reader = "toml"
+[[catalog.manifests.dependencies]]
+ecosystem = "pypi"
+paths = ["/packages"]
+normalize = "python"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "requirement"
+paths = ["/requires/python_full_version", "/requires/python_version"]
+
+[[catalog.manifests]]
+id = "pnpm"
+files = ["pnpm-workspace.yaml"]
+reader = "pnpm"
+
+[[catalog.manifests]]
+id = "go-module"
+files = ["go.mod"]
+reader = "go"
+
+[[catalog.manifests]]
+id = "go-workspace"
+files = ["go.work"]
+reader = "go"
+workspace = "go"
+
+[[catalog.manifests]]
+id = "bundler"
+files = ["Gemfile"]
+reader = "gemfile"
+
+[[catalog.manifests]]
+id = "rubygems"
+files = ["*.gemspec"]
+reader = "gemspec"
+
+[[catalog.manifests]]
+id = "requirements"
+files = ["requirements*.txt"]
+reader = "requirements"
+
+[[catalog.manifests]]
+id = "ruby-pin"
+files = [".ruby-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "ruby"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "python-pin"
+files = [".python-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "node-pin"
+files = [".node-version", ".nvmrc"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "rust-pin"
+files = ["rust-toolchain"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "go-pin"
+files = [".go-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "go"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "php-pin"
+files = [".php-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "php"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "java-pin"
+files = [".java-version"]
+reader = "pin"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+
+[[catalog.manifests]]
+id = "rust-toolchain"
+files = ["rust-toolchain.toml"]
+reader = "toml"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "toolchain"
+paths = ["/toolchain/channel"]
+
+[[catalog.manifests]]
+id = "tool-versions"
+files = [".tool-versions"]
+reader = "tools"
+[[catalog.manifests.versions]]
+language = "javascript"
+kind = "pin"
+key = "nodejs"
+[[catalog.manifests.versions]]
+language = "go"
+kind = "pin"
+key = "golang"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+key = "java"
+[[catalog.manifests.versions]]
+language = "python"
+kind = "pin"
+key = "python"
+[[catalog.manifests.versions]]
+language = "ruby"
+kind = "pin"
+key = "ruby"
+[[catalog.manifests.versions]]
+language = "rust"
+kind = "pin"
+key = "rust"
+[[catalog.manifests.versions]]
+language = "php"
+kind = "pin"
+key = "php"
+
+[[catalog.manifests.versions]]
+runtime = "deno"
+kind = "pin"
+key = "deno"
+
+[[catalog.manifests]]
+id = "sdkman"
+files = [".sdkmanrc"]
+reader = "properties"
+[[catalog.manifests.versions]]
+language = "java"
+kind = "pin"
+key = "java"
+
+[[catalog.manifests]]
+id = "dotnet-sdk"
+files = ["global.json"]
+reader = "json"
+[[catalog.manifests.versions]]
+language = "csharp"
+kind = "sdk"
+paths = ["/sdk/version"]
+
+[[catalog.manifests]]
+id = "dotnet-project"
+files = ["*.csproj"]
+reader = "msbuild"
+package = "dotnet"
+
+[[catalog.manifests]]
+id = "solution-xml"
+files = ["*.slnx"]
+reader = "msbuild"
+workspace = "dotnet"
+
+[[catalog.manifests]]
+id = "msbuild-metadata"
+files = ["*.props", "*.targets"]
+reader = "msbuild"
+
+[[catalog.manifests]]
+id = "solution"
+files = ["*.sln"]
+reader = "solution"
+workspace = "dotnet"
+
+[[catalog.manifests]]
+id = "maven"
+files = ["pom.xml"]
+reader = "maven"
+
+[[catalog.manifests]]
+id = "gradle"
+files = ["*.gradle", "*.gradle.kts"]
+reader = "gradle"
+
+[[catalog.manifests]]
+id = "gradle-properties"
+files = ["gradle.properties"]
+reader = "gradle-properties"
+
+[[catalog.manifests]]
+id = "gradle-jvm"
+files = ["gradle-daemon-jvm.properties"]
+reader = "gradle-jvm"
+
+[[catalog.manifests]]
+id = "version-catalog"
+files = ["*.versions.toml"]
+reader = "version-catalog"
+
+[[rules]]
+id = "composer"
+language = "php"
+kind = "project"
+priority = 10
+any = ["file:composer.json"]
+
+[[rules]]
+id = "php-source"
+language = "php"
+kind = "source"
+priority = 0
+any = ["source:php"]
+
+[[rules]]
+id = "go-module"
+language = "go"
+kind = "project"
+priority = 10
+any = ["file:go.mod"]
+
+[[rules]]
+id = "go-source"
+language = "go"
+kind = "source"
+priority = 0
+any = ["source:go"]
+
+[[rules]]
+id = "cargo"
+language = "rust"
+kind = "project"
+priority = 10
+any = ["package:cargo"]
+
+[[rules]]
+id = "rust-source"
+language = "rust"
+kind = "source"
+priority = 0
+any = ["source:rs"]
+
+[[rules]]
+id = "bundler"
+language = "ruby"
+kind = "project"
+priority = 10
+any = ["file:Gemfile"]
+
+[[rules]]
+id = "ruby-source"
+language = "ruby"
+kind = "source"
+priority = 0
+any = ["source:rb"]
+
+[[rules]]
+id = "python"
+language = "python"
+kind = "project"
+priority = 10
+any = ["file:pyproject.toml"]
+
+[[rules]]
+id = "python-source"
+language = "python"
+kind = "source"
+priority = 0
+any = ["source:py"]
+
+[[rules]]
+id = "node"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["file:package.json"]
+
+[[rules]]
+id = "deno"
+language = "javascript"
+kind = "project"
+priority = 10
+any = ["package:deno"]
+
+[[rules]]
+id = "deno-workspace"
+language = "javascript"
+kind = "workspace"
+priority = 20
+any = ["workspace:deno"]
+
+[[rules]]
+id = "fresh"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:jsr:@fresh/core", "identity:jsr:@fresh/core", "dep:deno:fresh"]
+
+[[rules]]
+id = "oak"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:jsr:@oak/oak", "identity:jsr:@oak/oak", "dep:deno:oak"]
+
+[[rules]]
+id = "javascript-source"
+language = "javascript"
+kind = "source"
+priority = 0
+any = ["source:js", "source:mjs", "source:cjs", "source:jsx"]
+
+[[rules]]
+id = "typescript"
+language = "typescript"
+kind = "project"
+priority = 10
+any = ["file:tsconfig.json", "dep:npm:typescript"]
+
+[[rules]]
+id = "typescript-source"
+language = "typescript"
+kind = "source"
+priority = 0
+any = ["source:ts", "source:mts", "source:cts", "source:tsx"]
+
+[[rules]]
+id = "python-requirements"
+language = "python"
+kind = "project"
+priority = 10
+any = ["file:requirements.txt", "file:Pipfile", "file:setup.py", "file:setup.cfg"]
+
+[[rules]]
+id = "go-workspace"
+language = "go"
+kind = "workspace"
+priority = 20
+any = ["workspace:go"]
+
+[[rules]]
+id = "cargo-workspace"
+language = "rust"
+kind = "workspace"
+priority = 20
+any = ["workspace:cargo"]
+
+[[rules]]
+id = "node-workspace"
+language = "javascript"
+kind = "workspace"
+priority = 20
+any = ["workspace:node"]
+
+[[rules]]
+id = "python-workspace"
+language = "python"
+kind = "workspace"
+priority = 20
+any = ["workspace:python"]
+
+[[rules]]
+id = "laravel"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:laravel/framework", "identity:composer:laravel/framework"]
+
+[[rules]]
+id = "symfony"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:symfony/framework-bundle", "dep:composer:symfony/symfony", "identity:composer:symfony/framework-bundle", "identity:composer:symfony/symfony"]
+
+[[rules]]
+id = "cakephp"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:cakephp/cakephp", "identity:composer:cakephp/cakephp"]
+
+[[rules]]
+id = "codeigniter"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:codeigniter4/framework", "dep:composer:codeigniter/framework", "identity:composer:codeigniter4/framework", "identity:composer:codeigniter/framework"]
+
+[[rules]]
+id = "slim"
+language = "php"
+kind = "framework"
+priority = 100
+any = ["dep:composer:slim/slim", "identity:composer:slim/slim"]
+
+[[rules]]
+id = "axum"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:axum", "identity:cargo:axum"]
+
+[[rules]]
+id = "rocket"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:rocket", "identity:cargo:rocket"]
+
+[[rules]]
+id = "actix-web"
+language = "rust"
+kind = "framework"
+priority = 100
+any = ["dep:cargo:actix-web", "identity:cargo:actix-web"]
+
+[[rules]]
+id = "rails"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:rails", "identity:gem:rails", { all = ["dep:gem:actionpack", "dep:gem:railties"] }]
+
+[[rules]]
+id = "sinatra"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:sinatra", "identity:gem:sinatra"]
+
+[[rules]]
+id = "hanami"
+language = "ruby"
+kind = "framework"
+priority = 100
+any = ["dep:gem:hanami", "identity:gem:hanami"]
+
+[[rules]]
+id = "django"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:django", "identity:pypi:django"]
+
+[[rules]]
+id = "fastapi"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:fastapi", "identity:pypi:fastapi"]
+
+[[rules]]
+id = "flask"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:flask", "identity:pypi:flask"]
+
+[[rules]]
+id = "starlette"
+language = "python"
+kind = "framework"
+priority = 50
+any = ["dep:pypi:starlette", "identity:pypi:starlette"]
+
+[[rules]]
+id = "celery"
+language = "python"
+kind = "framework"
+priority = 100
+any = ["dep:pypi:celery", "identity:pypi:celery"]
+
+[[rules]]
+id = "gin"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/gin-gonic/gin", "identity:go:github.com/gin-gonic/gin"]
+
+[[rules]]
+id = "echo"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/labstack/echo/v4", "identity:go:github.com/labstack/echo/v4"]
+
+[[rules]]
+id = "fiber"
+language = "go"
+kind = "framework"
+priority = 100
+any = ["dep:go:github.com/gofiber/fiber/v2", "identity:go:github.com/gofiber/fiber/v2"]
+
+[[rules]]
+id = "nextjs"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:next", "identity:npm:next"]
+
+[[rules]]
+id = "nuxtjs"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:nuxt", "dep:npm:nuxt3", "identity:npm:nuxt", "identity:npm:nuxt3"]
+
+[[rules]]
+id = "astro"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:astro", "identity:npm:astro"]
+
+[[rules]]
+id = "sveltekit"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@sveltejs/kit", "identity:npm:@sveltejs/kit"]
+
+[[rules]]
+id = "remix"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@remix-run/react", "identity:npm:@remix-run/react"]
+
+[[rules]]
+id = "angular"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:@angular/core", "identity:npm:@angular/core"]
+
+[[rules]]
+id = "express"
+language = "javascript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:express", "identity:npm:express"]
+
+[[rules]]
+id = "react"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:react", "identity:npm:react"]
+
+[[rules]]
+id = "vue"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:vue", "identity:npm:vue"]
+
+[[rules]]
+id = "vite"
+language = "javascript"
+kind = "framework"
+priority = 50
+any = ["dep:npm:vite", "identity:npm:vite"]
+
+[[rules]]
+id = "rubygems"
+language = "ruby"
+kind = "project"
+priority = 10
+any = ["file:*.gemspec"]
+
+[[rules]]
+id = "dotnet"
+language = "csharp"
+kind = "project"
+priority = 10
+any = ["package:dotnet", "file:*.csproj"]
+
+[[rules]]
+id = "csharp-source"
+language = "csharp"
+kind = "source"
+priority = 0
+any = ["source:cs", "source:csx"]
+
+[[rules]]
+id = "dotnet-workspace"
+language = "csharp"
+kind = "workspace"
+priority = 20
+any = ["workspace:dotnet"]
+
+[[rules]]
+id = "aspnetcore"
+language = "csharp"
+kind = "framework"
+priority = 100
+any = ["dep:dotnet-sdk:microsoft.net.sdk.web", "dep:dotnet-sdk:microsoft.net.sdk.razor", "dep:dotnet-framework:microsoft.aspnetcore.app", "dep:nuget:microsoft.aspnetcore.app", "dep:nuget:microsoft.aspnetcore", "identity:nuget:microsoft.aspnetcore.app", "identity:nuget:microsoft.aspnetcore.app.ref", "identity:nuget:microsoft.aspnetcore.mvc"]
+
+[[rules]]
+id = "aspnet"
+language = "csharp"
+kind = "framework"
+priority = 100
+any = ["dep:nuget:microsoft.aspnet.mvc", "dep:nuget:microsoft.aspnet.webapi", "dep:dotnet-reference:system.web", "dep:dotnet-reference:system.web.mvc"]
+
+[[rules]]
+id = "aspire"
+language = "csharp"
+kind = "framework"
+priority = 110
+any = ["dep:dotnet-sdk:aspire.apphost.sdk", "dep:nuget:aspire.hosting.apphost"]
+
+[[rules]]
+id = "fastendpoints"
+language = "csharp"
+kind = "framework"
+priority = 110
+any = ["dep:nuget:fastendpoints", "identity:nuget:fastendpoints"]
+
+[[rules]]
+id = "maven"
+language = "java"
+kind = "project"
+priority = 10
+any = ["package:maven", "file:pom.xml"]
+
+[[rules]]
+id = "gradle"
+language = "java"
+kind = "project"
+priority = 10
+any = ["package:gradle", "file:build.gradle", "file:build.gradle.kts"]
+
+[[rules]]
+id = "java-source"
+language = "java"
+kind = "source"
+priority = 0
+any = ["source:java"]
+
+[[rules]]
+id = "maven-workspace"
+language = "java"
+kind = "workspace"
+priority = 20
+any = ["workspace:maven"]
+
+[[rules]]
+id = "gradle-workspace"
+language = "java"
+kind = "workspace"
+priority = 20
+any = ["workspace:gradle"]
+
+[[rules]]
+id = "spring-boot"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven-parent:org.springframework.boot:spring-boot-starter-parent", "dep:maven:org.springframework.boot:spring-boot", "dep:maven:org.springframework.boot:spring-boot-starter", "dep:maven:org.springframework.boot:spring-boot-starter-web", "dep:maven:org.springframework.boot:spring-boot-starter-webmvc", "dep:maven:org.springframework.boot:spring-boot-starter-webflux", "dep:maven-plugin:org.springframework.boot:spring-boot-maven-plugin", "dep:gradle-plugin:org.springframework.boot", "identity:maven:org.springframework.boot:spring-boot"]
+
+[[rules]]
+id = "spring"
+language = "java"
+kind = "framework"
+priority = 100
+any = ["dep:maven:org.springframework:spring-context", "dep:maven:org.springframework:spring-web", "dep:maven:org.springframework:spring-webmvc", "dep:maven:org.springframework:spring-webflux", "identity:maven:org.springframework:spring-core", "identity:maven:org.springframework:spring-context", "identity:maven:org.springframework:spring-web"]
+
+[[rules]]
+id = "quarkus"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven:io.quarkus:quarkus-core", "dep:maven:io.quarkus:quarkus-rest", "dep:maven-plugin:io.quarkus:quarkus-maven-plugin", "dep:gradle-plugin:io.quarkus", "identity:maven:io.quarkus:quarkus-core"]
+
+[[rules]]
+id = "micronaut"
+language = "java"
+kind = "framework"
+priority = 110
+any = ["dep:maven:io.micronaut:micronaut-runtime", "dep:gradle-plugin:io.micronaut.application", "identity:maven:io.micronaut:micronaut-runtime"]
+
+[[rules]]
+id = "hono"
+language = "typescript"
+kind = "framework"
+priority = 100
+any = ["dep:npm:hono", "identity:npm:hono", "dep:jsr:@hono/hono", "identity:jsr:@hono/hono", "dep:deno:hono"]

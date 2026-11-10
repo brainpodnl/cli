@@ -246,7 +246,9 @@ fn argument_syntax(argument: &Arg, value_names: &[String]) -> String {
 fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
     match path {
         [] => (None, None),
-        ["describe"] | ["login"] | ["config"] | ["config", _] => (Some(false), Some(false)),
+        ["describe"] | ["detect"] | ["login"] | ["config"] | ["config", _] => {
+            (Some(false), Some(false))
+        }
         ["blueprint"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
         ["blueprint", _] | ["whoami"] | ["cluster"] | ["cluster", _] | ["pod"] | ["pod", _] => {
@@ -269,6 +271,10 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
 
 fn effect(path: &[&str]) -> (&'static str, &'static str) {
     match path {
+        ["detect"] => (
+            "read",
+            "Reads local project manifests without executing project code or accessing the network.",
+        ),
         ["describe"] | ["config", "show"] | ["config", "path"] => (
             "read",
             "Reads local CLI information without changing state.",
@@ -376,6 +382,7 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
 
 fn examples(path: &[&str]) -> Vec<&'static str> {
     match path {
+        ["detect"] => vec!["brainpod detect .", "brainpod detect ./services --json"],
         ["describe"] => vec![
             "brainpod describe",
             "brainpod describe resource create",

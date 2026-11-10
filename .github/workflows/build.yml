@@ -58,7 +58,7 @@ jobs:
           gc-max-store-size: 2G
 
       - name: Build
-        run: nix build ".#packages.${{ matrix.system }}.${{ matrix.package }}"
+        run: nix build --print-build-logs ".#packages.${{ matrix.system }}.${{ matrix.package }}"
 
       - name: Package Unix binary
         if: matrix.package == 'default'

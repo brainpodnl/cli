@@ -25,6 +25,7 @@ impl CommandOutput {
 pub enum View {
     S3,
     Describe,
+    Detect,
     ResourceSchema,
     AgentStart,
     AgentServe,
@@ -80,8 +81,10 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
             serde_json::to_writer(&mut stdout, value)?;
             writeln!(stdout)?;
         } else {
-            serde_json::to_writer_pretty(&mut stdout, value)?;
-            writeln!(stdout)?;
+            let mut buffered = io::BufWriter::new(&mut stdout);
+            serde_json::to_writer_pretty(&mut buffered, value)?;
+            writeln!(buffered)?;
+            buffered.flush()?;
         }
         return Ok(());
     }
@@ -164,6 +167,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
     match view {
         View::S3 => crate::s3::render(value),
         View::Describe => render_describe(value),
+        View::Detect => crate::detect::render(value),
         View::ResourceSchema => render_resource_schema(value),
         View::AgentStart => crate::agent::render_start(value),
         View::AgentServe => vec![format!("Session console: {}", field(value, "url"))],

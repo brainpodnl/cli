@@ -12,6 +12,7 @@ mod client;
 mod cmd;
 mod config;
 mod describe;
+mod detect;
 mod image;
 mod openapi;
 mod output;
@@ -128,6 +129,10 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
             describe::generate(Opts::command(), &args.command)?,
             output::View::Describe,
         ));
+    }
+
+    if let Command::Detect(args) = opts.command {
+        return detect::handle(args);
     }
 
     let config_path = Config::path()?;
@@ -291,10 +296,17 @@ fn api_error_json(api_error: &ApiError) -> Value {
 }
 
 fn is_broken_pipe(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
-        .any(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind)
+            .or_else(|| {
+                cause
+                    .downcast_ref::<serde_json::Error>()
+                    .and_then(serde_json::Error::io_error_kind)
+            })
+            == Some(std::io::ErrorKind::BrokenPipe)
+    })
 }
 
 #[cfg(test)]
@@ -302,6 +314,40 @@ mod tests {
     use clap::Parser;
 
     use super::{Command, Opts};
+
+    #[test]
+    fn handles_broken_pipes_wrapped_by_json_serialization() {
+        struct FailedWriter(std::io::ErrorKind);
+
+        impl std::io::Write for FailedWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(self.0.into())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            let expected = kind == std::io::ErrorKind::BrokenPipe;
+            let error = serde_json::to_writer(FailedWriter(kind), &serde_json::json!({"value": 1}))
+                .unwrap_err();
+            assert_eq!(
+                super::is_broken_pipe(&anyhow::Error::new(error).context("write output")),
+                expected
+            );
+            assert_eq!(
+                super::is_broken_pipe(&anyhow::Error::new(std::io::Error::from(kind))),
+                expected
+            );
+        }
+        let error = serde_json::from_str::<serde_json::Value>("invalid").unwrap_err();
+        assert!(!super::is_broken_pipe(&error.into()));
+    }
 
     #[test]
     fn parses_describe_path() {
