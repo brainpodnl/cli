@@ -181,7 +181,7 @@ mod tests {
     use anyhow::{Result, ensure};
 
     use super::read;
-    use crate::detect::{MAX_FILE_BYTES, inventory, rules::Rules};
+    use crate::detect::{EnvScan, MAX_FILE_BYTES, inventory, rules::Rules};
 
     fn kind(name: &str) -> Option<&'static str> {
         if name == "pom.xml" {
@@ -194,7 +194,7 @@ mod tests {
     }
 
     fn files(root: &Path) -> Result<Vec<(PathBuf, String, &'static str)>> {
-        let inventory = inventory(root, Rules::builtin()?, 1, false)?;
+        let inventory = inventory(root, Rules::builtin()?, 1, EnvScan::Off)?;
         for diagnostic in &inventory.diagnostics {
             eprintln!("inventory: {}: {}", diagnostic.path, diagnostic.message);
         }

@@ -1,3 +1,4 @@
+import argparse
 import io
 import json
 import tarfile
@@ -198,6 +199,32 @@ class DetectionAuditTests(unittest.TestCase):
         self.assertTrue(audit_detect.check({}, {**expected, "absent": True})[0])
         unowned = {**declaration, "project": None}
         self.assertTrue(audit_detect.check({}, {**expected, "project": None}, [unowned])[0])
+
+    def test_source_checks_and_flag_only_in_source_mode(self):
+        entry = {
+            "checks": [{"kind": "language"}],
+            "environmentChecks": [{"kind": "environment", "name": "DECLARED"}],
+            "sourceChecks": [{"kind": "environment", "format": "code-reference"}],
+        }
+        for with_env, with_source, flags, count in [
+            (False, False, [], 1),
+            (True, False, ["--with-env"], 2),
+            (True, True, ["--with-env", "--with-source"], 3),
+        ]:
+            args = argparse.Namespace(
+                binary=Path("/bin/brainpod"), with_env=with_env, with_source=with_source
+            )
+            self.assertEqual(len(audit_detect.expected_checks(entry, args)), count)
+            self.assertEqual(
+                audit_detect.detect_command(args, Path("/repo")),
+                ["/bin/brainpod", "detect", "/repo", "--json", *flags],
+            )
+        with (
+            patch("sys.argv", ["audit_detect.py", "--with-source", "--cache", "c", "--output", "o"]),
+            patch("sys.stderr", new_callable=io.StringIO),
+            self.assertRaises(SystemExit),
+        ):
+            audit_detect.main()
 
     def test_listing_needs_no_binary_cache_or_network(self):
         with (

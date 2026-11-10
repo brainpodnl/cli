@@ -42,6 +42,7 @@ pub(super) enum Resolver {
 pub(super) struct CatalogSpec {
     manifests: Vec<Manifest>,
     environment: Vec<super::environment::Spec>,
+    code_references: super::environment::references::Spec,
     scan: Scan,
     families: BTreeMap<String, String>,
     inheritance: Vec<Inheritance>,
@@ -251,6 +252,7 @@ struct WorkspaceField {
 pub(super) struct Catalog {
     spec: CatalogSpec,
     pub environment: super::environment::Catalog,
+    pub references: super::environment::references::Catalog,
     exact: HashMap<String, Vec<usize>>,
     wildcard: Vec<(FilePattern, usize)>,
     extensions: HashMap<String, Vec<(FilePattern, usize)>>,
@@ -263,6 +265,7 @@ impl CatalogSpec {
     pub fn extend(&mut self, extra: Self) {
         self.manifests.extend(extra.manifests);
         self.environment.extend(extra.environment);
+        self.code_references.extend(extra.code_references);
         self.scan.ignore.extend(extra.scan.ignore);
         self.scan.prune.extend(extra.scan.prune);
         self.families.extend(extra.families);
@@ -274,10 +277,14 @@ impl CatalogSpec {
 }
 
 impl Catalog {
-    pub fn new(spec: CatalogSpec) -> Result<Self> {
+    pub fn new(mut spec: CatalogSpec) -> Result<Self> {
         let environment = super::environment::Catalog::new(&spec.environment)?;
+        let references = super::environment::references::Catalog::new(std::mem::take(
+            &mut spec.code_references,
+        ))?;
         let mut catalog = Self {
             environment,
+            references,
             spec,
             exact: HashMap::new(),
             wildcard: Vec::new(),
