@@ -16,6 +16,10 @@ mod deno_tests;
 mod dotnet;
 mod environment;
 #[cfg(test)]
+mod environment_platform_tests;
+#[cfg(test)]
+mod environment_reference_tests;
+#[cfg(test)]
 mod environment_tests;
 mod gradle;
 mod java;
@@ -143,6 +147,7 @@ pub struct Stats {
 struct Node {
     path: PathBuf,
     environment: Vec<environment::Declaration>,
+    code_hits: Vec<environment::references::Hit>,
     parent: Option<usize>,
     files: BTreeSet<String>,
     contents: BTreeMap<String, String>,
@@ -252,6 +257,8 @@ struct Inventory {
     nodes: Vec<Node>,
     diagnostics: Vec<Diagnostic>,
     stats: Stats,
+    /// Code-reference signal basenames seen anywhere in the scan (`--with-env` only).
+    signals: BTreeSet<String>,
 }
 
 impl Inventory {
@@ -303,19 +310,39 @@ impl Inventory {
                 let format = with_env
                     .then(|| rules.catalog.environment.matching(path, &name))
                     .flatten();
-                if readable || format.is_some() {
+                let code = with_env && rules.catalog.references.scans(&name);
+                if with_env && rules.catalog.references.is_signal(&name) {
+                    self.signals.insert(name.clone());
+                }
+                if readable || format.is_some() || code {
                     let file = File::open(entry.path())?;
                     let mut bytes = Vec::new();
                     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
                     self.stats.files_read += 1;
                     self.stats.bytes_read += bytes.len();
-                    let content = if bytes.len() > MAX_FILE_BYTES as usize {
-                        Err("manifest exceeds 1 MiB read limit".to_owned())
+                    let oversized = bytes.len() > MAX_FILE_BYTES as usize;
+                    if code && !oversized {
+                        rules.catalog.references.find(
+                            &relative_file(path, &name),
+                            &bytes,
+                            &mut node.code_hits,
+                        );
+                    }
+                    let content = if !(readable || format.is_some()) {
+                        oversized.then(|| {
+                            Err("source exceeds 1 MiB read limit; environment references not scanned"
+                                .to_owned())
+                        })
+                    } else if oversized {
+                        Some(Err("manifest exceeds 1 MiB read limit".to_owned()))
                     } else {
-                        String::from_utf8(bytes).map_err(|_| "manifest is not UTF-8".to_owned())
+                        Some(
+                            String::from_utf8(bytes)
+                                .map_err(|_| "manifest is not UTF-8".to_owned()),
+                        )
                     };
                     match content {
-                        Ok(content) => {
+                        Some(Ok(content)) => {
                             if let Some(format) = format {
                                 node.environment.extend(environment::parse(
                                     format,
@@ -328,10 +355,11 @@ impl Inventory {
                                 node.contents.insert(name.clone(), content);
                             }
                         }
-                        Err(message) => self.diagnostics.push(Diagnostic {
+                        Some(Err(message)) => self.diagnostics.push(Diagnostic {
                             path: relative_file(path, &name),
                             message,
                         }),
+                        None => (),
                     }
                 }
                 if readable || rules.needs_filename(&name) {
@@ -349,7 +377,11 @@ impl Inventory {
             }
             !prune
         });
-        if !node.files.is_empty() || !node.sources.is_empty() || !node.environment.is_empty() {
+        if !node.files.is_empty()
+            || !node.sources.is_empty()
+            || !node.environment.is_empty()
+            || !node.code_hits.is_empty()
+        {
             node.path = path.to_path_buf();
             self.nodes.push(node);
         }
@@ -377,6 +409,7 @@ impl Inventory {
         self.stats.files_read += other.stats.files_read;
         self.stats.bytes_read += other.stats.bytes_read;
         self.stats.skipped_directories += other.stats.skipped_directories;
+        self.signals.extend(other.signals);
     }
 }
 
@@ -475,6 +508,7 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Resul
         mut nodes,
         diagnostics,
         stats,
+        signals,
     } = inventory(&root, rules, workers, with_env)?;
     report.diagnostics = diagnostics;
     report.stats = stats;
@@ -671,21 +705,37 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, with_env: bool) -> Resul
         project.workspace_members.dedup();
     }
     if let Some(environment) = &mut report.environment {
+        let mut hits = Vec::new();
         for (index, node) in nodes.iter().enumerate() {
             let mut ancestor = Some(index);
             let mut owner = None;
             while let Some(i) = ancestor {
                 if let Some(project) = project_indices[i] {
-                    owner = Some(projects[project].1.path.clone());
+                    owner = Some(project);
                     break;
                 }
                 ancestor = nodes[i].parent;
             }
+            let path = owner.map(|project| projects[project].1.path.clone());
             environment.extend(node.environment.iter().cloned().map(|mut declaration| {
-                declaration.project = owner.clone();
+                declaration.project = path.clone();
                 declaration
             }));
+            if !node.code_hits.is_empty() {
+                let detections = owner
+                    .into_iter()
+                    .flat_map(|project| &projects[project].1.detections)
+                    .map(|detection| detection.id.clone())
+                    .collect::<BTreeSet<_>>();
+                hits.extend(
+                    node.code_hits
+                        .iter()
+                        .cloned()
+                        .map(|hit| (path.clone(), detections.clone(), hit)),
+                );
+            }
         }
+        environment.extend(rules.catalog.references.records(hits, &signals));
         environment.sort_by(|a, b| a.source.cmp(&b.source));
     }
     projects.sort_by(|a, b| nodes[a.0].path.cmp(&nodes[b.0].path));
@@ -775,6 +825,30 @@ pub fn render(value: &serde_json::Value) -> Vec<String> {
                 reference["key"].as_str().unwrap_or("-"),
                 reference["prefix"].as_str().unwrap_or("-")
             ));
+        }
+        let facts = [
+            "required",
+            "secret",
+            "generated",
+            "hasDefault",
+            "scope",
+            "origin",
+            "provider",
+            "occurrenceCount",
+        ]
+        .into_iter()
+        .filter_map(|key| {
+            let value = declaration.get(key)?;
+            Some(format!(
+                "{key}: {}",
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            ))
+        })
+        .collect::<Vec<_>>();
+        if !facts.is_empty() {
+            lines.push(format!("  {}", facts.join(", ")));
         }
     }
     for diagnostic in value["diagnostics"].as_array().into_iter().flatten() {

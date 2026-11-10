@@ -53,7 +53,9 @@ fn dotenv_names_quotes_comments_multiline_duplicates_and_templates() {
         ]
     );
     assert!(report.diagnostics.is_empty(), "{report:#?}");
-    assert_eq!(report.stats.files_read, 3);
+    // Three dotenv files plus `source.ts`, which is searched only for catalog
+    // code-reference patterns; its arbitrary `process.env` read is not inferred.
+    assert_eq!(report.stats.files_read, 4);
     assert!(
         report
             .environment
@@ -146,7 +148,7 @@ services:
 }
 
 #[test]
-fn docker_env_is_not_arg_or_run_and_records_all_stages_not_effective_image() {
+fn docker_env_and_build_args_not_run_and_records_all_stages_not_effective_image() {
     let (env, diagnostics) = adapter(
         Format::Dockerfile,
         "FROM alpine AS base\nARG BUILD_ONLY=hidden\nRUN echo ENV FAKE=hidden\nENV A=one B=\"two words\" \\\n C=three\\ words\nENV OLD legacy value D=not-a-declaration\nFROM base\nenv A=overridden\n",
@@ -156,10 +158,16 @@ fn docker_env_is_not_arg_or_run_and_records_all_stages_not_effective_image() {
         env.iter()
             .filter_map(|d| d.name.as_deref())
             .collect::<Vec<_>>(),
-        ["A", "B", "C", "OLD", "A"]
+        ["BUILD_ONLY", "A", "B", "C", "OLD", "A"]
     );
     assert!(env[0].location.starts_with("stage:1/"));
-    assert!(env[4].location.starts_with("stage:2/"));
+    assert_eq!(
+        env[0].semantics.scope,
+        Some(super::environment::Scope::Build)
+    );
+    assert_eq!(env[0].semantics.has_default, Some(true));
+    assert_eq!(env[1].semantics, super::environment::Semantics::default());
+    assert!(env[5].location.starts_with("stage:2/"));
     let (env, diagnostics) = adapter(
         Format::Dockerfile,
         "FROM alpine\nRUN <<EOF\nENV FAKE=secret\nEOF\nENV AFTER=secret\n",

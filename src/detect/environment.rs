@@ -1,3 +1,6 @@
+mod platforms;
+pub(super) mod references;
+
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -15,6 +18,17 @@ pub enum Format {
     Dockerfile,
     Kubernetes,
     GithubActions,
+    AppJson,
+    HerokuYml,
+    Render,
+    Fly,
+    Digitalocean,
+    Vercel,
+    Netlify,
+    AppEngine,
+    Copilot,
+    /// Names found by the catalog's literal code-reference patterns; never routed to files.
+    CodeReference,
 }
 
 #[derive(Deserialize)]
@@ -41,7 +55,8 @@ impl Catalog {
     pub fn new(specs: &[Spec]) -> Result<Self> {
         let mut entries = Vec::new();
         for spec in specs {
-            if spec.files.is_empty()
+            if spec.format == Format::CodeReference
+                || spec.files.is_empty()
                 || spec
                     .files
                     .iter()
@@ -80,6 +95,7 @@ impl Catalog {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
 pub struct Declaration {
     pub source: String,
     pub format: Format,
@@ -90,6 +106,59 @@ pub struct Declaration {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<Reference>,
+    #[serde(flatten)]
+    pub semantics: Semantics,
+    #[serde(flatten)]
+    pub code: Option<CodeReference>,
+}
+
+/// Provenance of a `code-reference` record: which catalog pattern matched and where.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeReference {
+    pub origin: Origin,
+    pub provider: String,
+    /// Sorted `(source, line)` occurrences, capped at `references::MAX_OCCURRENCES`.
+    pub occurrences: Vec<Occurrence>,
+    pub occurrence_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Occurrence {
+    pub source: String,
+    pub line: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum Origin {
+    Platform,
+    Framework,
+}
+
+/// Platform-declared facts about a declaration. Each field is present only when
+/// the metadata format states it; literal values are never retained.
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct Semantics {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Scope>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum Scope {
+    Runtime,
+    Build,
+    BuildAndRuntime,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -118,6 +187,17 @@ impl Parser<'_> {
         state: &str,
         reference: Option<Reference>,
     ) {
+        self.declare(location, name, state, reference, Semantics::default());
+    }
+
+    fn declare(
+        &mut self,
+        location: &str,
+        name: Option<&str>,
+        state: &str,
+        reference: Option<Reference>,
+        semantics: Semantics,
+    ) {
         if name.is_some_and(|name| !identifier(name)) {
             self.warn("unsupported or dynamic environment variable name");
             return;
@@ -130,6 +210,8 @@ impl Parser<'_> {
             name: name.map(str::to_owned),
             state: state.to_owned(),
             reference,
+            semantics,
+            code: None,
         });
     }
 
@@ -208,6 +290,17 @@ pub(super) fn parse(
     match format {
         Format::Dotenv => dotenv(&mut parser, text),
         Format::Dockerfile => dockerfile(&mut parser, text),
+        _ if source.ends_with(".toml") => match toml::from_str::<Value>(text) {
+            Ok(doc) => document(&mut parser, &doc, "document:0"),
+            Err(_) => parser.warn("environment TOML is invalid"),
+        },
+        // Platform JSON manifests follow JSON (last duplicate key wins) like their platforms.
+        Format::AppJson | Format::Vercel if source.ends_with(".json") => {
+            match serde_json::from_str::<Value>(text) {
+                Ok(doc) => document(&mut parser, &doc, "document:0"),
+                Err(_) => parser.warn("environment JSON is invalid"),
+            }
+        }
         _ => {
             let options = serde_saphyr::options! {
                 budget: serde_saphyr::budget! {
@@ -227,13 +320,7 @@ pub(super) fn parse(
             match serde_saphyr::from_multiple_with_options::<Value>(text, options) {
                 Ok(documents) => {
                     for (index, doc) in documents.iter().enumerate() {
-                        let location = format!("document:{index}");
-                        match format {
-                            Format::Compose => compose(&mut parser, doc, &location),
-                            Format::Kubernetes => kubernetes(&mut parser, doc, &location),
-                            Format::GithubActions => actions(&mut parser, doc, &location),
-                            _ => (),
-                        }
+                        document(&mut parser, doc, &format!("document:{index}"));
                     }
                 }
                 Err(_) => parser.warn("environment YAML is invalid or exceeds parser limits"),
@@ -241,6 +328,15 @@ pub(super) fn parse(
         }
     }
     parser.declarations
+}
+
+fn document(parser: &mut Parser<'_>, doc: &Value, location: &str) {
+    match parser.format {
+        Format::Compose => compose(parser, doc, location),
+        Format::Kubernetes => kubernetes(parser, doc, location),
+        Format::GithubActions => actions(parser, doc, location),
+        _ => platforms::parse(parser, doc, location),
+    }
 }
 
 fn identifier(name: &str) -> bool {
@@ -419,6 +515,32 @@ fn dockerfile(parser: &mut Parser<'_>, text: &str) {
             parser.warn("Dockerfile heredoc and subsequent instructions not inspected");
             return;
         }
+        let location = format!("stage:{stage}/line:{}", index + 1);
+        if command.eq_ignore_ascii_case("ARG") {
+            match words(body, escape) {
+                Some(words) if !words.is_empty() => {
+                    for (index, word) in words.iter().enumerate() {
+                        let (name, has_default) = word
+                            .split_once('=')
+                            .map_or((word.as_str(), false), |(name, _)| (name, true));
+                        let semantics = Semantics {
+                            has_default: Some(has_default),
+                            scope: Some(Scope::Build),
+                            ..Semantics::default()
+                        };
+                        parser.declare(
+                            &format!("{location}/{index}"),
+                            Some(name),
+                            "declared",
+                            None,
+                            semantics,
+                        );
+                    }
+                }
+                _ => parser.warn("malformed Dockerfile ARG instruction"),
+            }
+            continue;
+        }
         if !command.eq_ignore_ascii_case("ENV") {
             continue;
         }
@@ -430,7 +552,6 @@ fn dockerfile(parser: &mut Parser<'_>, text: &str) {
             parser.warn("empty Dockerfile ENV instruction");
             continue;
         };
-        let location = format!("stage:{stage}/line:{}", index + 1);
         if first.starts_with("--") {
             parser.warn("Dockerfile ENV flags are not supported");
         } else if first.contains('=') {
