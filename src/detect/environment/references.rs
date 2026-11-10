@@ -64,12 +64,53 @@ pub(in super::super) struct Catalog {
     signals: BTreeSet<String>,
 }
 
-/// One literal match in a scanned file.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(in super::super) struct Hit {
-    pub source: String,
-    pub line: usize,
-    pub name: String,
+/// Matches in one scan directory, keyed by name; storage is bounded per name.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(in super::super) struct Hits(BTreeMap<String, Occurrences>);
+
+impl Hits {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Unique `(source, line)` count plus the smallest `MAX_OCCURRENCES` of them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(in super::super) struct Occurrences {
+    count: usize,
+    listed: Vec<Occurrence>,
+}
+
+impl Occurrences {
+    /// Counts a `(source, line)` the caller has not added before.
+    fn add(&mut self, source: &str, line: usize) {
+        self.count += 1;
+        self.insert(
+            || Occurrence {
+                source: source.to_owned(),
+                line,
+            },
+            (source, line),
+        );
+    }
+
+    /// Merges occurrences from disjoint sources.
+    fn merge(&mut self, other: &Self) {
+        self.count += other.count;
+        for occurrence in &other.listed {
+            self.insert(|| occurrence.clone(), (&occurrence.source, occurrence.line));
+        }
+    }
+
+    fn insert(&mut self, make: impl FnOnce() -> Occurrence, key: (&str, usize)) {
+        let index = self
+            .listed
+            .partition_point(|o| (o.source.as_str(), o.line) < key);
+        if index < MAX_OCCURRENCES {
+            self.listed.insert(index, make());
+            self.listed.truncate(MAX_OCCURRENCES);
+        }
+    }
 }
 
 fn upper(value: &str) -> bool {
@@ -163,8 +204,10 @@ impl Catalog {
     }
 
     /// Whole ASCII identifier tokens (`[A-Za-z0-9_]+`) that match a pattern.
-    pub fn find(&self, source: &str, bytes: &[u8], hits: &mut Vec<Hit>) {
+    pub fn find(&self, source: &str, bytes: &[u8], hits: &mut Hits) {
         let word = |ch: u8| ch.is_ascii_alphanumeric() || ch == b'_';
+        // Last line counted per name in this file, so a line counts once.
+        let mut last = BTreeMap::<&str, usize>::new();
         let mut line = 1;
         let mut index = 0;
         while index < bytes.len() {
@@ -180,12 +223,16 @@ impl Catalog {
                 if ch.is_ascii_uppercase()
                     && let Ok(token) = std::str::from_utf8(&bytes[start..index])
                     && !self.candidates(token).is_empty()
+                    && last.insert(token, line) != Some(line)
                 {
-                    hits.push(Hit {
-                        source: source.to_owned(),
-                        line,
-                        name: token.to_owned(),
-                    });
+                    match hits.0.get_mut(token) {
+                        Some(occurrences) => occurrences.add(source, line),
+                        None => hits
+                            .0
+                            .entry(token.to_owned())
+                            .or_default()
+                            .add(source, line),
+                    }
                 }
             } else {
                 index += 1;
@@ -194,46 +241,43 @@ impl Catalog {
     }
 
     /// Builds one record per `(project, name)`, choosing the first candidate
-    /// pattern whose signal and framework gates pass.
-    pub fn records(
+    /// pattern whose signal and framework gates pass. Each input is one scan
+    /// directory's hits with its owning project and that project's detections.
+    pub fn records<'a>(
         &self,
-        hits: Vec<(Option<String>, BTreeSet<String>, Hit)>,
+        hits: impl IntoIterator<Item = (Option<String>, &'a BTreeSet<String>, &'a Hits)>,
         signals: &BTreeSet<String>,
     ) -> Vec<Declaration> {
-        let mut grouped = BTreeMap::<(Option<String>, String), (usize, Vec<Occurrence>)>::new();
-        for (project, detections, hit) in hits {
-            let Some(&index) = self.candidates(&hit.name).iter().find(|&&index| {
-                let pattern = &self.patterns[index];
-                (pattern.signals.is_empty() || pattern.signals.iter().any(|s| signals.contains(s)))
-                    && (pattern.requires.is_empty()
-                        || pattern.requires.iter().any(|id| detections.contains(id)))
-            }) else {
-                continue;
-            };
-            let (pattern, occurrences) = grouped
-                .entry((project, hit.name))
-                .or_insert_with(|| (index, Vec::new()));
-            *pattern = (*pattern).min(index);
-            occurrences.push(Occurrence {
-                source: hit.source,
-                line: hit.line,
-            });
+        let mut grouped = BTreeMap::<(Option<String>, &str), (usize, Occurrences)>::new();
+        for (project, detections, hits) in hits {
+            for (name, occurrences) in &hits.0 {
+                let Some(&index) = self.candidates(name).iter().find(|&&index| {
+                    let pattern = &self.patterns[index];
+                    (pattern.signals.is_empty()
+                        || pattern.signals.iter().any(|s| signals.contains(s)))
+                        && (pattern.requires.is_empty()
+                            || pattern.requires.iter().any(|id| detections.contains(id)))
+                }) else {
+                    continue;
+                };
+                let (pattern, merged) = grouped
+                    .entry((project.clone(), name.as_str()))
+                    .or_insert_with(|| (index, Occurrences::default()));
+                *pattern = (*pattern).min(index);
+                merged.merge(occurrences);
+            }
         }
         grouped
             .into_iter()
-            .map(|((project, name), (index, mut occurrences))| {
-                occurrences.sort();
-                occurrences.dedup();
+            .map(|((project, name), (index, occurrences))| {
                 let pattern = &self.patterns[index];
-                let first = occurrences[0].clone();
-                let occurrence_count = occurrences.len();
-                occurrences.truncate(MAX_OCCURRENCES);
+                let first = occurrences.listed[0].clone();
                 Declaration {
                     source: first.source,
                     format: Format::CodeReference,
                     location: format!("line:{}", first.line),
                     project,
-                    name: Some(name),
+                    name: Some(name.to_owned()),
                     state: "referenced".to_owned(),
                     reference: None,
                     semantics: Semantics {
@@ -243,8 +287,8 @@ impl Catalog {
                     code: Some(CodeReference {
                         origin: pattern.origin,
                         provider: pattern.provider.clone(),
-                        occurrences,
-                        occurrence_count,
+                        occurrences: occurrences.listed,
+                        occurrence_count: occurrences.count,
                     }),
                 }
             })

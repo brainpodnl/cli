@@ -561,6 +561,9 @@ sidecars:
 environments:
   prod:
     variables: {LOG_LEVEL: DO_NOT_DISCLOSE}
+    sidecars:
+      proxy:
+        variables: {PROXY_OVERRIDE: DO_NOT_DISCLOSE}
 "#;
     let report = with_env(&[
         ("copilot/api/manifest.yml", manifest),
@@ -582,7 +585,8 @@ environments:
             "GITHUB_TOKEN",
             "NESTED_PATH",
             "PROXY_MODE",
-            "LOG_LEVEL"
+            "LOG_LEVEL",
+            "PROXY_OVERRIDE"
         ]
     );
     assert!(names(&report, "copilot/environments/prod/manifest.yml").is_empty());
@@ -630,6 +634,10 @@ environments:
             scope: Some(Scope::Runtime),
             ..NONE
         }
+    );
+    assert_eq!(
+        find(&report, source, "PROXY_OVERRIDE").location,
+        "document:0/environments/prod/sidecars/proxy/variables/PROXY_OVERRIDE"
     );
     let file = declarations(&report)
         .iter()

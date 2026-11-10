@@ -171,7 +171,7 @@ pub struct Stats {
 struct Node {
     path: PathBuf,
     environment: Vec<environment::Declaration>,
-    code_hits: Vec<environment::references::Hit>,
+    code_hits: environment::references::Hits,
     parent: Option<usize>,
     files: BTreeSet<String>,
     contents: BTreeMap<String, String>,
@@ -735,7 +735,7 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, env: EnvScan) -> Result<
         project.workspace_members.dedup();
     }
     if let Some(environment) = &mut report.environment {
-        let mut hits = Vec::new();
+        let mut code_hits = Vec::new();
         for (index, node) in nodes.iter().enumerate() {
             let mut ancestor = Some(index);
             let mut owner = None;
@@ -757,15 +757,17 @@ fn scan_options(root: &Path, extra_rules: Option<&str>, env: EnvScan) -> Result<
                     .flat_map(|project| &projects[project].1.detections)
                     .map(|detection| detection.id.clone())
                     .collect::<BTreeSet<_>>();
-                hits.extend(
-                    node.code_hits
-                        .iter()
-                        .cloned()
-                        .map(|hit| (path.clone(), detections.clone(), hit)),
-                );
+                code_hits.push((path, detections, &node.code_hits));
             }
         }
-        environment.extend(rules.catalog.references.records(hits, &signals));
+        environment.extend(
+            rules.catalog.references.records(
+                code_hits
+                    .iter()
+                    .map(|(path, detections, hits)| (path.clone(), detections, *hits)),
+                &signals,
+            ),
+        );
         environment.sort_by(|a, b| a.source.cmp(&b.source));
     }
     projects.sort_by(|a, b| nodes[a.0].path.cmp(&nodes[b.0].path));

@@ -495,19 +495,24 @@ fn copilot(parser: &mut Parser<'_>, doc: &Value, location: &str) {
     if string(doc, "type").is_none_or(|kind| kind == "Environment") {
         return;
     }
-    copilot_container(parser, doc, location);
-    for (name, sidecar) in named(parser, doc.get("sidecars")) {
+    copilot_workload(parser, doc, location);
+    for (name, environment) in named(parser, doc.get("environments")) {
+        copilot_workload(
+            parser,
+            environment,
+            &format!("{location}/environments/{}", pointer(name)),
+        );
+    }
+}
+
+/// The main container plus its sidecars; also the shape of an `environments` override.
+fn copilot_workload(parser: &mut Parser<'_>, value: &Value, location: &str) {
+    copilot_container(parser, value, location);
+    for (name, sidecar) in named(parser, value.get("sidecars")) {
         copilot_container(
             parser,
             sidecar,
             &format!("{location}/sidecars/{}", pointer(name)),
-        );
-    }
-    for (name, environment) in named(parser, doc.get("environments")) {
-        copilot_container(
-            parser,
-            environment,
-            &format!("{location}/environments/{}", pointer(name)),
         );
     }
 }

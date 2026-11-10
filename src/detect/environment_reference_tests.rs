@@ -240,12 +240,14 @@ fn generic_prefixes_require_the_framework_and_generic_names_a_platform_file() {
 
 #[test]
 fn code_references_are_opt_in_capped_bounded_deterministic_and_redacted() {
+    // Two matches per line count once; `lib/` sorts first and lives in another directory.
     let many = (0..25)
-        .map(|i| format!("v{i} = NEXT_PUBLIC_MANY // DO_NOT_DISCLOSE\n"))
+        .map(|i| format!("v{i} = NEXT_PUBLIC_MANY + NEXT_PUBLIC_MANY // DO_NOT_DISCLOSE\n"))
         .collect::<String>();
     let dir = fixture(&[
         ("package.json", "{}"),
         ("src/many.js", &many),
+        ("lib/first.js", "\nNEXT_PUBLIC_MANY"),
         ("src/a.ts", "NEXT_PUBLIC_SHARED"),
     ]);
     fs::write(
@@ -269,13 +271,25 @@ fn code_references_are_opt_in_capped_bounded_deterministic_and_redacted() {
         scan_options(dir.path(), None, super::EnvScan::Source).unwrap(),
         report
     );
-    assert_eq!(report.stats.files_read, 5);
+    assert_eq!(report.stats.files_read, 6);
     assert_eq!(default.projects, report.projects);
-    let many = find(&report, "NEXT_PUBLIC_MANY").code.as_ref().unwrap();
-    assert_eq!(many.occurrence_count, 25);
+    let record = find(&report, "NEXT_PUBLIC_MANY");
+    assert_eq!(
+        (record.source.as_str(), record.location.as_str()),
+        ("lib/first.js", "line:2")
+    );
+    let many = record.code.as_ref().unwrap();
+    assert_eq!(many.occurrence_count, 26);
     assert_eq!(
         many.occurrences.len(),
         super::environment::references::MAX_OCCURRENCES
+    );
+    assert_eq!(
+        many.occurrences.last().unwrap(),
+        &super::environment::Occurrence {
+            source: "src/many.js".to_owned(),
+            line: 19,
+        }
     );
     assert!(
         references(&report)
