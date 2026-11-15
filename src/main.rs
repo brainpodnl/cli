@@ -105,12 +105,14 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
 
     if let Command::Describe(args) = &opts.command {
         if openapi::is_resource_path(&args.command) {
-            let endpoint = api_endpoint(
-                opts.endpoint.clone(),
-                environment("BRAINPOD_API_ENDPOINT"),
-                || Ok(Config::load(&Config::path()?)?.endpoint),
-            )?;
-            let resource_description = openapi::describe(&args.command, Some(&endpoint)).await?;
+            let resource_description = openapi::describe(&args.command, || {
+                api_endpoint(
+                    opts.endpoint.clone(),
+                    environment("BRAINPOD_API_ENDPOINT"),
+                    || Ok(Config::load(&Config::path()?)?.endpoint),
+                )
+            })
+            .await?;
             if args.command.len() == 1 {
                 let mut description = describe::generate(Opts::command(), &args.command)?;
                 description

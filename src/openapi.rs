@@ -4,7 +4,6 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde_json::{Value, json};
 
-const PRODUCTION_OPENAPI_URL: &str = "https://api.brainpod.io/v1/openapi.json";
 const EMBEDDED_OPENAPI: &str = include_str!("openapi.json");
 
 const RESOURCE_SUBCOMMANDS: &[&str] = &["list", "get", "create", "replace", "delete", "variables"];
@@ -19,9 +18,11 @@ pub fn is_resource_path(path: &[String]) -> bool {
     }
 }
 
-pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> {
+/// Describes resource schemas. `endpoint` resolves the API endpoint and is only called when
+/// `BRAINPOD_OPENAPI_URL` does not override the document URL.
+pub async fn describe(path: &[String], endpoint: impl FnOnce() -> Result<String>) -> Result<Value> {
     let requested_kind = path.get(1).map(String::as_str);
-    let url = openapi_url(endpoint)?;
+    let url = openapi_url(std::env::var_os("BRAINPOD_OPENAPI_URL"), endpoint)?;
     let (spec, source) = load_spec(&url).await?;
     let resources = resource_schemas(&spec)?;
 
@@ -93,8 +94,11 @@ async fn fetch_spec(url: &str) -> Result<Value> {
         .context("Brainpod OpenAPI specification is not valid JSON")
 }
 
-fn openapi_url(endpoint: Option<&str>) -> Result<String> {
-    if let Some(url) = std::env::var_os("BRAINPOD_OPENAPI_URL") {
+fn openapi_url(
+    document_override: Option<std::ffi::OsString>,
+    endpoint: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    if let Some(url) = document_override {
         let url = url
             .into_string()
             .map_err(|_| anyhow!("BRAINPOD_OPENAPI_URL is not valid UTF-8"))?;
@@ -104,11 +108,7 @@ fn openapi_url(endpoint: Option<&str>) -> Result<String> {
         return Ok(url);
     }
 
-    let Some(endpoint) = endpoint else {
-        return Ok(PRODUCTION_OPENAPI_URL.to_owned());
-    };
-
-    let mut url = Url::parse(endpoint).context("invalid Brainpod API endpoint")?;
+    let mut url = Url::parse(&endpoint()?).context("invalid Brainpod API endpoint")?;
     {
         let mut segments = url
             .path_segments_mut()
@@ -167,7 +167,7 @@ fn resource_schemas(spec: &Value) -> Result<Vec<ResourceCatalog>> {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{is_resource_path, resource_schemas};
+    use super::{is_resource_path, openapi_url, resource_schemas};
 
     #[test]
     fn recognizes_resource_schema_paths_without_shadowing_commands() {
@@ -185,6 +185,21 @@ mod tests {
             "resource".to_owned(),
             "variables".to_owned()
         ]));
+    }
+
+    #[test]
+    fn openapi_url_override_skips_endpoint_resolution() {
+        assert_eq!(
+            openapi_url(Some("https://schema.example/openapi.json".into()), || {
+                panic!("endpoint must not be resolved")
+            })
+            .unwrap(),
+            "https://schema.example/openapi.json"
+        );
+        assert_eq!(
+            openapi_url(None, || Ok("https://api.example/".to_owned())).unwrap(),
+            "https://api.example/v1/openapi.json"
+        );
     }
 
     #[test]
