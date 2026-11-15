@@ -467,6 +467,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_storage_providers() {
+        let opts = Opts::try_parse_from(["brainpod", "storage", "providers"]).unwrap();
+
+        assert!(matches!(opts.command, Command::Storage(_)));
+        assert!(super::cmd::needs_client(&opts.command));
+    }
+
+    #[test]
     fn parses_cluster_list() {
         let opts = Opts::try_parse_from(["brainpod", "cluster", "list"]).unwrap();
 

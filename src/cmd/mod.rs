@@ -29,6 +29,8 @@ pub enum Command {
     Whoami,
     /// List available clusters
     Cluster(ClusterArgs),
+    /// List object storage providers and regions for Bucket resources
+    Storage(StorageArgs),
     /// Inspect pods
     Pod(PodArgs),
     /// Browse and install blueprints
@@ -115,6 +117,18 @@ pub struct ClusterArgs {
 enum ClusterCommand {
     /// List active clusters and their supported architectures
     List,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageArgs {
+    #[command(subcommand)]
+    command: StorageCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum StorageCommand {
+    /// List storage providers and their regions; a Bucket's spec.provider is a KEY and spec.region one of its REGIONS
+    Providers,
 }
 
 #[derive(Debug, Args)]
@@ -581,6 +595,7 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
             View::Whoami,
         )),
         Command::Cluster(args) => handle_cluster(client_required(client)?, args).await,
+        Command::Storage(args) => handle_storage(client_required(client)?, args).await,
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
         Command::Tunnel(args) => {
             crate::tunnel::handle(
@@ -666,6 +681,15 @@ async fn handle_cluster(client: &Client, args: ClusterArgs) -> Result<CommandOut
         ClusterCommand::List => Ok(CommandOutput::new(
             client.get(&["v1", "clusters"], &[]).await?,
             View::ClusterList,
+        )),
+    }
+}
+
+async fn handle_storage(client: &Client, args: StorageArgs) -> Result<CommandOutput> {
+    match args.command {
+        StorageCommand::Providers => Ok(CommandOutput::new(
+            client.get(&["v1", "storage", "providers"], &[]).await?,
+            View::StorageProviderList,
         )),
     }
 }

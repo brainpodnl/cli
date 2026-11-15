@@ -48,6 +48,7 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
             "sourceUrl": url,
             "schema": resource.schema,
             "variables": resource.variables,
+            "notes": resource_notes(&resource.kind),
         }));
     }
 
@@ -59,6 +60,7 @@ pub async fn describe(path: &[String], endpoint: Option<&str>) -> Result<Value> 
             "kind": resource.kind,
             "schema": resource.schema,
             "variables": resource.variables,
+            "notes": resource_notes(&resource.kind),
         })).collect::<Vec<_>>(),
     }))
 }
@@ -127,6 +129,17 @@ struct ResourceCatalog {
     variables: Value,
 }
 
+/// Guidance for fields whose valid values are installation data rather than schema enums.
+fn resource_notes(kind: &str) -> Vec<&'static str> {
+    if kind.eq_ignore_ascii_case("Bucket") {
+        vec![
+            "spec.provider must be a provider `key` and spec.region one of that provider's `regions` from `brainpod storage providers`.",
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
 fn resource_schemas(spec: &Value) -> Result<Vec<ResourceCatalog>> {
     let branches = spec
         .pointer("/components/schemas/ResourceInput/oneOf")
@@ -167,7 +180,17 @@ fn resource_schemas(spec: &Value) -> Result<Vec<ResourceCatalog>> {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{is_resource_path, resource_schemas};
+    use super::{is_resource_path, resource_notes, resource_schemas};
+
+    #[test]
+    fn points_bucket_provider_and_region_at_storage_providers() {
+        assert!(
+            resource_notes("Bucket")
+                .iter()
+                .any(|note| note.contains("brainpod storage providers"))
+        );
+        assert!(resource_notes("App").is_empty());
+    }
 
     #[test]
     fn recognizes_resource_schema_paths_without_shadowing_commands() {

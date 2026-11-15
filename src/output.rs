@@ -37,6 +37,7 @@ pub enum View {
     ConfigChange,
     Whoami,
     ClusterList,
+    StorageProviderList,
     PodList,
     PodCreated,
     PodGet,
@@ -179,6 +180,7 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::ConfigChange => render_config_change(value),
         View::Whoami => render_whoami(value),
         View::ClusterList => render_cluster_list(value),
+        View::StorageProviderList => render_storage_provider_list(value),
         View::PodList => render_pod_list(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
@@ -341,6 +343,15 @@ fn render_resource_schema(value: &Value) -> Vec<String> {
     render_schema_properties(value.get("schema"), 2, 0, &mut lines);
     lines.push(String::new());
     lines.extend(render_variable_catalog(value.get("variables")));
+    if let Some(notes) = value
+        .get("notes")
+        .and_then(Value::as_array)
+        .filter(|notes| !notes.is_empty())
+    {
+        lines.push(String::new());
+        lines.push("Notes".to_owned());
+        lines.extend(notes.iter().map(|note| format!("  {}", scalar(note))));
+    }
     lines
 }
 
@@ -678,6 +689,27 @@ fn render_cluster_list(value: &Value) -> Vec<String> {
         })
         .collect();
     table(&["ID", "PROVIDER", "REGION", "ARCHITECTURES"], rows)
+}
+
+fn render_storage_provider_list(value: &Value) -> Vec<String> {
+    let Some(providers) = value.as_array() else {
+        return vec!["No storage providers returned.".to_owned()];
+    };
+    if providers.is_empty() {
+        return vec!["No storage providers.".to_owned()];
+    }
+
+    let rows = providers
+        .iter()
+        .map(|provider| {
+            vec![
+                field(provider, "key"),
+                field(provider, "name"),
+                string_list(provider.get("regions")),
+            ]
+        })
+        .collect();
+    table(&["KEY", "NAME", "REGIONS"], rows)
 }
 
 fn render_pod_list(value: &Value) -> Vec<String> {
@@ -1430,8 +1462,8 @@ mod tests {
 
     use super::{
         render_cluster_list, render_event, render_image_inspect, render_image_list,
-        render_resource_schema, render_resource_variables, render_whoami, stream_error,
-        write_login_json, write_stream_json,
+        render_resource_schema, render_resource_variables, render_storage_provider_list,
+        render_whoami, stream_error, write_login_json, write_stream_json,
     };
 
     #[test]
@@ -1495,6 +1527,22 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("cluster-1")));
         assert!(lines.iter().any(|line| line.contains("hetzner")));
         assert!(lines.iter().any(|line| line.contains("amd64, arm64")));
+    }
+
+    #[test]
+    fn renders_storage_provider_list() {
+        let lines = render_storage_provider_list(&json!([
+            {"key": "exoscale", "name": "Exoscale", "regions": ["ch-gva-2", "de-fra-1"]}
+        ]));
+
+        assert!(lines[0].contains("KEY") && lines[0].contains("REGIONS"));
+        assert!(lines.iter().any(|line: &String| line.contains("exoscale")
+            && line.contains("Exoscale")
+            && line.contains("ch-gva-2, de-fra-1")));
+        assert_eq!(
+            render_storage_provider_list(&json!([])),
+            vec!["No storage providers.".to_owned()]
+        );
     }
 
     #[test]

@@ -251,9 +251,14 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         }
         ["blueprint"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
-        ["blueprint", _] | ["whoami"] | ["cluster"] | ["cluster", _] | ["pod"] | ["pod", _] => {
-            (Some(true), Some(false))
-        }
+        ["blueprint", _]
+        | ["whoami"]
+        | ["cluster"]
+        | ["cluster", _]
+        | ["storage"]
+        | ["storage", _]
+        | ["pod"]
+        | ["pod", _] => (Some(true), Some(false)),
         ["s3"] | ["s3", _] => (Some(true), Some(true)),
         ["image"]
         | ["image", _]
@@ -288,6 +293,7 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         ),
         ["whoami"]
         | ["cluster", "list"]
+        | ["storage", "providers"]
         | ["pod", "list"]
         | ["pod", "get"]
         | ["blueprint", "list"]
@@ -362,6 +368,7 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
             "Inspect the updated draft with `brainpod resource list`.",
             "Read the references other resources can use with `brainpod resource variables`.",
             "Discover the variables a kind exports before creating it with `brainpod describe resource <kind>`; it needs no pod and no API token.",
+            "Choose a Bucket's spec.provider and spec.region from `brainpod storage providers`.",
             "Deploy it with `brainpod deploy` when ready.",
         ],
         ["resource", "list"] | ["resource", "get"] => vec![
