@@ -180,7 +180,15 @@ fn resource_schemas(spec: &Value) -> Result<Vec<ResourceCatalog>> {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{is_resource_path, resource_notes, resource_schemas};
+    use super::{EMBEDDED_OPENAPI, is_resource_path, resource_notes, resource_schemas};
+
+    #[test]
+    fn embedded_fallback_describes_bucket() {
+        let spec: Value = serde_json::from_str(EMBEDDED_OPENAPI).unwrap();
+        let resources = resource_schemas(&spec).unwrap();
+
+        assert!(resources.iter().any(|resource| resource.kind == "Bucket"));
+    }
 
     #[test]
     fn points_bucket_provider_and_region_at_storage_providers() {
