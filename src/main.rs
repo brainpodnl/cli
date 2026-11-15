@@ -105,8 +105,12 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
 
     if let Command::Describe(args) = &opts.command {
         if openapi::is_resource_path(&args.command) {
-            let resource_description =
-                openapi::describe(&args.command, opts.endpoint.as_deref()).await?;
+            let endpoint = api_endpoint(
+                opts.endpoint.clone(),
+                environment("BRAINPOD_API_ENDPOINT"),
+                || Ok(Config::load(&Config::path()?)?.endpoint),
+            )?;
+            let resource_description = openapi::describe(&args.command, Some(&endpoint)).await?;
             if args.command.len() == 1 {
                 let mut description = describe::generate(Opts::command(), &args.command)?;
                 description
@@ -138,14 +142,9 @@ async fn run(opts: Opts) -> Result<output::CommandOutput> {
     let config_path = Config::path()?;
     let mut config = Config::load(&config_path)?;
 
-    let endpoint = match opts
-        .endpoint
-        .or_else(|| environment("BRAINPOD_API_ENDPOINT"))
-        .or_else(|| config.endpoint.clone())
-    {
-        Some(endpoint) => endpoint,
-        None => DEFAULT_ENDPOINT.to_owned(),
-    };
+    let endpoint = api_endpoint(opts.endpoint, environment("BRAINPOD_API_ENDPOINT"), || {
+        Ok(config.endpoint.clone())
+    })?;
     let api_token = opts
         .api_token
         .or_else(|| environment("BRAINPOD_API_TOKEN"))
@@ -234,6 +233,19 @@ fn install_crypto_provider() -> Result<()> {
 pub(crate) fn http_client_builder() -> Result<reqwest::ClientBuilder> {
     install_crypto_provider()?;
     Ok(reqwest::Client::builder())
+}
+
+/// Resolves the API endpoint: flag, then `BRAINPOD_API_ENDPOINT`, then the configured
+/// endpoint (loaded only when needed), then the production default.
+fn api_endpoint(
+    flag: Option<String>,
+    environment: Option<String>,
+    config: impl FnOnce() -> Result<Option<String>>,
+) -> Result<String> {
+    if let Some(endpoint) = flag.or(environment) {
+        return Ok(endpoint);
+    }
+    Ok(config()?.unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()))
 }
 
 fn environment(name: &str) -> Option<String> {
@@ -428,6 +440,30 @@ mod tests {
         let result = Opts::try_parse_from(["brainpod", "--api-key", "brain_example", "whoami"]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolves_api_endpoint_by_precedence() {
+        let config = || Ok(Some("https://config.example".to_owned()));
+        let flag = Some("https://flag.example".to_owned());
+        let env = Some("https://env.example".to_owned());
+
+        assert_eq!(
+            super::api_endpoint(flag, env.clone(), config).unwrap(),
+            "https://flag.example"
+        );
+        assert_eq!(
+            super::api_endpoint(None, env, || panic!("config must not be loaded")).unwrap(),
+            "https://env.example"
+        );
+        assert_eq!(
+            super::api_endpoint(None, None, config).unwrap(),
+            "https://config.example"
+        );
+        assert_eq!(
+            super::api_endpoint(None, None, || Ok(None)).unwrap(),
+            super::DEFAULT_ENDPOINT
+        );
     }
 
     #[test]
