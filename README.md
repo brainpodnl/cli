@@ -431,7 +431,7 @@ brainpod describe resource app --json
 brainpod describe resource postgres --json
 ```
 
-Resource schemas are fetched on each request from `<endpoint>/v1/openapi.json`, where the endpoint is resolved like every other command's: `--endpoint`, then `BRAINPOD_API_ENDPOINT`, then the configured endpoint, then `https://api.brainpod.io`. No API token is needed. If the document cannot be reached or does not contain the expected resource schemas, the version embedded in the CLI is used instead. Set `BRAINPOD_OPENAPI_URL` to override the document URL entirely.
+Resource schemas are fetched on each request from `<endpoint>/v1/openapi.json`, where the endpoint is resolved like every other command's: `--endpoint`, then `BRAINPOD_API_ENDPOINT`, then the configured endpoint, then `https://api.brainpod.io`. No API token is needed. If the document cannot be reached or does not contain the expected resource schemas, the version embedded in the CLI is used instead. Set `BRAINPOD_OPENAPI_URL` to override the document URL entirely; the endpoint and configuration file are then not consulted.
 
 Each schema carries the variables that kind exports, so the references an App resource can use in `spec.env` are discoverable before the resource exists. Names in this catalog are placeholders: `${<name>.uri}` becomes `${db.uri}` for a resource named `db`. Template-sourced variables also report the template, which contains references only and never values.
 
