@@ -212,6 +212,7 @@ brainpod --pod <pod> tunnel <database-resource> [<listen-address>] [--skip-prefl
 
 brainpod --pod <pod> deploy [--summary <text>] [--wait] [--timeout <seconds>]
 brainpod --pod <pod> redeploy
+brainpod --pod <pod> rollback <revision> [--deploy [--wait] [--timeout <seconds>]]
 
 brainpod --pod <pod> events --resource <resource> [--kind <app|http-access|platform>] \
   [--level <trace|debug|info|warn|error>] [--search <text>] \
@@ -221,6 +222,8 @@ brainpod --pod <pod> events --watch --resource <resource> \
   [--search <text>] [--range <5m|15m|30m|1h|24h|7d>] [--cursor <cursor>] \
   [--duration <1-20>] [--last-event-id <id>]
 ```
+
+`brainpod rollback` restores an earlier, non-draft revision by copying its resources into a new draft head, which replaces any undeployed draft changes. Without `--deploy` nothing runs until `brainpod deploy`; compare the restored draft with the live revision first using `brainpod revision diff <draft> --base <deployed>`. `--deploy` deploys it in the same request and, with `--wait`, waits until every resource is healthy. `redeploy` is not a rollback: it only retries the current head after its deployment failed.
 
 `brainpod tunnel` creates a two-hour database tunnel session and forwards local TCP connections until Ctrl-C is pressed. Select the pod with `--pod`, `BRAINPOD_POD`, or the configured default, then identify a deployed PostgreSQL, MariaDB, Valkey, or Microsoft SQL Server resource by name, URN, or stable UUID. For example, `brainpod --pod my-pod tunnel db` resolves `db` through the API before opening the tunnel. The listener defaults to `127.0.0.1` and the engine's standard port; pass an explicit address such as `127.0.0.1:15432` to override it. By default, the command prints an engine-specific banner with the local-to-remote port mapping, credentials, client command, and DSN before it starts accepting connections, so GUI clients such as DBeaver can be configured first. Pass `--skip-preflight` to skip credential retrieval and omit the password and DSN. The API token must grant `resources:read` and `database:connect` for the database or its pod.
 

@@ -47,8 +47,10 @@ pub enum Command {
     Resource(ResourceArgs),
     /// Deploy the current draft revision
     Deploy(DeployArgs),
-    /// Redeploy the deployed revision
+    /// Retry the pod's current head after its deployment failed
     Redeploy,
+    /// Restore an earlier revision as the pod's draft head, optionally deploying it
+    Rollback(RollbackArgs),
     /// Query pod events
     Events(EventsArgs),
 }
@@ -393,6 +395,26 @@ pub struct DeployArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct RollbackArgs {
+    /// ID of the revision to restore; it must not be a draft
+    revision: String,
+    /// Deploy the restored revision instead of leaving it as the draft head
+    #[arg(long)]
+    deploy: bool,
+    /// Wait until every resource in the deployed revision is healthy
+    #[arg(long, requires = "deploy")]
+    wait: bool,
+    /// Maximum number of seconds to wait
+    #[arg(
+        long,
+        default_value_t = 90,
+        requires = "wait",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    timeout: u64,
+}
+
+#[derive(Debug, Args)]
 pub struct EventsArgs {
     /// Event stream; omit to return all streams for the resource
     #[arg(long)]
@@ -653,12 +675,7 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
                 return Ok(CommandOutput::new(deployment, View::Deploy));
             }
 
-            let revision = deployment
-                .get("revisionId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    anyhow!("Brainpod API returned a deployment without a revision ID")
-                })?;
+            let revision = deployment_revision(&deployment)?;
             Ok(CommandOutput::new(
                 wait_for_revision(client, pod, revision, args.timeout, show_progress).await?,
                 View::DeployWait,
@@ -670,10 +687,42 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
                 .await?,
             View::Redeploy,
         )),
+        Command::Rollback(args) => {
+            let client = client_required(client)?;
+            let pod = pod_required(pod)?;
+            let query = if args.deploy {
+                vec![("deploy", "true".to_owned())]
+            } else {
+                Vec::new()
+            };
+            let rollback = client
+                .post(
+                    &["v1", "pods", pod, "rollback", &args.revision],
+                    &query,
+                    None,
+                )
+                .await?;
+            if !args.wait {
+                return Ok(CommandOutput::new(rollback, View::Rollback));
+            }
+
+            let revision = deployment_revision(&rollback)?;
+            Ok(CommandOutput::new(
+                wait_for_revision(client, pod, revision, args.timeout, show_progress).await?,
+                View::DeployWait,
+            ))
+        }
         Command::Events(args) => {
             handle_events(client_required(client)?, pod_required(pod)?, args).await
         }
     }
+}
+
+fn deployment_revision(deployment: &Value) -> Result<&str> {
+    deployment
+        .get("revisionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("Brainpod API returned a deployment without a revision ID"))
 }
 
 async fn handle_cluster(client: &Client, args: ClusterArgs) -> Result<CommandOutput> {
