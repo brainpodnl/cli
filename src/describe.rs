@@ -50,7 +50,8 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
             "Use blueprint get to inspect blueprint documentation, defaults, and its input schema before installation.",
             "Event queries accept a resource name, URN, or stable UUID in the selected pod.",
             "Use `brainpod describe resource <kind>` to inspect the resource schema and the variables that kind exports, fetched from the production OpenAPI document; the embedded document is used when it is unavailable. It needs no pod and no API token, so run it before creating anything.",
-            "Use `brainpod --pod <pod> resource variables` to read the resolved references of resources that already exist; secret values are never returned."
+            "Use `brainpod --pod <pod> resource variables` to read the resolved references of resources that already exist; secret values are never returned.",
+            "Use `brainpod api <path>` only for API endpoints without a first-class command; the path is relative to the configured endpoint, so the API token is never sent elsewhere."
         ]
     }))
 }
@@ -249,7 +250,7 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         ["describe"] | ["detect"] | ["login"] | ["config"] | ["config", _] => {
             (Some(false), Some(false))
         }
-        ["blueprint"] => (Some(true), None),
+        ["blueprint"] | ["api"] => (Some(true), None),
         ["blueprint", "install"] => (Some(true), Some(true)),
         ["blueprint", _]
         | ["whoami"]
@@ -349,6 +350,10 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
             "conditional-deployment",
             "Replaces the pod's draft head with a copy of an earlier revision, replacing any undeployed draft changes; deploys it only with --deploy.",
         ),
+        ["api"] => (
+            "conditional-remote-write",
+            "GET reads remote state; other methods can change remote state, including deploying.",
+        ),
         _ => ("mixed", "Effect depends on the selected subcommand."),
     }
 }
@@ -394,6 +399,11 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
         ["tunnel"] => vec![
             "Keep the tunnel running while the local database client is connected.",
             "Press Ctrl-C to close the tunnel session.",
+        ],
+        ["api"] => vec![
+            "Prefer a first-class command when one exists; use `brainpod api` only for endpoints the CLI does not cover.",
+            "The contract for every endpoint is the API's OpenAPI document at <endpoint>/v1/openapi.json, the document `brainpod describe resource <kind>` reads; fetch it with `brainpod api /v1/openapi.json`.",
+            "A pod is only required when PATH contains {pod}.",
         ],
         _ => Vec::new(),
     }
@@ -458,6 +468,11 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["events"] => vec![
             "brainpod --pod my-pod events --resource api",
             "brainpod --pod my-pod events --watch --resource urn:brain:app:default:api --json",
+        ],
+        ["api"] => vec![
+            "brainpod --pod my-pod api /v1/pods/{pod}/builds",
+            "brainpod api /v1/onboarding",
+            "brainpod --pod my-pod api -X POST /v1/pods/{pod}/secrets --input secret.json",
         ],
         _ => Vec::new(),
     }
@@ -602,6 +617,30 @@ mod tests {
             next_steps
                 .iter()
                 .any(|step| step.contains("brainpod describe resource <kind>"))
+        );
+    }
+
+    #[test]
+    fn describes_api_as_an_authenticated_conditional_write_with_an_optional_pod() {
+        let path = vec!["api".to_owned()];
+        let value = generate(crate::Opts::command(), &path).unwrap();
+
+        assert_eq!(
+            value
+                .pointer("/command/requirements/apiToken")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            value
+                .pointer("/command/requirements/pod")
+                .is_some_and(|value| value.is_null())
+        );
+        assert_eq!(
+            value
+                .pointer("/command/effect")
+                .and_then(|value| value.as_str()),
+            Some("conditional-remote-write")
         );
     }
 
