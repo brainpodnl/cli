@@ -135,13 +135,7 @@ impl Client {
             return Err(ApiError { status, body }.into());
         }
 
-        let is_event_stream = response
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(';').next())
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"));
-        if !is_event_stream {
+        if !is_event_stream(&response) {
             return Err(anyhow!("Brainpod API returned a non-event-stream response"));
         }
 
@@ -160,6 +154,24 @@ impl Client {
         query: &[(&str, String)],
         body: Option<&Value>,
     ) -> Result<Value> {
+        let response = self.send(method, path, query, body).await?;
+        let body = response_body(response).await?;
+        if body.is_string() {
+            return Err(anyhow!("Brainpod API returned a non-JSON response"));
+        }
+
+        Ok(body)
+    }
+
+    /// Sends an authenticated request to `path` below the configured endpoint and
+    /// returns the successful response unread; error statuses become [`ApiError`].
+    pub async fn send(
+        &self,
+        method: Method,
+        path: &[&str],
+        query: &[(&str, String)],
+        body: Option<&Value>,
+    ) -> Result<Response> {
         let mut request = self.http.request(method, self.url(path)?).query(query);
         if let Some(body) = body {
             request = request.json(body);
@@ -170,17 +182,12 @@ impl Client {
             .await
             .context("Brainpod API request failed")?;
         let status = response.status();
-        let body = response_body(response).await?;
-
         if !status.is_success() {
+            let body = response_body(response).await?;
             return Err(ApiError { status, body }.into());
         }
 
-        if body.is_string() {
-            return Err(anyhow!("Brainpod API returned a non-JSON response"));
-        }
-
-        Ok(body)
+        Ok(response)
     }
 
     fn url(&self, path: &[&str]) -> Result<Url> {
@@ -255,6 +262,15 @@ impl EventStream {
     fn parse_record(&mut self, record: &[u8]) -> Result<Option<EventStreamMessage>> {
         parse_sse_record(record, &mut self.last_event_id)
     }
+}
+
+pub fn is_event_stream(response: &Response) -> bool {
+    response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
 }
 
 async fn response_body(response: Response) -> Result<Value> {

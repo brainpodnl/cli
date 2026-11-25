@@ -7,7 +7,12 @@ use crate::client::{EventStreamMessage, EventWatch};
 
 pub enum CommandOutput {
     Silent,
-    Buffered { value: Value, view: View },
+    Buffered {
+        value: Value,
+        view: View,
+    },
+    /// A non-JSON response body, written verbatim.
+    Text(String),
     EventWatch(Box<EventWatch>),
 }
 
@@ -61,12 +66,14 @@ pub enum View {
     Redeploy,
     Rollback,
     Events,
+    Api,
 }
 
 pub async fn write(output: CommandOutput, json: bool) -> Result<()> {
     match output {
         CommandOutput::Silent => Ok(()),
         CommandOutput::Buffered { value, view } => write_buffered(&value, view, json),
+        CommandOutput::Text(text) => write_text(&text),
         CommandOutput::EventWatch(watch) => write_event_watch(*watch, json).await,
     }
 }
@@ -93,6 +100,15 @@ fn write_buffered(value: &Value, view: View, json: bool) -> Result<()> {
 
     for line in render(value, view, color) {
         writeln!(stdout, "{line}")?;
+    }
+    Ok(())
+}
+
+fn write_text(text: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(text.as_bytes())?;
+    if !text.ends_with('\n') {
+        writeln!(stdout)?;
     }
     Ok(())
 }
@@ -216,6 +232,10 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
             },
         ),
         View::Events => render_events(value, color),
+        // A raw API call prints the response as JSON with or without --json.
+        View::Api => {
+            vec![serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())]
+        }
     }
 }
 

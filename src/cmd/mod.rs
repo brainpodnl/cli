@@ -53,6 +53,8 @@ pub enum Command {
     Rollback(RollbackArgs),
     /// Query pod events
     Events(EventsArgs),
+    /// Make an authenticated request to a path on the Brainpod API
+    Api(ApiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -445,6 +447,65 @@ pub struct EventsArgs {
     last_event_id: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub struct ApiArgs {
+    /// API path relative to the configured endpoint, such as /v1/pods/{pod}/builds; `{pod}` is replaced by the selected pod
+    #[arg(value_name = "PATH")]
+    path: String,
+    /// HTTP method; defaults to GET, or POST when --input is given
+    #[arg(short = 'X', long, ignore_case = true)]
+    method: Option<ApiMethod>,
+    /// JSON request body read from a file, or `-` for stdin
+    #[arg(long, value_name = "FILE")]
+    input: Option<PathBuf>,
+    /// Query parameter; repeat for more parameters
+    #[arg(short, long, value_name = "KEY=VALUE", value_parser = parse_query_parameter)]
+    query: Vec<(String, String)>,
+}
+
+impl ApiArgs {
+    pub fn method(&self) -> reqwest::Method {
+        match (&self.method, &self.input) {
+            (Some(method), _) => method.as_method(),
+            (None, Some(_)) => reqwest::Method::POST,
+            (None, None) => reqwest::Method::GET,
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ApiMethod {
+    #[value(name = "GET")]
+    Get,
+    #[value(name = "POST")]
+    Post,
+    #[value(name = "PUT")]
+    Put,
+    #[value(name = "PATCH")]
+    Patch,
+    #[value(name = "DELETE")]
+    Delete,
+}
+
+impl ApiMethod {
+    fn as_method(&self) -> reqwest::Method {
+        match self {
+            Self::Get => reqwest::Method::GET,
+            Self::Post => reqwest::Method::POST,
+            Self::Put => reqwest::Method::PUT,
+            Self::Patch => reqwest::Method::PATCH,
+            Self::Delete => reqwest::Method::DELETE,
+        }
+    }
+}
+
+fn parse_query_parameter(value: &str) -> Result<(String, String), String> {
+    match value.split_once('=') {
+        Some((key, value)) if !key.is_empty() => Ok((key.to_owned(), value.to_owned())),
+        _ => Err("expected KEY=VALUE".to_owned()),
+    }
+}
+
 #[derive(Clone, Debug, ValueEnum)]
 enum EventKind {
     App,
@@ -715,6 +776,7 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
         Command::Events(args) => {
             handle_events(client_required(client)?, pod_required(pod)?, args).await
         }
+        Command::Api(args) => handle_api(client_required(client)?, pod, args).await,
     }
 }
 
@@ -1434,6 +1496,102 @@ async fn handle_events(client: &Client, pod: &str, args: EventsArgs) -> Result<C
     ))
 }
 
+async fn handle_api(client: &Client, pod: Option<&str>, args: ApiArgs) -> Result<CommandOutput> {
+    let method = args.method();
+    let segments = api_path_segments(&args.path, pod)?;
+    let body = args.input.as_deref().map(read_json).transpose()?;
+    let path = segments.iter().map(String::as_str).collect::<Vec<_>>();
+    let query = args
+        .query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.clone()))
+        .collect::<Vec<_>>();
+
+    let response = client.send(method, &path, &query, body.as_ref()).await?;
+    if crate::client::is_event_stream(&response) {
+        return Err(anyhow!(
+            "`brainpod api` does not stream server-sent events; use `brainpod events --watch` instead"
+        ));
+    }
+    let text = response
+        .text()
+        .await
+        .context("failed to read Brainpod API response")?;
+    if text.trim().is_empty() {
+        return Ok(CommandOutput::Silent);
+    }
+    Ok(match serde_json::from_str(&text) {
+        Ok(value) => CommandOutput::new(value, View::Api),
+        Err(_) => CommandOutput::Text(text),
+    })
+}
+
+/// Splits a `brainpod api` PATH into segments below the configured endpoint, so the
+/// request (and the API token it carries) can never leave that endpoint. `{pod}` is
+/// replaced by the selected pod inside its segment.
+fn api_path_segments(path: &str, pod: Option<&str>) -> Result<Vec<String>> {
+    if path.chars().any(char::is_control) {
+        return Err(anyhow!("API path must not contain control characters"));
+    }
+    if path.contains('\\') {
+        return Err(anyhow!("API path must not contain backslashes"));
+    }
+    if path.contains(['?', '#']) {
+        return Err(anyhow!(
+            "API path must not contain `?` or `#`; pass query parameters with --query KEY=VALUE"
+        ));
+    }
+    if has_scheme(path) || path.starts_with("//") {
+        return Err(anyhow!(
+            "API path must be relative to the configured endpoint, such as /v1/me; URLs are not accepted"
+        ));
+    }
+
+    let relative = path.strip_prefix('/').unwrap_or(path);
+    let mut segments = Vec::new();
+    for segment in relative.split('/') {
+        if segment.is_empty() {
+            return Err(anyhow!("API path must not contain empty segments"));
+        }
+        if is_dot_segment(segment) {
+            return Err(anyhow!("API path must not contain `.` or `..` segments"));
+        }
+        if !segment.contains("{pod}") {
+            segments.push(segment.to_owned());
+            continue;
+        }
+
+        let pod = pod.ok_or_else(|| {
+            anyhow!(
+                "API path contains {{pod}} but no pod is selected; pass --pod, set BRAINPOD_POD, or run `brainpod config set pod <name>`"
+            )
+        })?;
+        let segment = segment.replace("{pod}", pod);
+        if segment.is_empty() || is_dot_segment(&segment) || segment.chars().any(char::is_control) {
+            return Err(anyhow!(
+                "selected pod `{pod}` cannot be used as an API path segment"
+            ));
+        }
+        segments.push(segment);
+    }
+    Ok(segments)
+}
+
+/// Whether `path` starts like an absolute URL (`scheme:`), as in `https://host` or `http:host`.
+fn has_scheme(path: &str) -> bool {
+    path.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.starts_with(|character: char| character.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "+-.".contains(character))
+    })
+}
+
+fn is_dot_segment(segment: &str) -> bool {
+    let decoded = segment.to_ascii_lowercase().replace("%2e", ".");
+    matches!(decoded.as_str(), "." | "..")
+}
+
 fn client_required(client: Option<&Client>) -> Result<&Client> {
     client.ok_or_else(|| anyhow!("API client is not configured"))
 }
@@ -1478,7 +1636,7 @@ fn read_json(path: &Path) -> Result<Value> {
 mod tests {
     use serde_json::json;
 
-    use super::variable_entries;
+    use super::{api_path_segments, variable_entries};
 
     #[test]
     fn reads_variables_off_a_single_resource() {
@@ -1512,5 +1670,121 @@ mod tests {
     #[test]
     fn reports_no_entries_for_an_unexpected_shape() {
         assert!(variable_entries(&json!({"error": "nope"})).is_empty());
+    }
+
+    fn rejection(path: &str) -> String {
+        api_path_segments(path, Some("my-pod"))
+            .expect_err(path)
+            .to_string()
+    }
+
+    #[test]
+    fn accepts_paths_relative_to_the_endpoint() {
+        assert_eq!(api_path_segments("/v1/me", None).unwrap(), ["v1", "me"]);
+        assert_eq!(api_path_segments("v1/me", None).unwrap(), ["v1", "me"]);
+        assert_eq!(
+            api_path_segments(
+                "/v1/pods/p/resources/resolve/urn:brain:app:default:api",
+                None
+            )
+            .unwrap(),
+            [
+                "v1",
+                "pods",
+                "p",
+                "resources",
+                "resolve",
+                "urn:brain:app:default:api"
+            ]
+        );
+        assert_eq!(
+            api_path_segments("/v1/pods/{pod}/builds", Some("my-pod")).unwrap(),
+            ["v1", "pods", "my-pod", "builds"]
+        );
+    }
+
+    #[test]
+    fn keeps_a_pod_with_a_slash_in_one_segment() {
+        assert_eq!(
+            api_path_segments("/v1/pods/{pod}", Some("a/b")).unwrap(),
+            ["v1", "pods", "a/b"]
+        );
+    }
+
+    #[test]
+    fn requires_a_pod_only_for_the_placeholder() {
+        let error = api_path_segments("/v1/pods/{pod}", None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no pod is selected"), "{error}");
+        assert!(api_path_segments("/v1/onboarding", None).is_ok());
+    }
+
+    #[test]
+    fn rejects_dot_pods() {
+        for pod in [".", "..", "%2e%2E", ""] {
+            assert!(
+                api_path_segments("/v1/pods/{pod}", Some(pod)).is_err(),
+                "{pod}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_absolute_urls() {
+        for path in [
+            "https://example.com/v1/me",
+            "http://example.com/v1/me",
+            "http:example.com/v1/me",
+            "HTTPS://example.com",
+            "localhost:8080/v1/me",
+        ] {
+            assert!(rejection(path).contains("relative"), "{path}");
+        }
+    }
+
+    #[test]
+    fn rejects_scheme_relative_paths() {
+        assert!(rejection("//example.com/v1/me").contains("relative"));
+    }
+
+    #[test]
+    fn rejects_backslashes() {
+        assert!(rejection("/v1\\me").contains("backslash"));
+        assert!(rejection("\\\\example.com/v1").contains("backslash"));
+    }
+
+    #[test]
+    fn rejects_dot_segments() {
+        for path in [
+            "/v1/../me",
+            "/v1/./me",
+            "../v1/me",
+            "/v1/..",
+            "/v1/%2e%2e/me",
+            "/v1/.%2E/me",
+        ] {
+            assert!(rejection(path).contains("`.` or `..`"), "{path}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty_segments() {
+        for path in ["", "/", "/v1//me", "/v1/me/"] {
+            assert!(rejection(path).contains("empty segments"), "{path}");
+        }
+    }
+
+    #[test]
+    fn rejects_query_and_fragment() {
+        assert!(rejection("/v1/me?x=1").contains("--query"));
+        assert!(rejection("/v1/me#top").contains("--query"));
+    }
+
+    #[test]
+    fn rejects_control_characters() {
+        for path in ["/v1/me\n", "/v1/\r\nme", "/v1/m\0e", "/v1/\u{7f}"] {
+            assert!(rejection(path).contains("control characters"), "{path:?}");
+        }
     }
 }

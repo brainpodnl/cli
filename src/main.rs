@@ -427,6 +427,55 @@ mod tests {
         assert!(!args.no_browser);
     }
 
+    fn parse_api(arguments: &[&str]) -> super::cmd::ApiArgs {
+        let opts = Opts::try_parse_from(["brainpod", "api"].iter().chain(arguments)).unwrap();
+        let Command::Api(args) = opts.command else {
+            panic!("expected api command");
+        };
+        args
+    }
+
+    #[test]
+    fn defaults_api_method_to_get() {
+        assert_eq!(parse_api(&["/v1/me"]).method(), reqwest::Method::GET);
+    }
+
+    #[test]
+    fn defaults_api_method_to_post_with_input() {
+        assert_eq!(
+            parse_api(&["/v1/pods/{pod}/secrets", "--input", "secret.json"]).method(),
+            reqwest::Method::POST
+        );
+    }
+
+    #[test]
+    fn prefers_an_explicit_api_method() {
+        assert_eq!(
+            parse_api(&["-X", "PUT", "/v1/x", "--input", "-"]).method(),
+            reqwest::Method::PUT
+        );
+        assert_eq!(
+            parse_api(&["--method", "delete", "/v1/x"]).method(),
+            reqwest::Method::DELETE
+        );
+    }
+
+    #[test]
+    fn parses_repeated_api_query_parameters() {
+        assert!(
+            Opts::try_parse_from(["brainpod", "api", "/v1/x", "-q", "a=1", "--query", "b="])
+                .is_ok()
+        );
+        assert!(Opts::try_parse_from(["brainpod", "api", "/v1/x", "-q", "novalue"]).is_err());
+        assert!(Opts::try_parse_from(["brainpod", "api", "/v1/x", "-X", "HEAD"]).is_err());
+    }
+
+    #[test]
+    fn api_needs_an_api_token() {
+        let opts = Opts::try_parse_from(["brainpod", "api", "/v1/me"]).unwrap();
+        assert!(super::cmd::needs_api_token(&opts.command));
+    }
+
     #[test]
     fn rejects_rollback_wait_without_deploy() {
         let result = Opts::try_parse_from(["brainpod", "rollback", "rev", "--wait"]);
