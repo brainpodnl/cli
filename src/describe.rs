@@ -269,6 +269,7 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         | ["tunnel"]
         | ["deploy"]
         | ["redeploy"]
+        | ["rollback"]
         | ["events"] => (Some(true), Some(true)),
         _ => (None, None),
     }
@@ -340,7 +341,14 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
             "Changes the pod's mutable draft unless --dry-run is supplied; it does not deploy.",
         ),
         ["deploy"] => ("deployment", "Deploys the pod's current mutable draft."),
-        ["redeploy"] => ("deployment", "Redeploys the currently deployed revision."),
+        ["redeploy"] => (
+            "deployment",
+            "Retries deploying the pod's current head after its deployment failed.",
+        ),
+        ["rollback"] => (
+            "conditional-deployment",
+            "Replaces the pod's draft head with a copy of an earlier revision, replacing any undeployed draft changes; deploys it only with --deploy.",
+        ),
         _ => ("mixed", "Effect depends on the selected subcommand."),
     }
 }
@@ -360,6 +368,10 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
         ["image", "build"] => vec![
             "Use the returned digest-pinned reference as an App resource's spec.image.",
             "Deploy the updated App resource with `brainpod deploy` when ready.",
+        ],
+        ["rollback"] => vec![
+            "Find the revision to restore with `brainpod revision list`.",
+            "Without --deploy, compare the restored draft with what runs using `brainpod revision diff <draft> --base <deployed>`, then deploy it with `brainpod deploy` when ready.",
         ],
         ["blueprint", "install"]
         | ["resource", "create"]
@@ -438,6 +450,10 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ],
         ["deploy"] => vec![
             "brainpod --pod my-pod deploy --summary \"Configure application resources\" --wait --json",
+        ],
+        ["rollback"] => vec![
+            "brainpod --pod my-pod rollback <revision>",
+            "brainpod --pod my-pod rollback <revision> --deploy --wait --json",
         ],
         ["events"] => vec![
             "brainpod --pod my-pod events --resource api",

@@ -59,6 +59,7 @@ pub enum View {
     Deploy,
     DeployWait,
     Redeploy,
+    Rollback,
     Events,
 }
 
@@ -206,6 +207,14 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::Deploy => render_deployment(value, "Deployment accepted"),
         View::DeployWait => render_healthy_revision(value, "Deployment is healthy"),
         View::Redeploy => render_deployment(value, "Redeployment accepted"),
+        View::Rollback => render_deployment(
+            value,
+            if field(value, "state") == "draft" {
+                "Revision restored as the draft head"
+            } else {
+                "Rollback deployment accepted"
+            },
+        ),
         View::Events => render_events(value, color),
     }
 }

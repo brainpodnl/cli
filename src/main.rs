@@ -428,6 +428,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_rollback_wait_without_deploy() {
+        let result = Opts::try_parse_from(["brainpod", "rollback", "rev", "--wait"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_rollback_deploy_and_wait() {
+        let opts =
+            Opts::try_parse_from(["brainpod", "rollback", "rev", "--deploy", "--wait"]).unwrap();
+
+        assert!(matches!(opts.command, Command::Rollback(_)));
+    }
+
+    #[test]
     fn parses_api_token() {
         let opts =
             Opts::try_parse_from(["brainpod", "--api-token", "brain_example", "whoami"]).unwrap();
