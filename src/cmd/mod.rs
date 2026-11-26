@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, CommandFactory as _, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 
@@ -35,6 +35,14 @@ pub enum Command {
     Github(GithubArgs),
     /// Inspect pods
     Pod(PodArgs),
+    /// Link a GitHub repository to the pod and show the link
+    Repo(RepoArgs),
+    /// Start the pod's repository onboarding, an agent run that deploys the pod from its linked GitHub repository
+    Onboard(OnboardArgs),
+    /// List, inspect, and answer the pod's agent runs
+    Runs(RunsArgs),
+    /// List and inspect the pod's agent sessions, such as its repository onboarding
+    Sessions(SessionsArgs),
     /// Browse and install blueprints
     Blueprint(BlueprintArgs),
     /// Manage container images
@@ -177,6 +185,142 @@ enum PodCommand {
     },
     /// Get a pod
     Get { pod: String },
+}
+
+#[derive(Debug, Args)]
+pub struct RepoArgs {
+    #[command(subcommand)]
+    command: RepoCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RepoCommand {
+    /// Link a GitHub repository the Brainpod GitHub App can access to the pod; a linked repository is never replaced
+    Link {
+        /// The repository as OWNER/NAME, matched case-insensitively
+        #[arg(value_name = "OWNER/NAME", value_parser = parse_repository_name)]
+        repository: String,
+    },
+    /// Show the GitHub repository linked to the pod
+    Get,
+}
+
+#[derive(Debug, Args)]
+pub struct OnboardArgs {
+    /// Branch, tag, or commit of the linked repository to onboard; defaults to its default branch
+    #[arg(long = "ref", value_name = "REF")]
+    git_ref: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RunsArgs {
+    #[command(subcommand)]
+    command: RunsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RunsCommand {
+    /// List the pod's agent runs
+    List,
+    /// Get an agent run: its step, state, error, and open questions
+    Get {
+        /// Agent run ID
+        run: String,
+    },
+    /// Cancel an agent run that has not finished
+    Cancel {
+        /// Agent run ID
+        run: String,
+    },
+    /// Retry a failed, timed-out, or canceled run of a repository onboarding
+    Retry {
+        /// Agent run ID
+        run: String,
+    },
+    /// Request changes to a reviewed repository onboarding; the run must be its latest, a succeeded `assemble`
+    Reply {
+        /// Agent run ID
+        run: String,
+        /// The change to the reviewed draft, in your own words
+        message: String,
+    },
+    /// Answer every open question of a run awaiting input and resume it
+    Answer {
+        /// Agent run ID
+        run: String,
+        /// An answer as QUESTION_ID=ANSWER; repeat it for every open question
+        #[arg(
+            long = "answer",
+            value_name = "QUESTION_ID=ANSWER",
+            required = true,
+            value_parser = parse_answer
+        )]
+        answers: Vec<(String, String)>,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct SessionsArgs {
+    #[command(subcommand)]
+    command: SessionsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsCommand {
+    /// List the pod's agent sessions, newest first
+    List {
+        /// Only sessions with this label, such as purpose=repo-onboarding
+        #[arg(long, value_name = "KEY=VALUE", value_parser = parse_label)]
+        label: Option<String>,
+        /// Only sessions with this status
+        #[arg(long)]
+        status: Option<SessionStatus>,
+    },
+    /// Get an agent session: its runs per step, open questions, and continuous-deploys pull request
+    Get {
+        /// Agent session ID, the `sessionId` of its runs
+        session: String,
+    },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum SessionStatus {
+    Active,
+    Completed,
+    Canceled,
+}
+
+impl SessionStatus {
+    fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Completed => "completed",
+            Self::Canceled => "canceled",
+        }
+    }
+}
+
+fn parse_repository_name(value: &str) -> Result<String, String> {
+    match value.split_once('/') {
+        Some((owner, name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/') => {
+            Ok(value.to_owned())
+        }
+        _ => Err("expected OWNER/NAME, such as acme/web".to_owned()),
+    }
+}
+
+fn parse_answer(value: &str) -> Result<(String, String), String> {
+    match value.split_once('=') {
+        Some((id, answer)) if !id.is_empty() => Ok((id.to_owned(), answer.to_owned())),
+        _ => Err("expected QUESTION_ID=ANSWER".to_owned()),
+    }
+}
+
+fn parse_label(value: &str) -> Result<String, String> {
+    match value.split_once('=') {
+        Some((key, _)) if !key.is_empty() => Ok(value.to_owned()),
+        _ => Err("expected KEY=VALUE, such as purpose=repo-onboarding".to_owned()),
+    }
 }
 
 #[derive(Debug, Args)]
@@ -708,6 +852,37 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
             handle_github(client_required(client)?, dashboard_endpoint, args).await
         }
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
+        Command::Repo(args) => {
+            handle_repo(
+                client_required(client)?,
+                pod_required(pod)?,
+                dashboard_endpoint,
+                args,
+            )
+            .await
+        }
+        Command::Onboard(args) => {
+            let mut body = json!({ "agentKey": REPO_ONBOARDING_AGENT_KEY });
+            if let Some(git_ref) = args.git_ref {
+                body["ref"] = json!(git_ref);
+            }
+            Ok(CommandOutput::new(
+                client_required(client)?
+                    .post(
+                        &["v1", "pods", pod_required(pod)?, "agent-runs"],
+                        &[],
+                        Some(&body),
+                    )
+                    .await?,
+                View::OnboardStarted,
+            ))
+        }
+        Command::Runs(args) => {
+            handle_runs(client_required(client)?, pod_required(pod)?, args).await
+        }
+        Command::Sessions(args) => {
+            handle_sessions(client_required(client)?, pod_required(pod)?, args).await
+        }
         Command::Tunnel(args) => {
             crate::tunnel::handle(
                 client_required(client)?,
@@ -881,6 +1056,244 @@ fn with_connect_link(mut response: Value, dashboard_endpoint: &str) -> Value {
         );
     }
     response
+}
+
+/// The agent whose run starts a Pod's repository onboarding.
+const REPO_ONBOARDING_AGENT_KEY: &str = "repo-onboarding";
+
+async fn handle_repo(
+    client: &Client,
+    pod: &str,
+    dashboard_endpoint: &str,
+    args: RepoArgs,
+) -> Result<CommandOutput> {
+    match args.command {
+        RepoCommand::Link { repository } => {
+            let found = find_github_repository(client, dashboard_endpoint, &repository).await?;
+            let body = json!({
+                "installationId": found.get("installationId"),
+                "repositoryId": found.get("id"),
+            });
+            Ok(CommandOutput::new(
+                client
+                    .put(&["v1", "pods", pod, "repository"], &body)
+                    .await?,
+                View::RepositoryLinked,
+            ))
+        }
+        RepoCommand::Get => match client.get(&["v1", "pods", pod, "repository"], &[]).await {
+            Ok(repository) => Ok(CommandOutput::new(repository, View::Repository)),
+            Err(error) if is_unlinked_repository(&error) => Err(anyhow!(
+                "no repository linked; run `brainpod --pod {pod} repo link OWNER/NAME`"
+            )),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+/// Pages through the repositories the GitHub App can access for the one named `full_name`.
+async fn find_github_repository(
+    client: &Client,
+    dashboard_endpoint: &str,
+    full_name: &str,
+) -> Result<Value> {
+    let mut page: u32 = 1;
+    loop {
+        let listing = client
+            .get(
+                &["v1", "github", "repositories"],
+                &[
+                    ("query", full_name.to_owned()),
+                    ("page", page.to_string()),
+                    ("perPage", "100".to_owned()),
+                ],
+            )
+            .await?;
+        if let Some(repository) = matching_repository(&listing, full_name) {
+            return Ok(repository.clone());
+        }
+        if !value_is_link(listing.pointer("/_links/next")) {
+            return Err(repository_not_accessible(
+                full_name,
+                &listing,
+                &crate::output::github_connect_url(dashboard_endpoint),
+            ));
+        }
+        page += 1;
+    }
+}
+
+fn value_is_link(link: Option<&Value>) -> bool {
+    link.and_then(|link| link.get("href"))
+        .is_some_and(Value::is_string)
+}
+
+fn matching_repository<'a>(listing: &'a Value, full_name: &str) -> Option<&'a Value> {
+    listing.get("items")?.as_array()?.iter().find(|repository| {
+        repository
+            .get("fullName")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(full_name))
+    })
+}
+
+fn repository_not_accessible(full_name: &str, listing: &Value, connect_url: &str) -> anyhow::Error {
+    let mut message =
+        format!("GitHub repository {full_name} is not accessible to the Brainpod GitHub App");
+    for hint in crate::output::github_access_hints(listing.get("installations"), connect_url) {
+        message.push('\n');
+        message.push_str(&hint);
+    }
+    anyhow!(message)
+}
+
+fn is_unlinked_repository(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<crate::client::ApiError>())
+        .any(|error| {
+            error.status.as_u16() == 404
+                && error
+                    .body
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("no linked repository"))
+        })
+}
+
+async fn handle_runs(client: &Client, pod: &str, args: RunsArgs) -> Result<CommandOutput> {
+    let (response, view) = match args.command {
+        RunsCommand::List => (
+            client.get(&["v1", "pods", pod, "agent-runs"], &[]).await?,
+            View::RunList,
+        ),
+        RunsCommand::Get { run } => (
+            client
+                .get(&["v1", "pods", pod, "agent-runs", &run], &[])
+                .await?,
+            View::Run,
+        ),
+        RunsCommand::Cancel { run } => (
+            client
+                .post(
+                    &["v1", "pods", pod, "agent-runs", &run, "cancel"],
+                    &[],
+                    None,
+                )
+                .await?,
+            View::RunChanged("Run canceled"),
+        ),
+        RunsCommand::Retry { run } => (
+            client
+                .post(&["v1", "pods", pod, "agent-runs", &run, "retry"], &[], None)
+                .await?,
+            View::RunChanged("Retry queued"),
+        ),
+        RunsCommand::Reply { run, message } => {
+            let body = json!({
+                "requestId": uuid::Uuid::new_v4().to_string(),
+                "prompt": message,
+            });
+            (
+                client
+                    .post(
+                        &["v1", "pods", pod, "agent-runs", &run, "reply"],
+                        &[],
+                        Some(&body),
+                    )
+                    .await?,
+                View::RunChanged("Reply queued"),
+            )
+        }
+        RunsCommand::Answer { run, answers } => {
+            let current = client
+                .get(&["v1", "pods", pod, "agent-runs", &run], &[])
+                .await?;
+            let body = resume_input(&current, answers)?;
+            (
+                client
+                    .post(
+                        &["v1", "pods", pod, "agent-runs", &run, "resume"],
+                        &[],
+                        Some(&body),
+                    )
+                    .await?,
+                View::RunChanged("Run resumed"),
+            )
+        }
+    };
+    Ok(CommandOutput::new(response, view))
+}
+
+/// The resume input of a run awaiting input: exactly one answer to each of its open questions.
+fn resume_input(run: &Value, answers: Vec<(String, String)>) -> Result<Value> {
+    let id = run.get("id").and_then(Value::as_str).unwrap_or("-");
+    let state = run.get("state").and_then(Value::as_str).unwrap_or("-");
+    if state != "awaiting_input" {
+        bail!("run {id} is {state}, not awaiting input; it has no open questions to answer");
+    }
+    let questions = run
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|question| question.get("id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    let open = questions.join(", ");
+    let mut answered = Vec::with_capacity(answers.len());
+    for (question, _) in &answers {
+        if !questions.contains(&question.as_str()) {
+            bail!("run {id} has no open question `{question}`; its open questions: {open}");
+        }
+        if answered.contains(&question.as_str()) {
+            bail!("question `{question}` is answered more than once");
+        }
+        answered.push(question.as_str());
+    }
+    let missing = questions
+        .iter()
+        .filter(|question| !answered.contains(question))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!(
+            "answer every open question of run {id}; missing: {}",
+            missing.join(", ")
+        );
+    }
+    Ok(json!({
+        "answers": answers
+            .into_iter()
+            .map(|(id, answer)| json!({ "id": id, "answer": answer }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+async fn handle_sessions(client: &Client, pod: &str, args: SessionsArgs) -> Result<CommandOutput> {
+    match args.command {
+        SessionsCommand::List { label, status } => {
+            let mut query = Vec::new();
+            push_query(&mut query, "label", label);
+            push_query(
+                &mut query,
+                "status",
+                status.map(|status| status.as_api_str().to_owned()),
+            );
+            Ok(CommandOutput::new(
+                client
+                    .get(&["v1", "pods", pod, "agent-sessions"], &query)
+                    .await?,
+                View::SessionList,
+            ))
+        }
+        SessionsCommand::Get { session } => Ok(CommandOutput::new(
+            client
+                .get(&["v1", "pods", pod, "agent-sessions", &session], &[])
+                .await?,
+            View::Session,
+        )),
+    }
 }
 
 fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<CommandOutput> {
@@ -1712,9 +2125,179 @@ fn read_json(path: &Path) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::sync::{Arc, Mutex};
 
-    use super::{api_path_segments, variable_entries, with_connect_link};
+    use axum::Router;
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::http::{Method, Uri};
+    use serde_json::{Value, json};
+
+    use super::{
+        RepoArgs, RepoCommand, api_path_segments, handle_repo, matching_repository,
+        repository_not_accessible, resume_input, variable_entries, with_connect_link,
+    };
+    use crate::client::Client;
+
+    /// A request the fake API received: method, path, query pairs, and JSON body.
+    type Recorded = (Method, String, Vec<(String, String)>, Value);
+
+    #[derive(Clone)]
+    struct FakeApi {
+        pages: Arc<Vec<Value>>,
+        requests: Arc<Mutex<Vec<Recorded>>>,
+    }
+
+    async fn fake_api(State(api): State<FakeApi>, method: Method, uri: Uri, body: Bytes) -> String {
+        let query: Vec<(String, String)> = reqwest::Url::parse(&format!("http://fake{uri}"))
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+        let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        let response = if method == Method::GET && uri.path() == "/v1/github/repositories" {
+            let page: usize = query
+                .iter()
+                .find(|(key, _)| key == "page")
+                .map(|(_, page)| page.parse().unwrap())
+                .unwrap();
+            api.pages[page - 1].clone()
+        } else {
+            json!({"linked": true})
+        };
+        api.requests
+            .lock()
+            .unwrap()
+            .push((method, uri.path().to_owned(), query, body));
+        response.to_string()
+    }
+
+    /// Runs `repo link full_name` against a fake API serving `pages` of repositories.
+    async fn link_repository(
+        pages: Vec<Value>,
+        full_name: &str,
+    ) -> (anyhow::Result<()>, Vec<Recorded>) {
+        let api = FakeApi {
+            pages: Arc::new(pages),
+            requests: Arc::default(),
+        };
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().fallback(fake_api).with_state(api.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let client = Client::try_new(&format!("http://{address}"), "token").unwrap();
+        let result = handle_repo(
+            &client,
+            "my-pod",
+            "https://console.example.test/",
+            RepoArgs {
+                command: RepoCommand::Link {
+                    repository: full_name.to_owned(),
+                },
+            },
+        )
+        .await
+        .map(drop);
+        server.abort();
+
+        let requests = api.requests.lock().unwrap().clone();
+        (result, requests)
+    }
+
+    fn listing_query(page: &str) -> Vec<(String, String)> {
+        [("query", "acme/web"), ("page", page), ("perPage", "100")]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn links_a_repository_found_on_a_later_page() {
+        let (result, requests) = link_repository(
+            vec![
+                json!({
+                    "items": [{"id": 1, "installationId": 7, "fullName": "acme/web-admin"}],
+                    "_links": {"next": {"href": "/v1/github/repositories?query=acme%2Fweb&page=2&perPage=100"}}
+                }),
+                json!({
+                    "items": [{"id": 2, "installationId": 8, "fullName": "Acme/Web"}],
+                    "_links": {}
+                }),
+            ],
+            "acme/web",
+        )
+        .await;
+
+        result.unwrap();
+        assert_eq!(
+            requests,
+            vec![
+                (
+                    Method::GET,
+                    "/v1/github/repositories".to_owned(),
+                    listing_query("1"),
+                    Value::Null,
+                ),
+                (
+                    Method::GET,
+                    "/v1/github/repositories".to_owned(),
+                    listing_query("2"),
+                    Value::Null,
+                ),
+                (
+                    Method::PUT,
+                    "/v1/pods/my-pod/repository".to_owned(),
+                    Vec::new(),
+                    json!({"installationId": 8, "repositoryId": 2}),
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn links_nothing_when_the_listing_runs_out_without_a_match() {
+        let installations = json!([{
+            "account": {"login": "acme"},
+            "repositorySelection": "selected",
+            "_links": {"settings": {"href": "https://github.com/settings/installations/7"}}
+        }]);
+        let (result, requests) = link_repository(
+            vec![
+                json!({
+                    "items": [{"id": 1, "installationId": 7, "fullName": "acme/web-admin"}],
+                    "installations": installations,
+                    "_links": {"next": {"href": "/v1/github/repositories?query=acme%2Fweb&page=2&perPage=100"}}
+                }),
+                json!({
+                    "items": [{"id": 3, "installationId": 7, "fullName": "acme/website"}],
+                    "installations": installations,
+                    "_links": {}
+                }),
+            ],
+            "acme/web",
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "GitHub repository acme/web is not accessible to the Brainpod GitHub App\n\
+             Missing a repository? Grant access at https://github.com/settings/installations/7 (acme)\n\
+             Add another GitHub account or organization: https://console.example.test/github/signin"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .map(|(method, path, query, _)| (method.clone(), path.as_str(), query.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Method::GET, "/v1/github/repositories", listing_query("1")),
+                (Method::GET, "/v1/github/repositories", listing_query("2")),
+            ]
+        );
+    }
 
     #[test]
     fn adds_the_connect_link_next_to_the_api_links() {
@@ -1911,5 +2494,191 @@ mod tests {
             crate::Opts::try_parse_from(["brainpod", "github", "repos", "--per-page", "101"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn matches_a_repository_by_its_full_name_ignoring_case() {
+        let listing = json!({
+            "items": [
+                {"id": 1, "installationId": 7, "fullName": "acme/web-admin"},
+                {"id": 2, "installationId": 7, "fullName": "Acme/Web"}
+            ]
+        });
+
+        assert_eq!(
+            matching_repository(&listing, "acme/web").map(|repository| &repository["id"]),
+            Some(&json!(2))
+        );
+        assert!(matching_repository(&listing, "acme/we").is_none());
+        assert!(matching_repository(&json!({"items": []}), "acme/web").is_none());
+    }
+
+    #[test]
+    fn names_an_inaccessible_repository_with_the_grant_access_hints() {
+        let message = repository_not_accessible(
+            "acme/web",
+            &json!({
+                "items": [],
+                "installations": [{
+                    "account": {"login": "acme"},
+                    "repositorySelection": "selected",
+                    "_links": {"settings": {"href": "https://github.com/settings/installations/7"}}
+                }]
+            }),
+            "https://console.example.test/github/signin",
+        )
+        .to_string();
+
+        assert_eq!(
+            message,
+            "GitHub repository acme/web is not accessible to the Brainpod GitHub App\n\
+             Missing a repository? Grant access at https://github.com/settings/installations/7 (acme)\n\
+             Add another GitHub account or organization: https://console.example.test/github/signin"
+        );
+    }
+
+    fn awaiting_run() -> serde_json::Value {
+        json!({
+            "id": "run-1",
+            "state": "awaiting_input",
+            "questions": [{"id": "database", "question": "Which database?"}, {"id": "domain", "question": "Which domain?"}]
+        })
+    }
+
+    fn answers(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(id, answer)| ((*id).to_owned(), (*answer).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn resumes_with_one_answer_per_open_question() {
+        let input = resume_input(
+            &awaiting_run(),
+            answers(&[("domain", "shop.example.com"), ("database", "postgres=16")]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            input,
+            json!({"answers": [
+                {"id": "domain", "answer": "shop.example.com"},
+                {"id": "database", "answer": "postgres=16"}
+            ]})
+        );
+    }
+
+    #[test]
+    fn refuses_missing_unknown_or_repeated_answers() {
+        let error = |pairs: &[(&str, &str)]| {
+            resume_input(&awaiting_run(), answers(pairs))
+                .unwrap_err()
+                .to_string()
+        };
+
+        assert_eq!(
+            error(&[("database", "postgres")]),
+            "answer every open question of run run-1; missing: domain"
+        );
+        assert_eq!(
+            error(&[("region", "eu")]),
+            "run run-1 has no open question `region`; its open questions: database, domain"
+        );
+        assert_eq!(
+            error(&[("database", "a"), ("database", "b")]),
+            "question `database` is answered more than once"
+        );
+        assert_eq!(
+            resume_input(
+                &json!({"id": "run-1", "state": "running", "questions": null}),
+                answers(&[("database", "postgres")])
+            )
+            .unwrap_err()
+            .to_string(),
+            "run run-1 is running, not awaiting input; it has no open questions to answer"
+        );
+    }
+
+    #[test]
+    fn parses_the_onboarding_commands() {
+        use clap::Parser as _;
+
+        use super::{
+            Command, OnboardArgs, RepoArgs, RepoCommand, RunsArgs, RunsCommand, SessionStatus,
+            SessionsArgs, SessionsCommand,
+        };
+
+        let parse = |args: &[&str]| {
+            crate::Opts::try_parse_from(["brainpod", "--pod", "shop"].iter().chain(args))
+        };
+
+        assert!(matches!(
+            parse(&["repo", "link", "acme/web"]).unwrap().command,
+            Command::Repo(RepoArgs { command: RepoCommand::Link { repository } }) if repository == "acme/web"
+        ));
+        for invalid in ["acme", "acme/", "/web", "acme/web/extra"] {
+            assert!(parse(&["repo", "link", invalid]).is_err(), "{invalid}");
+        }
+        assert!(matches!(
+            parse(&["onboard", "--ref", "release"]).unwrap().command,
+            Command::Onboard(OnboardArgs { git_ref: Some(git_ref) }) if git_ref == "release"
+        ));
+        assert!(matches!(
+            parse(&["onboard"]).unwrap().command,
+            Command::Onboard(OnboardArgs { git_ref: None })
+        ));
+        assert!(matches!(
+            parse(&["runs", "reply", "run-1", "Use Valkey"]).unwrap().command,
+            Command::Runs(RunsArgs { command: RunsCommand::Reply { run, message } })
+                if run == "run-1" && message == "Use Valkey"
+        ));
+        let Command::Runs(RunsArgs {
+            command:
+                RunsCommand::Answer {
+                    run,
+                    answers: parsed,
+                },
+        }) = parse(&[
+            "runs",
+            "answer",
+            "run-1",
+            "--answer",
+            "database=postgres",
+            "--answer",
+            "domain=a=b",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("expected runs answer");
+        };
+        assert_eq!(run, "run-1");
+        assert_eq!(
+            parsed,
+            answers(&[("database", "postgres"), ("domain", "a=b")])
+        );
+        assert!(parse(&["runs", "answer", "run-1"]).is_err());
+        assert!(parse(&["runs", "answer", "run-1", "--answer", "=postgres"]).is_err());
+        assert!(matches!(
+            parse(&[
+                "sessions",
+                "list",
+                "--label",
+                "purpose=repo-onboarding",
+                "--status",
+                "active"
+            ])
+            .unwrap()
+            .command,
+            Command::Sessions(SessionsArgs {
+                command: SessionsCommand::List {
+                    label: Some(_),
+                    status: Some(SessionStatus::Active)
+                }
+            })
+        ));
+        assert!(parse(&["sessions", "list", "--label", "purpose"]).is_err());
+        assert!(parse(&["sessions", "list", "--status", "done"]).is_err());
     }
 }
