@@ -181,6 +181,18 @@ brainpod pod get <pod>
 brainpod github auth
 brainpod github repos [<query>] [--page <number>] [--per-page <1-100>]
 
+brainpod --pod <pod> repo link <owner/name>
+brainpod --pod <pod> repo get
+brainpod --pod <pod> onboard [--ref <branch|tag|commit>]
+brainpod --pod <pod> runs list
+brainpod --pod <pod> runs get <run>
+brainpod --pod <pod> runs cancel <run>
+brainpod --pod <pod> runs retry <run>
+brainpod --pod <pod> runs reply <run> <message>
+brainpod --pod <pod> runs answer <run> --answer <question-id>=<answer>...
+brainpod --pod <pod> sessions list [--label <key=value>] [--status <active|completed|canceled>]
+brainpod --pod <pod> sessions get <session>
+
 brainpod --pod <pod> agent start [--path <dir>] [--no-ignore]
 brainpod agent serve [--path <dir>] [--port <number>]
 brainpod agent step <id> [--label <text>] \
@@ -289,6 +301,30 @@ brainpod github repos web
 `brainpod github auth` reports whether GitHub is connected to Brainpod and with what access, like `gh auth status`: every GitHub account or organization the Brainpod GitHub App is installed on, whether it can reach all or only selected repositories, and any permissions still waiting for approval. It does not authenticate itself; connecting GitHub, granting repositories, and accepting permissions happen in the browser, so it prints the links to do so: the console's connect page (`https://console.brainpod.io/github/signin`, or `$BRAINPOD_DASHBOARD_ENDPOINT/github/signin`) and each installation's GitHub settings page.
 
 `brainpod github repos` lists the repositories the app can access, sorted by name and filtered by an optional case-insensitive `owner/name` substring, 30 per page by default. A repository missing from the list has to be granted on the installation's settings page first. With `--json`, both commands print the API response with the console connect page added as `_links.connect`; each repository's `id` and `installationId` identify the repository to link to a Pod.
+
+## Repository onboarding
+
+Onboarding deploys a Pod from a GitHub repository. It runs on a Pod you create first and that was never deployed; BrainPod's agents read the repository, write the Pod's resources, and deploy it. Every command below needs a user API token and `--pod`.
+
+```bash
+brainpod pod create --display-name Shop        # prints the new pod's name, such as shop
+brainpod github repos acme/web                 # the repository must be accessible to the GitHub App
+brainpod --pod shop repo link acme/web
+brainpod --pod shop onboard                    # or --ref <branch|tag|commit>; defaults to the default branch
+brainpod --pod shop sessions get <session>
+```
+
+1. `repo link OWNER/NAME` finds the repository by its exact `owner/name` (case-insensitive) among those `brainpod github repos` lists and links it to the Pod. A repository the Brainpod GitHub App cannot reach fails with the settings page of each installation limited to selected repositories, where it can be granted, and the console page that connects another account or organization. A Pod keeps its linked repository; linking another one is refused. `repo get` shows the link.
+2. `onboard` starts the Pod's onboarding as an agent run of the `repo-onboarding` agent and prints the run and its session. BrainPod commits the Pod's configuration to the `brainpod/onboarding-<pod>` branch of the repository, builds its images in GitHub Actions, and opens a draft pull request that becomes ready once the Pod is healthy. It deploys the Pod automatically unless a run needs your input. The API refuses a Pod that was ever deployed or has no linked repository; the CLI prints its message unchanged. Starting it again for the same ref returns the same run.
+3. `sessions get <session>` follows the onboarding: each run with its step (`plan`, `image:<service>`, `wiring`, `assemble`, ...), state, and error; the open questions of a run awaiting input; and the continuous-deploys pull request with what its status means: open (a draft until the Pod is healthy; merge it to deploy every push to its base branch), merged (every push deploys), or closed (deploy on push is off). `sessions list --label purpose=repo-onboarding` finds a Pod's onboarding sessions.
+4. Act on a run with `runs`:
+   - `runs answer <run> --answer <question-id>=<answer>` answers a run awaiting input and resumes it. Give one `--answer` per open question; the answer is everything after the first `=`, such as an option label from `runs get`.
+   - `runs retry <run>` retries a failed, timed-out, or canceled onboarding run.
+   - `runs reply <run> <message>` requests changes to the reviewed draft once the latest run, a succeeded `assemble`, waits for review; the CLI generates the reply's request ID.
+   - `runs cancel <run>` cancels a run; `runs list` and `runs get <run>` show any agent run of the Pod.
+5. Merge the pull request on GitHub once the Pod is healthy. From then on, every push to the onboarded branch deploys the Pod.
+
+With `--json`, every command prints the API response: an agent run, its session with `runs`, `decisions`, and `pullRequest`, or the repository link.
 
 ## Project detection
 
