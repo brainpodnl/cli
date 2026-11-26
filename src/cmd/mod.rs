@@ -31,6 +31,8 @@ pub enum Command {
     Cluster(ClusterArgs),
     /// List object storage providers and regions for Bucket resources
     Storage(StorageArgs),
+    /// Report GitHub access and list repositories that can be linked to a Pod
+    Github(GithubArgs),
     /// Inspect pods
     Pod(PodArgs),
     /// Browse and install blueprints
@@ -133,6 +135,29 @@ pub struct StorageArgs {
 enum StorageCommand {
     /// List storage providers and their regions; a Bucket's spec.provider is a KEY and spec.region one of its REGIONS
     Providers,
+}
+
+#[derive(Debug, Args)]
+pub struct GithubArgs {
+    #[command(subcommand)]
+    command: GithubCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum GithubCommand {
+    /// Report whether GitHub is connected to Brainpod and with what access, like `gh auth status`; prints the link to connect GitHub in the console, it does not authenticate itself
+    Auth,
+    /// List and search the GitHub repositories the Brainpod GitHub App can access
+    Repos {
+        /// Case-insensitive text to match against OWNER/NAME
+        query: Option<String>,
+        /// Page of results to return
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        /// Number of repositories per page
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u8).range(1..=100))]
+        per_page: u8,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -679,6 +704,9 @@ pub async fn handle(command: Command, context: CommandContext<'_>) -> Result<Com
         )),
         Command::Cluster(args) => handle_cluster(client_required(client)?, args).await,
         Command::Storage(args) => handle_storage(client_required(client)?, args).await,
+        Command::Github(args) => {
+            handle_github(client_required(client)?, dashboard_endpoint, args).await
+        }
         Command::Pod(args) => handle_pod(client_required(client)?, args).await,
         Command::Tunnel(args) => {
             crate::tunnel::handle(
@@ -803,6 +831,56 @@ async fn handle_storage(client: &Client, args: StorageArgs) -> Result<CommandOut
             View::StorageProviderList,
         )),
     }
+}
+
+async fn handle_github(
+    client: &Client,
+    dashboard_endpoint: &str,
+    args: GithubArgs,
+) -> Result<CommandOutput> {
+    let (response, view) = match args.command {
+        GithubCommand::Auth => (
+            client.get(&["v1", "github", "installations"], &[]).await?,
+            View::GithubAuth,
+        ),
+        GithubCommand::Repos {
+            query,
+            page,
+            per_page,
+        } => {
+            let mut parameters = vec![
+                ("page", page.to_string()),
+                ("perPage", per_page.to_string()),
+            ];
+            push_query(&mut parameters, "query", query);
+            (
+                client
+                    .get(&["v1", "github", "repositories"], &parameters)
+                    .await?,
+                View::GithubRepos,
+            )
+        }
+    };
+    Ok(CommandOutput::new(
+        with_connect_link(response, dashboard_endpoint),
+        view,
+    ))
+}
+
+/// Adds the console page that connects a GitHub account, which the API cannot link to.
+fn with_connect_link(mut response: Value, dashboard_endpoint: &str) -> Value {
+    if let Some(links) = response.as_object_mut().and_then(|response| {
+        response
+            .entry("_links")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+    }) {
+        links.insert(
+            "connect".to_owned(),
+            json!({ "href": crate::output::github_connect_url(dashboard_endpoint) }),
+        );
+    }
+    response
 }
 
 fn handle_config(args: ConfigArgs, config: &mut Config, path: &Path) -> Result<CommandOutput> {
@@ -1636,7 +1714,23 @@ fn read_json(path: &Path) -> Result<Value> {
 mod tests {
     use serde_json::json;
 
-    use super::{api_path_segments, variable_entries};
+    use super::{api_path_segments, variable_entries, with_connect_link};
+
+    #[test]
+    fn adds_the_connect_link_next_to_the_api_links() {
+        let response = with_connect_link(
+            json!({"items": [], "_links": {"self": {"href": "/v1/github/installations"}}}),
+            "https://console.example.test/",
+        );
+
+        assert_eq!(
+            response["_links"],
+            json!({
+                "self": {"href": "/v1/github/installations"},
+                "connect": {"href": "https://console.example.test/github/signin"}
+            })
+        );
+    }
 
     #[test]
     fn reads_variables_off_a_single_resource() {
@@ -1786,5 +1880,36 @@ mod tests {
         for path in ["/v1/me\n", "/v1/\r\nme", "/v1/m\0e", "/v1/\u{7f}"] {
             assert!(rejection(path).contains("control characters"), "{path:?}");
         }
+    }
+
+    #[test]
+    fn parses_the_github_commands() {
+        use clap::Parser as _;
+
+        let opts = crate::Opts::try_parse_from([
+            "brainpod",
+            "github",
+            "repos",
+            "acme",
+            "--page",
+            "2",
+            "--per-page",
+            "100",
+        ])
+        .unwrap();
+        assert!(matches!(
+            opts.command,
+            super::Command::Github(super::GithubArgs {
+                command: super::GithubCommand::Repos {
+                    query: Some(_),
+                    page: 2,
+                    per_page: 100
+                }
+            })
+        ));
+        assert!(
+            crate::Opts::try_parse_from(["brainpod", "github", "repos", "--per-page", "101"])
+                .is_err()
+        );
     }
 }

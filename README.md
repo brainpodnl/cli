@@ -178,6 +178,9 @@ brainpod pod list
 brainpod pod create [--display-name <name>]
 brainpod pod get <pod>
 
+brainpod github auth
+brainpod github repos [<query>] [--page <number>] [--per-page <1-100>]
+
 brainpod --pod <pod> agent start [--path <dir>] [--no-ignore]
 brainpod agent serve [--path <dir>] [--port <number>]
 brainpod agent step <id> [--label <text>] \
@@ -273,6 +276,19 @@ Each chat gets its own console, so two agents working in one checkout do not ove
 Pod-scoped commands use `--pod`, `BRAINPOD_POD`, or the configured default pod. Resource kinds are `app`, `config`, `route`, `postgres`, `mariadb`, `valkey`, and `disk`. Namespace is currently fixed to the API-supported `default` namespace.
 
 `revision wait` polls revision details until every resource reports `healthy: true`. `deploy --wait` deploys first, then waits on the returned revision in the same way. Both use a 90-second timeout by default; pass `--timeout <seconds>` to override it. Interactive waits report each unhealthy-to-healthy transition on stderr. Progress is suppressed when stderr is redirected or `--json` is used. Failed or canceled revisions stop the wait immediately, and timeouts report the resources that are still unhealthy.
+
+## GitHub repositories
+
+The `github` commands show which GitHub repositories Brainpod can reach, so one can be linked to a Pod. They need a user API token (from `brainpod login`) and no pod.
+
+```bash
+brainpod github auth
+brainpod github repos web
+```
+
+`brainpod github auth` reports whether GitHub is connected to Brainpod and with what access, like `gh auth status`: every GitHub account or organization the Brainpod GitHub App is installed on, whether it can reach all or only selected repositories, and any permissions still waiting for approval. It does not authenticate itself; connecting GitHub, granting repositories, and accepting permissions happen in the browser, so it prints the links to do so: the console's connect page (`https://console.brainpod.io/github/signin`, or `$BRAINPOD_DASHBOARD_ENDPOINT/github/signin`) and each installation's GitHub settings page.
+
+`brainpod github repos` lists the repositories the app can access, sorted by name and filtered by an optional case-insensitive `owner/name` substring, 30 per page by default. A repository missing from the list has to be granted on the installation's settings page first. With `--json`, both commands print the API response with the console connect page added as `_links.connect`; each repository's `id` and `installationId` identify the repository to link to a Pod.
 
 ## Project detection
 

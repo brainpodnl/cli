@@ -26,7 +26,6 @@ impl CommandOutput {
     }
 }
 
-#[derive(Clone, Copy)]
 pub enum View {
     S3,
     Describe,
@@ -43,6 +42,8 @@ pub enum View {
     Whoami,
     ClusterList,
     StorageProviderList,
+    GithubAuth,
+    GithubRepos,
     PodList,
     PodCreated,
     PodGet,
@@ -198,6 +199,8 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::Whoami => render_whoami(value),
         View::ClusterList => render_cluster_list(value),
         View::StorageProviderList => render_storage_provider_list(value),
+        View::GithubAuth => render_github_auth(value),
+        View::GithubRepos => render_github_repos(value),
         View::PodList => render_pod_list(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
@@ -739,6 +742,168 @@ fn render_storage_provider_list(value: &Value) -> Vec<String> {
         })
         .collect();
     table(&["KEY", "NAME", "REGIONS"], rows)
+}
+
+/// The console page that connects a GitHub account or organization to Brainpod.
+pub fn github_connect_url(dashboard_endpoint: &str) -> String {
+    console_url(dashboard_endpoint, "github/signin")
+}
+
+fn console_url(dashboard_endpoint: &str, path: &str) -> String {
+    format!("{}/{path}", dashboard_endpoint.trim_end_matches('/'))
+}
+
+/// What a user does when a repository is missing: grant it on a `selected`
+/// installation's settings page, or connect another account or organization.
+fn github_access_hints(installations: Option<&Value>, connect_url: &str) -> Vec<String> {
+    let mut hints = array_items(installations)
+        .iter()
+        .filter(|installation| field(installation, "repositorySelection") == "selected")
+        .map(|installation| {
+            format!(
+                "Missing a repository? Grant access at {} ({})",
+                field(installation, "_links.settings.href"),
+                field(installation, "account.login")
+            )
+        })
+        .collect::<Vec<_>>();
+    hints.push(format!(
+        "Add another GitHub account or organization: {connect_url}"
+    ));
+    hints
+}
+
+fn array_items(value: Option<&Value>) -> &[Value] {
+    value
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn missing_permissions(installation: &Value) -> Vec<String> {
+    installation
+        .get("missingPermissions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|missing| {
+            format!(
+                "{}:{}",
+                field(missing, "permission"),
+                field(missing, "access")
+            )
+        })
+        .collect()
+}
+
+fn render_github_auth(value: &Value) -> Vec<String> {
+    let connect_url = field(value, "_links.connect.href");
+    let installations = array_items(value.get("items"));
+    let mut lines = vec![format!("GitHub: {}", field(value, "status")), String::new()];
+    if installations.is_empty() {
+        lines.push("No GitHub accounts connected.".to_owned());
+    } else {
+        let rows = installations
+            .iter()
+            .map(|installation| {
+                let missing = missing_permissions(installation);
+                vec![
+                    field(installation, "account.login"),
+                    field(installation, "account.type"),
+                    field(installation, "repositorySelection"),
+                    if missing.is_empty() {
+                        "-".to_owned()
+                    } else {
+                        missing.join(", ")
+                    },
+                    field(installation, "_links.settings.href"),
+                ]
+            })
+            .collect();
+        lines.extend(table(
+            &[
+                "ACCOUNT",
+                "TYPE",
+                "REPOSITORIES",
+                "MISSING PERMISSIONS",
+                "SETTINGS URL",
+            ],
+            rows,
+        ));
+    }
+
+    lines.push(String::new());
+    match field(value, "status").as_str() {
+        "disconnected" | "reconnect" => lines.push(format!("Connect GitHub: {connect_url}")),
+        "requested" => lines.push(
+            "An organization owner must approve the Brainpod GitHub App installation request on GitHub; re-check with `brainpod github auth`."
+                .to_owned(),
+        ),
+        _ => {}
+    }
+    lines.extend(
+        installations
+            .iter()
+            .filter(|installation| !missing_permissions(installation).is_empty())
+            .map(|installation| {
+                format!(
+                    "Accept the updated permissions for {} at {}",
+                    field(installation, "account.login"),
+                    field(installation, "_links.settings.href")
+                )
+            }),
+    );
+    lines.extend(github_access_hints(value.get("items"), &connect_url));
+    lines
+}
+
+fn render_github_repos(value: &Value) -> Vec<String> {
+    let repositories = array_items(value.get("items"));
+    let mut lines = if repositories.is_empty() {
+        vec!["No repositories found.".to_owned()]
+    } else {
+        let rows = repositories
+            .iter()
+            .map(|repository| {
+                vec![
+                    field(repository, "fullName"),
+                    match repository.get("private").and_then(Value::as_bool) {
+                        Some(true) => "private".to_owned(),
+                        Some(false) => "public".to_owned(),
+                        None => "-".to_owned(),
+                    },
+                    field(repository, "defaultBranch"),
+                    field(repository, "updatedAt"),
+                ]
+            })
+            .collect();
+        table(
+            &["REPOSITORY", "VISIBILITY", "DEFAULT BRANCH", "UPDATED"],
+            rows,
+        )
+    };
+
+    let page = value.get("page").and_then(Value::as_u64).unwrap_or(1);
+    let per_page = value
+        .get("perPage")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1);
+    let total = value.get("total").and_then(Value::as_u64).unwrap_or(0);
+    lines.push(String::new());
+    let mut footer = format!(
+        "Page {page} of {} ({total} repositories)",
+        total.div_ceil(per_page).max(1)
+    );
+    if value_at(value, "_links.next.href").is_some_and(Value::is_string) {
+        footer.push_str(&format!("; pass --page {} for more", page + 1));
+    }
+    lines.push(footer);
+    lines.extend(github_access_hints(
+        value.get("installations"),
+        &field(value, "_links.connect.href"),
+    ));
+    lines
 }
 
 fn render_pod_list(value: &Value) -> Vec<String> {
@@ -1490,10 +1655,146 @@ mod tests {
     use crate::client::EventStreamMessage;
 
     use super::{
-        render_cluster_list, render_event, render_image_inspect, render_image_list,
-        render_resource_schema, render_resource_variables, render_storage_provider_list,
-        render_whoami, stream_error, write_login_json, write_stream_json,
+        github_access_hints, render_cluster_list, render_event, render_github_auth,
+        render_github_repos, render_image_inspect, render_image_list, render_resource_schema,
+        render_resource_variables, render_storage_provider_list, render_whoami, stream_error,
+        write_login_json, write_stream_json,
     };
+
+    const CONNECT: &str = "https://console.example.test/github/signin";
+    const SETTINGS: &str = "https://github.com/organizations/acme/settings/installations/123";
+
+    fn installation(selection: &str, missing: serde_json::Value) -> serde_json::Value {
+        json!({
+            "installationId": 123,
+            "account": {"login": "acme", "type": "Organization"},
+            "repositorySelection": selection,
+            "missingPermissions": missing,
+            "_links": {"settings": {"href": SETTINGS}}
+        })
+    }
+
+    fn has_line(lines: &[String], expected: &str) -> bool {
+        lines.iter().any(|line| line == expected)
+    }
+
+    #[test]
+    fn renders_a_disconnected_github_account_with_the_connect_link() {
+        let lines = render_github_auth(&json!({
+            "status": "disconnected",
+            "items": [],
+            "_links": {"connect": {"href": CONNECT}}
+        }));
+
+        assert_eq!(lines[0], "GitHub: disconnected");
+        assert!(has_line(&lines, "No GitHub accounts connected."));
+        assert!(has_line(&lines, &format!("Connect GitHub: {CONNECT}")));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.starts_with("Missing a repository?"))
+        );
+    }
+
+    #[test]
+    fn asks_an_organization_owner_to_approve_a_requested_installation() {
+        let lines = render_github_auth(&json!({
+            "status": "requested",
+            "items": [],
+            "_links": {"connect": {"href": CONNECT}}
+        }));
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("organization owner must approve")
+                    && line.contains("`brainpod github auth`"))
+        );
+        assert!(!lines.iter().any(|line| line.starts_with("Connect GitHub")));
+    }
+
+    #[test]
+    fn renders_installations_with_missing_permissions_and_grant_hints() {
+        let lines = render_github_auth(&json!({
+            "status": "connected",
+            "items": [installation("selected", json!([{"permission": "workflows", "access": "write"}]))],
+            "_links": {"connect": {"href": CONNECT}}
+        }));
+
+        assert!(lines[2].starts_with("ACCOUNT"));
+        assert!(lines[4].contains("acme") && lines[4].contains("workflows:write"));
+        assert!(has_line(
+            &lines,
+            &format!("Accept the updated permissions for acme at {SETTINGS}")
+        ));
+        assert!(has_line(
+            &lines,
+            &format!("Missing a repository? Grant access at {SETTINGS} (acme)")
+        ));
+        assert!(has_line(
+            &lines,
+            &format!("Add another GitHub account or organization: {CONNECT}")
+        ));
+    }
+
+    #[test]
+    fn only_selected_installations_get_grant_hints() {
+        let installations = json!([installation("all", json!([]))]);
+
+        assert_eq!(
+            github_access_hints(Some(&installations), CONNECT),
+            vec![format!(
+                "Add another GitHub account or organization: {CONNECT}"
+            )]
+        );
+    }
+
+    #[test]
+    fn renders_an_empty_repository_page() {
+        let lines = render_github_repos(&json!({
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "perPage": 30,
+            "installations": [installation("selected", json!([]))],
+            "_links": {"next": null, "connect": {"href": CONNECT}}
+        }));
+
+        assert_eq!(lines[0], "No repositories found.");
+        assert!(has_line(&lines, "Page 1 of 1 (0 repositories)"));
+        assert!(has_line(
+            &lines,
+            &format!("Missing a repository? Grant access at {SETTINGS} (acme)")
+        ));
+    }
+
+    #[test]
+    fn renders_repositories_with_a_pagination_footer() {
+        let lines = render_github_repos(&json!({
+            "items": [{
+                "id": 1,
+                "installationId": 123,
+                "owner": "acme",
+                "name": "web",
+                "fullName": "acme/web",
+                "private": true,
+                "defaultBranch": "main",
+                "updatedAt": null
+            }],
+            "total": 31,
+            "page": 1,
+            "perPage": 30,
+            "installations": [],
+            "_links": {"next": {"href": "/v1/github/repositories?page=2&perPage=30"}, "connect": {"href": CONNECT}}
+        }));
+
+        assert!(lines[0].starts_with("REPOSITORY"));
+        assert!(lines[2].starts_with("acme/web") && lines[2].contains("private"));
+        assert!(has_line(
+            &lines,
+            "Page 1 of 2 (31 repositories); pass --page 2 for more"
+        ));
+    }
 
     #[test]
     fn renders_extended_current_user() {
