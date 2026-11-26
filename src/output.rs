@@ -47,6 +47,15 @@ pub enum View {
     PodList,
     PodCreated,
     PodGet,
+    RepositoryLinked,
+    Repository,
+    OnboardStarted,
+    RunList,
+    Run,
+    /// A run a command changed or started, under a heading such as "Retry queued".
+    RunChanged(&'static str),
+    SessionList,
+    Session,
     BlueprintList,
     BlueprintGet,
     ImageBuild,
@@ -202,6 +211,27 @@ fn render(value: &Value, view: View, color: bool) -> Vec<String> {
         View::GithubAuth => render_github_auth(value),
         View::GithubRepos => render_github_repos(value),
         View::PodList => render_pod_list(value),
+        View::RepositoryLinked => {
+            let mut lines = vec!["Repository linked".to_owned(), String::new()];
+            lines.extend(render_repository(value));
+            lines.push(String::new());
+            lines.push(format!(
+                "Start onboarding: brainpod --pod {} onboard [--ref REF]",
+                pod_name(value)
+            ));
+            lines
+        }
+        View::Repository => render_repository(value),
+        View::OnboardStarted => render_onboard_started(value),
+        View::RunList => render_run_list(value),
+        View::Run => render_run(value),
+        View::RunChanged(heading) => {
+            let mut lines = vec![heading.to_owned(), String::new()];
+            lines.extend(render_run(value));
+            lines
+        }
+        View::SessionList => render_session_list(value),
+        View::Session => render_session(value),
         View::PodCreated => {
             let mut lines = vec!["Pod created".to_owned(), String::new()];
             lines.extend(render_pod(value));
@@ -755,7 +785,7 @@ fn console_url(dashboard_endpoint: &str, path: &str) -> String {
 
 /// What a user does when a repository is missing: grant it on a `selected`
 /// installation's settings page, or connect another account or organization.
-fn github_access_hints(installations: Option<&Value>, connect_url: &str) -> Vec<String> {
+pub fn github_access_hints(installations: Option<&Value>, connect_url: &str) -> Vec<String> {
     let mut hints = array_items(installations)
         .iter()
         .filter(|installation| field(installation, "repositorySelection") == "selected")
@@ -903,6 +933,312 @@ fn render_github_repos(value: &Value) -> Vec<String> {
         value.get("installations"),
         &field(value, "_links.connect.href"),
     ));
+    lines
+}
+
+/// The pod a run (`pod.name`) or a pod-scoped representation (`_links.pod`) belongs to.
+fn pod_name(value: &Value) -> String {
+    value_at(value, "pod.name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value_at(value, "_links.pod.href")
+                .and_then(Value::as_str)
+                .and_then(|href| href.strip_prefix("/v1/pods/"))
+        })
+        .unwrap_or("<pod>")
+        .to_owned()
+}
+
+fn render_repository(value: &Value) -> Vec<String> {
+    vec![
+        format!("Repository: {}", field(value, "fullName")),
+        format!("Provider: {}", field(value, "provider")),
+        format!("Default branch: {}", field(value, "defaultBranch")),
+        format!("Installation ID: {}", field(value, "installationId")),
+        format!("Repository ID: {}", field(value, "repositoryId")),
+    ]
+}
+
+fn render_onboard_started(run: &Value) -> Vec<String> {
+    let pod = pod_name(run);
+    let mut lines = vec![
+        "Onboarding started".to_owned(),
+        String::new(),
+        format!("Run: {}", field(run, "id")),
+        format!("Session: {}", field(run, "sessionId")),
+        format!("Step: {}", field(run, "step")),
+        format!("State: {}", field(run, "state")),
+        String::new(),
+        format!(
+            "BrainPod commits the Pod's configuration to the brainpod/onboarding-{pod} branch of the linked repository and builds its images in GitHub Actions."
+        ),
+        "It opens a draft pull request that becomes ready once the Pod is healthy; merging it deploys every push to the onboarded branch.".to_owned(),
+        "BrainPod deploys the Pod automatically unless a run needs your input.".to_owned(),
+        String::new(),
+    ];
+    lines.push(match run.get("sessionId").and_then(Value::as_str) {
+        Some(session) => {
+            format!("Follow the onboarding: brainpod --pod {pod} sessions get {session}")
+        }
+        None => format!(
+            "Follow the onboarding: brainpod --pod {pod} runs get {}",
+            field(run, "id")
+        ),
+    });
+    lines
+}
+
+fn run_error(run: &Value) -> String {
+    match (
+        run.get("errorCode").and_then(Value::as_str),
+        run.get("errorMessage").and_then(Value::as_str),
+    ) {
+        (Some(code), Some(message)) => format!("{code}: {message}"),
+        (Some(text), None) | (None, Some(text)) => text.to_owned(),
+        (None, None) => "-".to_owned(),
+    }
+}
+
+fn render_run_list(value: &Value) -> Vec<String> {
+    let runs = array_items(Some(value));
+    if runs.is_empty() {
+        return vec!["No agent runs.".to_owned()];
+    }
+    let rows = runs
+        .iter()
+        .map(|run| {
+            vec![
+                field(run, "id"),
+                field(run, "agent.name"),
+                field(run, "step"),
+                field(run, "state"),
+                field(run, "sessionId"),
+                field(run, "createdAt"),
+            ]
+        })
+        .collect();
+    table(
+        &["ID", "AGENT", "STEP", "STATE", "SESSION", "CREATED"],
+        rows,
+    )
+}
+
+fn render_run(run: &Value) -> Vec<String> {
+    let pod = pod_name(run);
+    let mut lines = vec![
+        format!("Run: {}", field(run, "id")),
+        format!("Agent: {}", field(run, "agent.name")),
+        format!("Step: {}", field(run, "step")),
+        format!("State: {}", field(run, "state")),
+        format!("Error: {}", run_error(run)),
+        format!("Session: {}", field(run, "sessionId")),
+        format!("Created: {}", field(run, "createdAt")),
+        format!("Started: {}", field(run, "startedAt")),
+        format!("Finished: {}", field(run, "finishedAt")),
+    ];
+    let questions = render_open_questions(run, &pod);
+    if !questions.is_empty() {
+        lines.push(String::new());
+        lines.extend(questions);
+    }
+
+    let mut hints = Vec::new();
+    if matches!(
+        field(run, "state").as_str(),
+        "failed" | "timed_out" | "canceled"
+    ) && run.get("sessionId").is_some_and(Value::is_string)
+    {
+        hints.push(format!(
+            "Retry it: brainpod --pod {pod} runs retry {}",
+            field(run, "id")
+        ));
+    }
+    if let Some(session) = run.get("sessionId").and_then(Value::as_str) {
+        hints.push(format!(
+            "Follow the session: brainpod --pod {pod} sessions get {session}"
+        ));
+    }
+    if !hints.is_empty() {
+        lines.push(String::new());
+        lines.extend(hints);
+    }
+    lines
+}
+
+/// The questions of a run awaiting input, with the command that answers them; nothing otherwise.
+fn render_open_questions(run: &Value, pod: &str) -> Vec<String> {
+    let questions = array_items(run.get("questions"));
+    if field(run, "state") != "awaiting_input" || questions.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = vec![format!("Open questions of run {}", field(run, "id"))];
+    for question in questions {
+        lines.push(format!(
+            "  {}: {}",
+            field(question, "id"),
+            field(question, "question")
+        ));
+        let recommended = question.get("recommended").and_then(Value::as_u64);
+        for (index, option) in array_items(question.get("options")).iter().enumerate() {
+            let mut line = format!("    - {}", field(option, "label"));
+            if let Some(description) = option.get("description").and_then(Value::as_str) {
+                line.push_str(&format!(": {description}"));
+            }
+            if recommended == Some(index as u64) {
+                line.push_str(" (recommended)");
+            }
+            lines.push(line);
+        }
+        if question.get("options").is_some_and(Value::is_array)
+            && question.get("allowOther").and_then(Value::as_bool) == Some(true)
+        {
+            lines.push("    - or any other answer".to_owned());
+        }
+    }
+    lines.push(format!(
+        "Answer: brainpod --pod {pod} runs answer {} {}",
+        field(run, "id"),
+        questions
+            .iter()
+            .map(|question| format!("--answer '{}=<answer>'", field(question, "id")))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    lines
+}
+
+fn labels(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_object)
+        .map(|labels| {
+            labels
+                .iter()
+                .map(|(key, value)| format!("{key}={}", scalar(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|labels| !labels.is_empty())
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn render_session_list(value: &Value) -> Vec<String> {
+    let sessions = array_items(Some(value));
+    if sessions.is_empty() {
+        return vec!["No agent sessions.".to_owned()];
+    }
+    let rows = sessions
+        .iter()
+        .map(|session| {
+            vec![
+                field(session, "id"),
+                labels(session.get("labels")),
+                field(session, "status"),
+                field(session, "createdAt"),
+                field(session, "completedAt"),
+            ]
+        })
+        .collect();
+    table(&["ID", "LABELS", "STATUS", "CREATED", "COMPLETED"], rows)
+}
+
+/// What the continuous-deploys pull request's status means for pushes to its base branch.
+fn pull_request_hint(pull_request: &Value) -> String {
+    let base = field(pull_request, "base");
+    match field(pull_request, "status").as_str() {
+        "open" => format!(
+            "A draft until the Pod is healthy, then ready for review; merge it to deploy every push to {base}."
+        ),
+        "merged" => format!("Merged: every push to {base} deploys the Pod."),
+        "closed" => {
+            format!("Closed: pushes to {base} do not deploy the Pod (deploy on push is off).")
+        }
+        status => format!("Status {status}."),
+    }
+}
+
+fn render_session(session: &Value) -> Vec<String> {
+    let pod = pod_name(session);
+    let mut lines = vec![
+        format!("Session: {}", field(session, "id")),
+        format!("Labels: {}", labels(session.get("labels"))),
+        format!("Status: {}", field(session, "status")),
+    ];
+    if session.pointer("/subject/owner").is_some() {
+        let sha = field(session, "subject.sha");
+        lines.push(format!(
+            "Repository: {}/{} at {} ({})",
+            field(session, "subject.owner"),
+            field(session, "subject.name"),
+            field(session, "subject.ref"),
+            sha.get(..12).unwrap_or(&sha)
+        ));
+    }
+    lines.extend([
+        format!("Created: {}", field(session, "createdAt")),
+        format!("Completed: {}", field(session, "completedAt")),
+        String::new(),
+    ]);
+
+    let runs = array_items(session.get("runs"));
+    if runs.is_empty() {
+        lines.push("No runs.".to_owned());
+    } else {
+        lines.extend(table(
+            &["STEP", "STATE", "RUN", "ERROR"],
+            runs.iter()
+                .map(|run| {
+                    vec![
+                        field(run, "step"),
+                        field(run, "state"),
+                        field(run, "id"),
+                        run_error(run),
+                    ]
+                })
+                .collect(),
+        ));
+    }
+    for run in runs {
+        let questions = render_open_questions(run, &pod);
+        if !questions.is_empty() {
+            lines.push(String::new());
+            lines.extend(questions);
+        }
+    }
+
+    lines.push(String::new());
+    match session.get("pullRequest").filter(|value| value.is_object()) {
+        Some(pull_request) => {
+            lines.push(format!(
+                "Pull request: #{} {} {}",
+                field(pull_request, "number"),
+                field(pull_request, "status"),
+                field(pull_request, "url")
+            ));
+            lines.push(pull_request_hint(pull_request));
+        }
+        None => lines.push("Pull request: none yet".to_owned()),
+    }
+
+    // Runs are newest first: the latest decides what the user can do next.
+    if let Some(latest) = runs.first() {
+        let run = field(latest, "id");
+        match field(latest, "state").as_str() {
+            "failed" | "timed_out" | "canceled" => {
+                lines.push(String::new());
+                lines.push(format!("Retry it: brainpod --pod {pod} runs retry {run}"));
+            }
+            "succeeded"
+                if field(latest, "step") == "assemble" && field(session, "status") == "active" =>
+            {
+                lines.push(String::new());
+                lines.push(format!(
+                    "Request changes: brainpod --pod {pod} runs reply {run} '<change>'"
+                ));
+            }
+            _ => {}
+        }
+    }
     lines
 }
 
@@ -1656,9 +1992,10 @@ mod tests {
 
     use super::{
         github_access_hints, render_cluster_list, render_event, render_github_auth,
-        render_github_repos, render_image_inspect, render_image_list, render_resource_schema,
-        render_resource_variables, render_storage_provider_list, render_whoami, stream_error,
-        write_login_json, write_stream_json,
+        render_github_repos, render_image_inspect, render_image_list, render_onboard_started,
+        render_resource_schema, render_resource_variables, render_run, render_run_list,
+        render_session, render_session_list, render_storage_provider_list, render_whoami,
+        stream_error, write_login_json, write_stream_json,
     };
 
     const CONNECT: &str = "https://console.example.test/github/signin";
@@ -1793,6 +2130,223 @@ mod tests {
         assert!(has_line(
             &lines,
             "Page 1 of 2 (31 repositories); pass --page 2 for more"
+        ));
+    }
+
+    const RUN: &str = "11111111-1111-4111-8111-111111111111";
+    const SESSION: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn run(step: &str, state: &str) -> serde_json::Value {
+        json!({
+            "id": RUN,
+            "agent": {"id": "a", "name": "Repository onboarding"},
+            "pod": {"name": "shop", "displayName": null},
+            "sessionId": SESSION,
+            "step": step,
+            "state": state,
+            "errorCode": null,
+            "errorMessage": null,
+            "questions": null,
+            "createdAt": "2026-11-26T12:00:00Z",
+            "startedAt": null,
+            "finishedAt": null
+        })
+    }
+
+    fn awaiting_run() -> serde_json::Value {
+        let mut run = run("plan", "awaiting_input");
+        run["questions"] = json!([{
+            "id": "database",
+            "question": "Which database does the app use?",
+            "options": [
+                {"label": "postgres", "description": "Found in docker-compose.yml"},
+                {"label": "mysql", "description": null}
+            ],
+            "allowOther": true,
+            "recommended": 0
+        }]);
+        run
+    }
+
+    fn session(runs: serde_json::Value, pull_request: serde_json::Value) -> serde_json::Value {
+        json!({
+            "id": SESSION,
+            "labels": {"purpose": "repo-onboarding"},
+            "subject": {"owner": "acme", "name": "web", "ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"},
+            "status": "active",
+            "createdAt": "2026-11-26T12:00:00Z",
+            "completedAt": null,
+            "runs": runs,
+            "decisions": [],
+            "pullRequest": pull_request,
+            "_links": {"self": {"href": format!("/v1/pods/shop/agent-sessions/{SESSION}")}, "pod": {"href": "/v1/pods/shop"}}
+        })
+    }
+
+    fn pull_request(status: &str) -> serde_json::Value {
+        json!({
+            "number": 12,
+            "status": status,
+            "branch": "brainpod/onboarding-shop",
+            "base": "main",
+            "url": "https://github.com/acme/web/pull/12"
+        })
+    }
+
+    #[test]
+    fn renders_a_started_onboarding_with_the_session_to_follow() {
+        let lines = render_onboard_started(&run("plan", "queued"));
+
+        assert_eq!(lines[0], "Onboarding started");
+        assert!(has_line(&lines, &format!("Run: {RUN}")));
+        assert!(has_line(&lines, &format!("Session: {SESSION}")));
+        assert!(lines.iter().any(
+            |line| line.contains("brainpod/onboarding-shop") && line.contains("GitHub Actions")
+        ));
+        assert!(lines.iter().any(|line| line.contains("draft pull request")
+            && line.contains("healthy")
+            && line.contains("every push")));
+        assert_eq!(
+            lines.last().unwrap(),
+            &format!("Follow the onboarding: brainpod --pod shop sessions get {SESSION}")
+        );
+    }
+
+    #[test]
+    fn renders_a_run_with_its_open_questions_and_the_answer_command() {
+        let lines = render_run(&awaiting_run());
+
+        assert!(has_line(&lines, "Step: plan"));
+        assert!(has_line(&lines, "State: awaiting_input"));
+        assert!(has_line(
+            &lines,
+            "  database: Which database does the app use?"
+        ));
+        assert!(has_line(
+            &lines,
+            "    - postgres: Found in docker-compose.yml (recommended)"
+        ));
+        assert!(has_line(&lines, "    - mysql"));
+        assert!(has_line(&lines, "    - or any other answer"));
+        assert!(has_line(
+            &lines,
+            &format!("Answer: brainpod --pod shop runs answer {RUN} --answer 'database=<answer>'")
+        ));
+        assert!(has_line(
+            &lines,
+            &format!("Follow the session: brainpod --pod shop sessions get {SESSION}")
+        ));
+        assert!(!lines.iter().any(|line| line.starts_with("Retry it")));
+    }
+
+    #[test]
+    fn renders_a_failed_run_with_its_error_and_retry() {
+        let mut failed = run("image:web", "failed");
+        failed["errorCode"] = json!("BUILD_FAILED");
+        failed["errorMessage"] = json!("npm ci exited with 1");
+        let lines = render_run(&failed);
+
+        assert!(has_line(
+            &lines,
+            "Error: BUILD_FAILED: npm ci exited with 1"
+        ));
+        assert!(!lines.iter().any(|line| line.starts_with("Open questions")));
+        assert!(has_line(
+            &lines,
+            &format!("Retry it: brainpod --pod shop runs retry {RUN}")
+        ));
+    }
+
+    #[test]
+    fn renders_empty_run_and_session_lists() {
+        assert_eq!(render_run_list(&json!([])), vec!["No agent runs."]);
+        assert_eq!(render_session_list(&json!([])), vec!["No agent sessions."]);
+    }
+
+    #[test]
+    fn renders_run_and_session_tables() {
+        let runs = render_run_list(&json!([run("wiring", "running")]));
+        assert!(runs[0].starts_with("ID") && runs[0].contains("STEP"));
+        assert!(runs[2].contains("wiring") && runs[2].contains("running"));
+
+        let sessions = render_session_list(&json!([session(json!([]), json!(null))]));
+        assert!(sessions[2].contains("purpose=repo-onboarding") && sessions[2].contains("active"));
+    }
+
+    #[test]
+    fn renders_a_session_with_its_runs_per_step_and_open_questions() {
+        let mut failed = run("image:web", "failed");
+        failed["id"] = json!("33333333-3333-4333-8333-333333333333");
+        failed["errorMessage"] = json!("build failed");
+        let lines = render_session(&session(json!([awaiting_run(), failed]), json!(null)));
+
+        assert!(has_line(&lines, "Labels: purpose=repo-onboarding"));
+        assert!(has_line(
+            &lines,
+            "Repository: acme/web at main (0123456789ab)"
+        ));
+        let header = lines
+            .iter()
+            .position(|line| line.starts_with("STEP"))
+            .unwrap();
+        assert!(
+            lines[header + 2].starts_with("plan") && lines[header + 2].contains("awaiting_input")
+        );
+        assert!(
+            lines[header + 3].starts_with("image:web")
+                && lines[header + 3].ends_with("build failed")
+        );
+        assert!(has_line(&lines, &format!("Open questions of run {RUN}")));
+        assert!(has_line(&lines, "Pull request: none yet"));
+        assert!(!lines.iter().any(|line| line.starts_with("Retry it")));
+    }
+
+    #[test]
+    fn renders_a_session_without_runs() {
+        let lines = render_session(&session(json!([]), json!(null)));
+
+        assert!(has_line(&lines, "No runs."));
+        assert!(has_line(&lines, "Pull request: none yet"));
+    }
+
+    #[test]
+    fn renders_each_pull_request_status_with_what_pushes_do() {
+        for (status, hint) in [
+            (
+                "open",
+                "A draft until the Pod is healthy, then ready for review; merge it to deploy every push to main.",
+            ),
+            ("merged", "Merged: every push to main deploys the Pod."),
+            (
+                "closed",
+                "Closed: pushes to main do not deploy the Pod (deploy on push is off).",
+            ),
+        ] {
+            let lines = render_session(&session(json!([]), pull_request(status)));
+
+            assert!(
+                has_line(
+                    &lines,
+                    &format!("Pull request: #12 {status} https://github.com/acme/web/pull/12")
+                ),
+                "{status}"
+            );
+            assert!(has_line(&lines, hint), "{status}");
+        }
+    }
+
+    #[test]
+    fn offers_retry_or_reply_for_the_latest_run_of_a_session() {
+        let lines = render_session(&session(json!([run("wiring", "timed_out")]), json!(null)));
+        assert!(has_line(
+            &lines,
+            &format!("Retry it: brainpod --pod shop runs retry {RUN}")
+        ));
+
+        let lines = render_session(&session(json!([run("assemble", "succeeded")]), json!(null)));
+        assert!(has_line(
+            &lines,
+            &format!("Request changes: brainpod --pod shop runs reply {RUN} '<change>'")
         ));
     }
 

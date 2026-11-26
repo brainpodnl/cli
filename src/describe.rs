@@ -273,7 +273,14 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         | ["deploy"]
         | ["redeploy"]
         | ["rollback"]
-        | ["events"] => (Some(true), Some(true)),
+        | ["events"]
+        | ["repo"]
+        | ["repo", _]
+        | ["onboard"]
+        | ["runs"]
+        | ["runs", _]
+        | ["sessions"]
+        | ["sessions", _] => (Some(true), Some(true)),
         _ => (None, None),
     }
 }
@@ -298,6 +305,25 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         ["github", "auth"] | ["github", "repos"] => (
             "read",
             "Reads which GitHub accounts and repositories the Brainpod GitHub App can access; it does not authenticate or change GitHub access.",
+        ),
+        ["repo", "get"] | ["runs", "list"] | ["runs", "get"] | ["sessions", _] => {
+            ("read", "Reads remote state without changing it.")
+        }
+        ["repo", "link"] => (
+            "remote-write",
+            "Links a GitHub repository the Brainpod GitHub App can access to the pod; a pod linked to another repository is refused, never relinked.",
+        ),
+        ["onboard"] => (
+            "conditional-deployment",
+            "Starts the pod's repository onboarding: its runs write the pod's draft, commit to the repository's brainpod/onboarding-<pod> branch, open a draft pull request, and deploy the pod unless a run needs input. Refused on a pod that was ever deployed.",
+        ),
+        ["runs", "cancel"] => (
+            "remote-write",
+            "Cancels an agent run that has not finished.",
+        ),
+        ["runs", "retry"] | ["runs", "reply"] | ["runs", "answer"] => (
+            "conditional-deployment",
+            "Queues or resumes an agent run; a repository onboarding continues and deploys the pod unless a run needs input.",
         ),
         ["whoami"]
         | ["cluster", "list"]
@@ -375,9 +401,39 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
             "A listed repository can be linked to a Pod; with `--json`, its `id` and `installationId` identify the repository to link.",
             "When a repository is missing, give the user the settings URL of a `selected` installation to grant it, or the `_links.connect` URL to add another account or organization.",
         ],
-        ["pod", "create"] => {
-            vec!["Select the new pod with --pod or `brainpod config set pod <pod>`."]
+        ["pod", "create"] => vec![
+            "Select the new pod with --pod or `brainpod config set pod <pod>`.",
+            "Onboard a GitHub repository onto it with `brainpod --pod <pod> repo link OWNER/NAME`, then `brainpod --pod <pod> onboard`.",
+        ],
+        ["repo", "link"] => vec![
+            "Start onboarding the linked repository with `brainpod --pod <pod> onboard [--ref REF]`.",
+            "When the repository is not accessible, give the user the printed settings URL of a `selected` installation to grant it, or the connect URL to add another account or organization; `brainpod github repos` lists what is accessible.",
+        ],
+        ["repo", "get"] => vec![
+            "Without a linked repository, link one with `brainpod --pod <pod> repo link OWNER/NAME`.",
+        ],
+        ["onboard"] => vec![
+            "Follow the onboarding with `brainpod --pod <pod> sessions get <sessionId>`, using the returned run's `sessionId`.",
+            "Answer a run awaiting input with `brainpod --pod <pod> runs answer <run> --answer <questionId>=<answer>`; retry a failed run with `brainpod --pod <pod> runs retry <run>`.",
+            "Once the Pod is healthy, the user merges the continuous-deploys pull request so every push to the onboarded branch deploys.",
+        ],
+        ["runs", "list"] | ["runs", "get"] => vec![
+            "Answer a run in state awaiting_input with `brainpod --pod <pod> runs answer <run> --answer <questionId>=<answer>` for each of its `questions`.",
+            "Follow a run's session with `brainpod --pod <pod> sessions get <sessionId>`.",
+        ],
+        ["runs", "cancel"] => {
+            vec!["Retry a canceled onboarding run with `brainpod --pod <pod> runs retry <run>`."]
         }
+        ["runs", "retry"] | ["runs", "reply"] | ["runs", "answer"] => vec![
+            "Follow the run with `brainpod --pod <pod> sessions get <sessionId>` or `brainpod --pod <pod> runs get <run>`.",
+        ],
+        ["sessions", "list"] => vec![
+            "Find the pod's repository onboarding with --label purpose=repo-onboarding, then read it with `brainpod --pod <pod> sessions get <session>`.",
+        ],
+        ["sessions", "get"] => vec![
+            "Answer open questions with `brainpod --pod <pod> runs answer <run> --answer <questionId>=<answer>`; retry the latest failed run with `brainpod --pod <pod> runs retry <run>`; request changes to a reviewed draft with `brainpod --pod <pod> runs reply <run> <message>`.",
+            "When `pullRequest` is open, the user merges it once the Pod is healthy so every push to its `base` deploys; closing it turns deploy on push off.",
+        ],
         ["image", "list"] => vec![
             "Inspect an exact pod image with `brainpod image inspect <repository> <tag>`; use --visibility public for a public image.",
         ],
@@ -430,6 +486,32 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ["github", "repos"] => vec![
             "brainpod github repos",
             "brainpod github repos acme/ --page 2 --per-page 50 --json",
+        ],
+        ["repo", "link"] => vec![
+            "brainpod --pod my-pod repo link acme/web",
+            "brainpod --pod my-pod repo link acme/web --json",
+        ],
+        ["repo", "get"] => vec!["brainpod --pod my-pod repo get --json"],
+        ["onboard"] => vec![
+            "brainpod --pod my-pod onboard",
+            "brainpod --pod my-pod onboard --ref release --json",
+        ],
+        ["runs", "list"] => vec!["brainpod --pod my-pod runs list --json"],
+        ["runs", "get"] => vec!["brainpod --pod my-pod runs get <run> --json"],
+        ["runs", "cancel"] => vec!["brainpod --pod my-pod runs cancel <run>"],
+        ["runs", "retry"] => vec!["brainpod --pod my-pod runs retry <run>"],
+        ["runs", "reply"] => {
+            vec!["brainpod --pod my-pod runs reply <run> \"Use Valkey instead of Redis\""]
+        }
+        ["runs", "answer"] => vec![
+            "brainpod --pod my-pod runs answer <run> --answer database=postgres --answer domain=shop.example.com",
+        ],
+        ["sessions", "list"] => vec![
+            "brainpod --pod my-pod sessions list --label purpose=repo-onboarding --status active",
+        ],
+        ["sessions", "get"] => vec![
+            "brainpod --pod my-pod sessions get <session>",
+            "brainpod --pod my-pod sessions get <session> --json",
         ],
         ["describe"] => vec![
             "brainpod describe",
@@ -683,6 +765,55 @@ mod tests {
                 Some(false),
                 "{path:?}"
             );
+            assert_eq!(
+                value
+                    .pointer("/command/effect")
+                    .and_then(|value| value.as_str()),
+                Some(effect),
+                "{path:?}"
+            );
+            for key in ["examples", "nextSteps"] {
+                assert!(
+                    !value
+                        .pointer(&format!("/command/{key}"))
+                        .and_then(|value| value.as_array())
+                        .is_none_or(Vec::is_empty),
+                    "{path:?} {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn describes_the_onboarding_commands_as_pod_scoped() {
+        for (path, effect) in [
+            (&["repo", "link"][..], "remote-write"),
+            (&["repo", "get"], "read"),
+            (&["onboard"], "conditional-deployment"),
+            (&["runs", "list"], "read"),
+            (&["runs", "get"], "read"),
+            (&["runs", "cancel"], "remote-write"),
+            (&["runs", "retry"], "conditional-deployment"),
+            (&["runs", "reply"], "conditional-deployment"),
+            (&["runs", "answer"], "conditional-deployment"),
+            (&["sessions", "list"], "read"),
+            (&["sessions", "get"], "read"),
+        ] {
+            let path = path
+                .iter()
+                .map(|segment| (*segment).to_owned())
+                .collect::<Vec<_>>();
+            let value = generate(crate::Opts::command(), &path).unwrap();
+
+            for requirement in ["apiToken", "pod"] {
+                assert_eq!(
+                    value
+                        .pointer(&format!("/command/requirements/{requirement}"))
+                        .and_then(|value| value.as_bool()),
+                    Some(true),
+                    "{path:?} {requirement}"
+                );
+            }
             assert_eq!(
                 value
                     .pointer("/command/effect")
