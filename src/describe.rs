@@ -258,6 +258,8 @@ fn requirements(path: &[&str]) -> (Option<bool>, Option<bool>) {
         | ["cluster", _]
         | ["storage"]
         | ["storage", _]
+        | ["github"]
+        | ["github", _]
         | ["pod"]
         | ["pod", _] => (Some(true), Some(false)),
         ["s3"] | ["s3", _] => (Some(true), Some(true)),
@@ -292,6 +294,10 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
         ["login"] => (
             "local-and-remote-write",
             "Authorizes in the dashboard and stores the API token locally.",
+        ),
+        ["github", "auth"] | ["github", "repos"] => (
+            "read",
+            "Reads which GitHub accounts and repositories the Brainpod GitHub App can access; it does not authenticate or change GitHub access.",
         ),
         ["whoami"]
         | ["cluster", "list"]
@@ -361,6 +367,14 @@ fn effect(path: &[&str]) -> (&'static str, &'static str) {
 fn next_steps(path: &[&str]) -> Vec<&'static str> {
     match path {
         ["login"] => vec!["Confirm the authenticated identity with `brainpod whoami`."],
+        ["github", "auth"] => vec![
+            "When GitHub is not connected, give the user the `_links.connect` URL; connecting, granting repositories, and accepting permissions happen in the browser, never through the CLI.",
+            "Find a repository to link to a Pod with `brainpod github repos [QUERY]`.",
+        ],
+        ["github", "repos"] => vec![
+            "A listed repository can be linked to a Pod; with `--json`, its `id` and `installationId` identify the repository to link.",
+            "When a repository is missing, give the user the settings URL of a `selected` installation to grant it, or the `_links.connect` URL to add another account or organization.",
+        ],
         ["pod", "create"] => {
             vec!["Select the new pod with --pod or `brainpod config set pod <pod>`."]
         }
@@ -412,6 +426,11 @@ fn next_steps(path: &[&str]) -> Vec<&'static str> {
 fn examples(path: &[&str]) -> Vec<&'static str> {
     match path {
         ["detect"] => vec!["brainpod detect .", "brainpod detect ./services --json"],
+        ["github", "auth"] => vec!["brainpod github auth", "brainpod github auth --json"],
+        ["github", "repos"] => vec![
+            "brainpod github repos",
+            "brainpod github repos acme/ --page 2 --per-page 50 --json",
+        ],
         ["describe"] => vec![
             "brainpod describe",
             "brainpod describe resource create",
@@ -642,6 +661,45 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("conditional-remote-write")
         );
+    }
+
+    #[test]
+    fn describes_github_as_authenticated_commands_without_a_pod() {
+        for (path, effect) in [(["github", "auth"], "read"), (["github", "repos"], "read")] {
+            let path = path.map(str::to_owned).to_vec();
+            let value = generate(crate::Opts::command(), &path).unwrap();
+
+            assert_eq!(
+                value
+                    .pointer("/command/requirements/apiToken")
+                    .and_then(|value| value.as_bool()),
+                Some(true),
+                "{path:?}"
+            );
+            assert_eq!(
+                value
+                    .pointer("/command/requirements/pod")
+                    .and_then(|value| value.as_bool()),
+                Some(false),
+                "{path:?}"
+            );
+            assert_eq!(
+                value
+                    .pointer("/command/effect")
+                    .and_then(|value| value.as_str()),
+                Some(effect),
+                "{path:?}"
+            );
+            for key in ["examples", "nextSteps"] {
+                assert!(
+                    !value
+                        .pointer(&format!("/command/{key}"))
+                        .and_then(|value| value.as_array())
+                        .is_none_or(Vec::is_empty),
+                    "{path:?} {key}"
+                );
+            }
+        }
     }
 
     #[test]
