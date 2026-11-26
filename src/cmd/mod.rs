@@ -2125,12 +2125,179 @@ fn read_json(path: &Path) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    use axum::Router;
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::http::{Method, Uri};
+    use serde_json::{Value, json};
 
     use super::{
-        api_path_segments, matching_repository, repository_not_accessible, resume_input,
-        variable_entries, with_connect_link,
+        RepoArgs, RepoCommand, api_path_segments, handle_repo, matching_repository,
+        repository_not_accessible, resume_input, variable_entries, with_connect_link,
     };
+    use crate::client::Client;
+
+    /// A request the fake API received: method, path, query pairs, and JSON body.
+    type Recorded = (Method, String, Vec<(String, String)>, Value);
+
+    #[derive(Clone)]
+    struct FakeApi {
+        pages: Arc<Vec<Value>>,
+        requests: Arc<Mutex<Vec<Recorded>>>,
+    }
+
+    async fn fake_api(State(api): State<FakeApi>, method: Method, uri: Uri, body: Bytes) -> String {
+        let query: Vec<(String, String)> = reqwest::Url::parse(&format!("http://fake{uri}"))
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+        let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        let response = if method == Method::GET && uri.path() == "/v1/github/repositories" {
+            let page: usize = query
+                .iter()
+                .find(|(key, _)| key == "page")
+                .map(|(_, page)| page.parse().unwrap())
+                .unwrap();
+            api.pages[page - 1].clone()
+        } else {
+            json!({"linked": true})
+        };
+        api.requests
+            .lock()
+            .unwrap()
+            .push((method, uri.path().to_owned(), query, body));
+        response.to_string()
+    }
+
+    /// Runs `repo link full_name` against a fake API serving `pages` of repositories.
+    async fn link_repository(
+        pages: Vec<Value>,
+        full_name: &str,
+    ) -> (anyhow::Result<()>, Vec<Recorded>) {
+        let api = FakeApi {
+            pages: Arc::new(pages),
+            requests: Arc::default(),
+        };
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().fallback(fake_api).with_state(api.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let client = Client::try_new(&format!("http://{address}"), "token").unwrap();
+        let result = handle_repo(
+            &client,
+            "my-pod",
+            "https://console.example.test/",
+            RepoArgs {
+                command: RepoCommand::Link {
+                    repository: full_name.to_owned(),
+                },
+            },
+        )
+        .await
+        .map(drop);
+        server.abort();
+
+        let requests = api.requests.lock().unwrap().clone();
+        (result, requests)
+    }
+
+    fn listing_query(page: &str) -> Vec<(String, String)> {
+        [("query", "acme/web"), ("page", page), ("perPage", "100")]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn links_a_repository_found_on_a_later_page() {
+        let (result, requests) = link_repository(
+            vec![
+                json!({
+                    "items": [{"id": 1, "installationId": 7, "fullName": "acme/web-admin"}],
+                    "_links": {"next": {"href": "/v1/github/repositories?query=acme%2Fweb&page=2&perPage=100"}}
+                }),
+                json!({
+                    "items": [{"id": 2, "installationId": 8, "fullName": "Acme/Web"}],
+                    "_links": {}
+                }),
+            ],
+            "acme/web",
+        )
+        .await;
+
+        result.unwrap();
+        assert_eq!(
+            requests,
+            vec![
+                (
+                    Method::GET,
+                    "/v1/github/repositories".to_owned(),
+                    listing_query("1"),
+                    Value::Null,
+                ),
+                (
+                    Method::GET,
+                    "/v1/github/repositories".to_owned(),
+                    listing_query("2"),
+                    Value::Null,
+                ),
+                (
+                    Method::PUT,
+                    "/v1/pods/my-pod/repository".to_owned(),
+                    Vec::new(),
+                    json!({"installationId": 8, "repositoryId": 2}),
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn links_nothing_when_the_listing_runs_out_without_a_match() {
+        let installations = json!([{
+            "account": {"login": "acme"},
+            "repositorySelection": "selected",
+            "_links": {"settings": {"href": "https://github.com/settings/installations/7"}}
+        }]);
+        let (result, requests) = link_repository(
+            vec![
+                json!({
+                    "items": [{"id": 1, "installationId": 7, "fullName": "acme/web-admin"}],
+                    "installations": installations,
+                    "_links": {"next": {"href": "/v1/github/repositories?query=acme%2Fweb&page=2&perPage=100"}}
+                }),
+                json!({
+                    "items": [{"id": 3, "installationId": 7, "fullName": "acme/website"}],
+                    "installations": installations,
+                    "_links": {}
+                }),
+            ],
+            "acme/web",
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "GitHub repository acme/web is not accessible to the Brainpod GitHub App\n\
+             Missing a repository? Grant access at https://github.com/settings/installations/7 (acme)\n\
+             Add another GitHub account or organization: https://console.example.test/github/signin"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .map(|(method, path, query, _)| (method.clone(), path.as_str(), query.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Method::GET, "/v1/github/repositories", listing_query("1")),
+                (Method::GET, "/v1/github/repositories", listing_query("2")),
+            ]
+        );
+    }
 
     #[test]
     fn adds_the_connect_link_next_to_the_api_links() {
