@@ -572,7 +572,7 @@ fn examples(path: &[&str]) -> Vec<&'static str> {
         ],
         ["api"] => vec![
             "brainpod --pod my-pod api /v1/pods/{pod}/builds",
-            "brainpod api /v1/onboarding",
+            "brainpod api /v1/agents",
             "brainpod --pod my-pod api -X POST /v1/pods/{pod}/secrets --input secret.json",
         ],
         _ => Vec::new(),
